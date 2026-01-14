@@ -1,0 +1,38 @@
+[workspace]
+members = [
+    "mnemefusion-core",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["George K."]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/georgek/mnemefusion"
+
+[workspace.dependencies]
+# Storage
+redb = "2.1"
+
+# Graph algorithms
+petgraph = "0.6"
+
+# Serialization
+rkyv = "0.7"
+uuid = { version = "1.10", features = ["v4", "serde"] }
+
+# Error handling
+thiserror = "1.0"
+
+# Regex for intent classification
+regex = "1.10"
+
+# Python bindings
+pyo3 = { version = "0.20", features = ["extension-module"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

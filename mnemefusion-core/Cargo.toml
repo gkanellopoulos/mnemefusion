@@ -1,0 +1,28 @@
+[package]
+name = "mnemefusion-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Unified memory engine for AI applications - Core library"
+keywords = ["ai", "memory", "vector", "database", "embedded"]
+categories = ["database-implementations", "data-structures"]
+
+[dependencies]
+redb = { workspace = true }
+petgraph = { workspace = true }
+rkyv = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+regex = { workspace = true }
+serde_json = "1.0"
+
+[dev-dependencies]
+tempfile = "3.10"
+criterion = "0.5"
+
+# Benchmarks will be added in Sprint 10
+# [[bench]]
+# name = "benchmarks"
+# harness = false
