@@ -16,6 +16,7 @@ use super::FileHeader;
 const MEMORIES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("memories");
 const TEMPORAL_INDEX: TableDefinition<u64, &[u8]> = TableDefinition::new("temporal_index");
 const METADATA_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("metadata");
+const MEMORY_ID_INDEX: TableDefinition<u64, &[u8]> = TableDefinition::new("memory_id_index");
 
 /// Storage engine wrapper around redb
 ///
@@ -88,6 +89,7 @@ impl StorageEngine {
         {
             let mut memories = write_txn.open_table(MEMORIES)?;
             let mut temporal = write_txn.open_table(TEMPORAL_INDEX)?;
+            let mut id_index = write_txn.open_table(MEMORY_ID_INDEX)?;
 
             // Serialize memory
             let memory_data = self.serialize_memory(memory)?;
@@ -97,6 +99,9 @@ impl StorageEngine {
 
             // Index by timestamp
             temporal.insert(memory.created_at.as_micros(), memory.id.as_bytes().as_slice())?;
+
+            // Index by u64 (for vector index lookups)
+            id_index.insert(memory.id.to_u64(), memory.id.as_bytes().as_slice())?;
         }
         write_txn.commit()?;
         Ok(())
@@ -116,12 +121,42 @@ impl StorageEngine {
         }
     }
 
+    /// Retrieve a memory by its u64 key (used by vector index)
+    pub fn get_memory_by_u64(&self, key: u64) -> Result<Option<Memory>> {
+        let read_txn = self.db.begin_read()?;
+        let id_index = read_txn.open_table(MEMORY_ID_INDEX)?;
+        let memories = read_txn.open_table(MEMORIES)?;
+
+        // First lookup the full MemoryId from the u64 index
+        match id_index.get(key)? {
+            Some(id_bytes) => {
+                // Then fetch the memory using the full ID
+                match memories.get(id_bytes.value())? {
+                    Some(data) => {
+                        let memory = self.deserialize_memory(data.value())?;
+                        Ok(Some(memory))
+                    }
+                    None => Ok(None),
+                }
+            }
+            None => Ok(None),
+        }
+    }
+
     /// Delete a memory by ID
     pub fn delete_memory(&self, id: &MemoryId) -> Result<bool> {
         let write_txn = self.db.begin_write()?;
         let removed = {
             let mut memories = write_txn.open_table(MEMORIES)?;
+            let mut id_index = write_txn.open_table(MEMORY_ID_INDEX)?;
+
             let result = memories.remove(id.as_bytes().as_slice())?;
+
+            // Also remove from ID index
+            if result.is_some() {
+                id_index.remove(id.to_u64())?;
+            }
+
             result.is_some()
         };
         write_txn.commit()?;
@@ -279,6 +314,28 @@ impl StorageEngine {
     /// Get the database path
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Store vector index data
+    pub fn store_vector_index(&self, buffer: &[u8]) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(METADATA_TABLE)?;
+            table.insert("vector_index", buffer)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Load vector index data
+    pub fn load_vector_index(&self) -> Result<Option<Vec<u8>>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(METADATA_TABLE)?;
+
+        match table.get("vector_index")? {
+            Some(data) => Ok(Some(data.value().to_vec())),
+            None => Ok(None),
+        }
     }
 }
 

@@ -15,6 +15,9 @@ repository = "https://github.com/georgek/mnemefusion"
 # Storage
 redb = "2.1"
 
+# Vector search (HNSW)
+usearch = "2"
+
 # Graph algorithms
 petgraph = "0.6"
 

@@ -2,9 +2,11 @@
 //!
 //! This example demonstrates the core functionality:
 //! - Creating/opening a database
-//! - Adding memories
-//! - Retrieving memories
+//! - Adding memories with embeddings
+//! - Retrieving memories by ID
+//! - Searching by semantic similarity
 //! - Using metadata
+//! - Deleting memories
 //! - Persistence across restarts
 //!
 //! Run with: cargo run --example basic_usage
@@ -74,6 +76,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  {}", id);
     }
 
+    // Search for similar memories
+    println!("\nSearching for memories similar to 'meeting' topic...");
+    // In a real application, you'd embed the query with the same model
+    // For this example, we use a query vector similar to our second memory (team meeting)
+    let query_embedding = vec![0.1; 384]; // Similar to idx=1 memory
+    let results = engine.search(&query_embedding, 3)?;
+
+    println!("  Found {} results:", results.len());
+    for (idx, (memory, similarity)) in results.iter().enumerate() {
+        println!("    {}. [Similarity: {:.3}] {}", idx + 1, similarity, memory.content);
+    }
+
     // Delete a memory
     println!("\nDeleting the third memory...");
     let deleted = engine.delete(&memory_ids[2])?;
@@ -82,7 +96,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  Remaining memories: {}", engine.count()?);
     }
 
-    // Close the database
+    // Close the database (saves all indexes)
     println!("\nClosing database...");
     engine.close()?;
 

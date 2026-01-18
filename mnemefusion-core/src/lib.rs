@@ -41,6 +41,7 @@
 
 pub mod config;
 pub mod error;
+pub mod index;
 pub mod memory;
 pub mod storage;
 pub mod types;
@@ -48,5 +49,6 @@ pub mod types;
 // Public API exports
 pub use config::Config;
 pub use error::{Error, Result};
+pub use index::{VectorIndex, VectorIndexConfig, VectorResult};
 pub use memory::MemoryEngine;
 pub use types::{Memory, MemoryId, Timestamp};

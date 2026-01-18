@@ -6,18 +6,21 @@
 use crate::{
     config::Config,
     error::{Error, Result},
+    index::{VectorIndex, VectorIndexConfig},
     storage::StorageEngine,
     types::{Memory, MemoryId, Timestamp},
 };
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Arc, RwLock};
 
 /// Main memory engine interface
 ///
 /// This is the primary entry point for all MnemeFusion operations.
 /// It coordinates storage, indexing, and retrieval across all dimensions.
 pub struct MemoryEngine {
-    storage: StorageEngine,
+    storage: Arc<StorageEngine>,
+    vector_index: Arc<RwLock<VectorIndex>>,
     config: Config,
 }
 
@@ -52,9 +55,26 @@ impl MemoryEngine {
         config.validate()?;
 
         // Open storage
-        let storage = StorageEngine::open(path)?;
+        let storage = Arc::new(StorageEngine::open(path)?);
 
-        Ok(Self { storage, config })
+        // Create vector index configuration from main config
+        let vector_config = VectorIndexConfig {
+            dimension: config.embedding_dim,
+            connectivity: config.hnsw_m,
+            expansion_add: config.hnsw_ef_construction,
+            expansion_search: config.hnsw_ef_search,
+        };
+
+        // Create and load vector index
+        let mut vector_index = VectorIndex::new(vector_config, Arc::clone(&storage))?;
+        vector_index.load()?;
+        let vector_index = Arc::new(RwLock::new(vector_index));
+
+        Ok(Self {
+            storage,
+            vector_index,
+            config,
+        })
     }
 
     /// Add a new memory to the database
@@ -129,7 +149,12 @@ impl MemoryEngine {
         // Store memory
         self.storage.store_memory(&memory)?;
 
-        // TODO (Sprint 2): Add to vector index
+        // Add to vector index
+        {
+            let mut index = self.vector_index.write().unwrap();
+            index.add(id.clone(), &memory.embedding)?;
+        }
+
         // TODO (Sprint 3): Add to temporal index
         // TODO (Sprint 5): Extract and link entities
 
@@ -183,8 +208,19 @@ impl MemoryEngine {
     /// assert!(deleted);
     /// ```
     pub fn delete(&self, id: &MemoryId) -> Result<bool> {
-        // TODO (Sprint 6): Remove from all indexes
-        self.storage.delete_memory(id)
+        // Check if memory exists
+        let deleted = self.storage.delete_memory(id)?;
+
+        if deleted {
+            // Remove from vector index
+            let mut index = self.vector_index.write().unwrap();
+            index.remove(id)?;
+
+            // TODO (Sprint 3): Remove from temporal index
+            // TODO (Sprint 6): Remove from entity and causal graphs
+        }
+
+        Ok(deleted)
     }
 
     /// Get the number of memories in the database
@@ -215,11 +251,54 @@ impl MemoryEngine {
         &self.config
     }
 
+    /// Search for memories by semantic similarity
+    ///
+    /// # Arguments
+    ///
+    /// * `query_embedding` - The query vector to search for
+    /// * `top_k` - Maximum number of results to return
+    ///
+    /// # Returns
+    ///
+    /// A vector of (Memory, similarity_score) tuples, sorted by similarity (highest first)
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mnemefusion_core::{MemoryEngine, Config};
+    /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
+    /// # let query_embedding = vec![0.1; 384];
+    /// let results = engine.search(&query_embedding, 10).unwrap();
+    /// for (memory, score) in results {
+    ///     println!("Similarity: {:.3} - {}", score, memory.content);
+    /// }
+    /// ```
+    pub fn search(&self, query_embedding: &[f32], top_k: usize) -> Result<Vec<(Memory, f32)>> {
+        // Search vector index
+        let vector_results = {
+            let index = self.vector_index.read().unwrap();
+            index.search(query_embedding, top_k)?
+        };
+
+        // Retrieve full memory records using u64 lookup
+        let mut results = Vec::with_capacity(vector_results.len());
+
+        for vector_result in vector_results {
+            // Look up memory using the u64 key from vector index
+            let key = vector_result.id.to_u64();
+            if let Some(memory) = self.storage.get_memory_by_u64(key)? {
+                results.push((memory, vector_result.similarity));
+            }
+        }
+
+        Ok(results)
+    }
+
     /// Close the database
     ///
-    /// This ensures all data is flushed to disk. While not strictly necessary
-    /// (redb handles this automatically), it's good practice to call this
-    /// explicitly when you're done.
+    /// This saves all indexes and ensures all data is flushed to disk.
+    /// While not strictly necessary (redb handles persistence automatically),
+    /// it's good practice to call this explicitly when you're done.
     ///
     /// # Example
     ///
@@ -230,8 +309,14 @@ impl MemoryEngine {
     /// engine.close().unwrap();
     /// ```
     pub fn close(self) -> Result<()> {
-        // TODO (Sprint 2+): Save all indexes
-        // For now, redb handles persistence automatically
+        // Save vector index
+        {
+            let index = self.vector_index.read().unwrap();
+            index.save()?;
+        }
+
+        // TODO (Sprint 3+): Save other indexes
+        // Storage (redb) handles persistence automatically
         Ok(())
     }
 }
