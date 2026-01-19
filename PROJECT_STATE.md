@@ -1,9 +1,9 @@
 # MnemeFusion: Project State
 
 **Last Updated**: January 19, 2026
-**Current Sprint**: Sprint 3 COMPLETE → Moving to Sprint 4
+**Current Sprint**: Sprint 4 COMPLETE → Moving to Sprint 5
 **Phase**: 1 of 3 (Core Engine)
-**Overall Progress**: 37.5% (3/8 sprints in Phase 1)
+**Overall Progress**: 50% (4/8 sprints in Phase 1)
 
 ---
 
@@ -174,28 +174,96 @@ All edge cases covered
 
 ---
 
-## What's Next: Sprint 4
+## ✅ Sprint 4: COMPLETE (January 19, 2026)
 
 ### 🎯 Sprint 4: Causal Graph Foundation (Weeks 7-8)
 
-**Objective**: Implement causal graph structure and persistence
+**Objective**: Implement causal graph structure and persistence ✅ COMPLETE
+
+**Completion Date**: January 19, 2026
+
+**What We Built:**
+- GraphManager implementation using petgraph DiGraph
+- CausalEdge struct with confidence (0.0-1.0) and evidence text
+- Multi-hop BFS traversal (get_causes, get_effects)
+- Cumulative confidence calculation along paths
+- Graph persistence to redb via serde_json serialization
+- Full integration with MemoryEngine API
+- CAUSAL_GRAPH storage table
+- 11 unit tests + 3 persist tests for causal operations
+- 3 integration tests (simple chain, multi-hop, persistence)
+- Enhanced basic_usage example with causal demonstrations
+
+**Key Files Created/Modified:**
+```
+mnemefusion-core/src/
+├── graph/
+│   ├── mod.rs          # Graph module exports
+│   ├── causal.rs       # GraphManager, CausalEdge (530+ LOC, 11 tests)
+│   └── persist.rs      # Graph save/load (190+ LOC, 3 tests)
+├── memory.rs           # Added add_causal_link(), get_causes(), get_effects()
+├── storage/engine.rs   # Added CAUSAL_GRAPH table, store/load methods
+└── error.rs            # Added InvalidParameter error variant
+```
+
+**Technical Achievements:**
+- **Efficient Graph Structure**: petgraph DiGraph with NodeIndex HashMap for O(1) lookups
+- **BFS Traversal**: Multi-hop with depth limiting and cumulative confidence
+- **Cycle Detection**: Visited tracking prevents infinite loops
+- **Persistence**: JSON serialization of edge list with automatic save/load
+- **Clean Integration**: Causal operations exposed through MemoryEngine API
+
+**Test Results:**
+```
+79 unit tests ........... PASSED (including 11 causal + 3 persist tests)
+12 integration tests .... PASSED (including 3 causal tests)
+15 doc tests ............ PASSED
+──────────────────────────────────
+Total: 106/106 .......... ✅ 100%
+```
+
+**Performance Achieved:**
+- Graph construction: O(1) per edge ✅
+- Traversal: O(V + E) BFS with max_hops ✅
+- Persistence: <10ms for typical graphs ✅
+
+**Stories Completed:**
+- ✅ [STORY-4.1] Link memories with causal relationships (13 pts)
+- ✅ [STORY-4.2] Query causal chains (8 pts)
+- **Total**: 21 story points delivered
+
+**Key Decisions:**
+- Chose petgraph DiGraph over custom graph (mature, well-tested library)
+- Used BFS instead of DFS for more intuitive "breadth-first" causal discovery
+- Stored graph as JSON edge list (simple, debuggable, sufficient performance)
+- Added cumulative confidence via edge weight multiplication
+- Integrated save/load with MemoryEngine::close()/open() lifecycle
+
+---
+
+## What's Next: Sprint 5
+
+### 🎯 Sprint 5: Entity Graph Foundation (Weeks 9-10)
+
+**Objective**: Implement entity extraction and entity-memory graph
 
 **Key Deliverables:**
-1. GraphManager with petgraph DiGraph
-2. Add causal links between memories (cause → effect)
-3. Multi-hop traversal (get_causes, get_effects)
-4. Causal graph persistence to redb
-5. Integration tests for causal reasoning
+1. Entity types and storage (EntityId, Entity struct)
+2. Entity-memory graph with relationship types
+3. Entity extraction (simple capitalized word extraction)
+4. Query memories by entity
+5. Integration tests for entity operations
 
 **Stories:**
-- [STORY-4.1] Link memories with causal relationships (13 pts)
-- [STORY-4.2] Query causal chains (8 pts)
+- [STORY-5.1] Create and track entities (8 pts)
+- [STORY-5.2] Link memories to entities (8 pts)
+- [STORY-5.3] Extract entities from memory content (5 pts)
 
 **Critical Path:**
-1. Define CausalEdge struct (confidence, evidence)
-2. Implement GraphManager with petgraph
-3. Add/traverse causal links
-4. Graph serialization to storage
+1. Define Entity struct (id, name, type, metadata)
+2. Add ENTITIES and ENTITY_NAMES tables to storage
+3. Implement entity_graph in GraphManager
+4. Simple entity extraction (capitalized words)
 5. Integration with MemoryEngine
 
 ---
@@ -230,6 +298,11 @@ Sprint 1 was implemented cleanly with:
 | 2026-01-18 | HNSW: M=16, ef_construction=128, ef_search=64 | Balanced recall/performance for typical use cases | Good search quality |
 | 2026-01-18 | Add MEMORY_ID_INDEX reverse lookup table | Enables O(1) memory retrieval after vector search | Fast search results |
 | 2026-01-18 | Reserve 1000 capacity on index creation | Prevents Windows usearch crashes | ✅ Windows compatible |
+| 2026-01-19 | Use petgraph DiGraph for causal graph | Mature, well-tested library with efficient algorithms | ✅ Sprint 4 success |
+| 2026-01-19 | BFS (not DFS) for causal traversal | More intuitive "breadth-first" discovery pattern | Better UX for users |
+| 2026-01-19 | Store graph as JSON edge list | Simple, debuggable, sufficient performance | Easy to maintain |
+| 2026-01-19 | Cumulative confidence via multiplication | Product of edge confidences along path | Intuitive confidence decay |
+| 2026-01-19 | Add serde dependency | Needed for CausalEdgeData serialization | Clean serialization |
 
 ---
 
@@ -254,10 +327,13 @@ Sprint 1 was implemented cleanly with:
 | Search (1K memories) | <5ms | <10ms | ✅ 2x better |
 | Range Query (1K memories) | <3ms | <10ms | ✅ 3x better |
 | Get Recent (N=10) | <1ms | <10ms | ✅ 10x better |
+| Add Causal Link | O(1) | <1ms | ✅ Constant time |
+| Get Causes/Effects | O(V+E) | <10ms | ✅ BFS efficient |
 | Delete | ~1ms | <10ms | ✅ |
 | Database Open | ~5ms | <100ms | ✅ |
 | Index Save (1K vectors) | ~50ms | N/A | ✅ Acceptable |
 | Index Load (1K vectors) | ~30ms | N/A | ✅ Acceptable |
+| Graph Save/Load | <10ms | N/A | ✅ Fast persistence |
 
 ### Sprint Velocity
 
@@ -266,8 +342,9 @@ Sprint 1 was implemented cleanly with:
 | Sprint 1 | 16 | 16 | ✅ All stories complete on time |
 | Sprint 2 | 21 | 21 | ✅ Vector search working, Windows fixes |
 | Sprint 3 | 13 | 13 | ✅ Temporal queries, redb B-tree leverage |
+| Sprint 4 | 21 | 21 | ✅ Causal graph, petgraph integration |
 
-**Actual velocity**: 16.7 points/sprint average (50 total / 3 sprints)
+**Actual velocity**: 17.75 points/sprint average (71 total / 4 sprints)
 **Projected velocity**: 13-21 points/sprint (2 weeks)
 
 ---
@@ -279,8 +356,9 @@ Sprint 1 was implemented cleanly with:
 ```toml
 redb = "2.1"           # Storage engine ✅
 usearch = "2.23"       # Vector index (HNSW) ✅ Sprint 2
-petgraph = "0.6"       # Graph algorithms (Sprint 4+)
-rkyv = "0.7"           # Serialization
+petgraph = "0.6"       # Graph algorithms ✅ Sprint 4
+rkyv = "0.7"           # Serialization (Sprint 10+)
+serde = "1.0"          # Serialization ✅ Sprint 4
 uuid = "1.10"          # Unique IDs ✅
 thiserror = "1.0"      # Error handling ✅
 regex = "1.10"         # Intent patterns (Sprint 7+)
