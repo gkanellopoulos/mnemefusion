@@ -224,3 +224,202 @@ fn test_custom_timestamps() {
 
     engine.close().unwrap();
 }
+
+#[test]
+fn test_temporal_range_query() {
+    use mnemefusion_core::Timestamp;
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("temporal_range_test.mfdb");
+    let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+
+    let now = Timestamp::now();
+
+    // Add memories at different times
+    let id1 = engine
+        .add(
+            "Memory from 10 days ago".to_string(),
+            vec![0.1; 384],
+            None,
+            Some(now.subtract_days(10)),
+        )
+        .unwrap();
+
+    let id2 = engine
+        .add(
+            "Memory from 5 days ago".to_string(),
+            vec![0.2; 384],
+            None,
+            Some(now.subtract_days(5)),
+        )
+        .unwrap();
+
+    let id3 = engine
+        .add(
+            "Memory from yesterday".to_string(),
+            vec![0.3; 384],
+            None,
+            Some(now.subtract_days(1)),
+        )
+        .unwrap();
+
+    let id4 = engine
+        .add(
+            "Memory from today".to_string(),
+            vec![0.4; 384],
+            None,
+            Some(now),
+        )
+        .unwrap();
+
+    // Query last 7 days
+    let results = engine
+        .get_range(now.subtract_days(7), now, 100)
+        .unwrap();
+
+    assert_eq!(results.len(), 3); // Should get id2, id3, id4 (all within 7 days)
+
+    // Should be newest first
+    assert_eq!(results[0].0.id, id4);
+    assert_eq!(results[1].0.id, id3);
+    assert_eq!(results[2].0.id, id2);
+
+    // Query last 15 days
+    let results = engine
+        .get_range(now.subtract_days(15), now, 100)
+        .unwrap();
+
+    assert_eq!(results.len(), 4); // All memories
+
+    // Verify ordering (newest first)
+    assert_eq!(results[0].0.id, id4);
+    assert_eq!(results[1].0.id, id3);
+    assert_eq!(results[2].0.id, id2);
+    assert_eq!(results[3].0.id, id1);
+
+    // Test empty range (future)
+    let future_start = now.add_days(1);
+    let future_end = now.add_days(2);
+    let results = engine
+        .get_range(future_start, future_end, 100)
+        .unwrap();
+    assert_eq!(results.len(), 0);
+
+    engine.close().unwrap();
+}
+
+#[test]
+fn test_get_recent_memories() {
+    use mnemefusion_core::Timestamp;
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("recent_test.mfdb");
+    let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+
+    let now = Timestamp::now();
+
+    // Add 10 memories with different timestamps
+    let mut ids = Vec::new();
+    for i in 0..10 {
+        let id = engine
+            .add(
+                format!("Memory {}", i),
+                vec![i as f32 * 0.1; 384],
+                None,
+                Some(now.subtract_days(i as u64)),
+            )
+            .unwrap();
+        ids.push(id);
+    }
+
+    // Get 5 most recent
+    let results = engine.get_recent(5).unwrap();
+    assert_eq!(results.len(), 5);
+
+    // Should be newest first (ids[0] is newest)
+    assert_eq!(results[0].0.id, ids[0]);
+    assert_eq!(results[1].0.id, ids[1]);
+    assert_eq!(results[2].0.id, ids[2]);
+    assert_eq!(results[3].0.id, ids[3]);
+    assert_eq!(results[4].0.id, ids[4]);
+
+    // Get all (limit > count)
+    let results = engine.get_recent(100).unwrap();
+    assert_eq!(results.len(), 10);
+
+    // Test with empty database
+    let dir2 = tempdir().unwrap();
+    let path2 = dir2.path().join("empty_test.mfdb");
+    let engine2 = MemoryEngine::open(&path2, Config::default()).unwrap();
+
+    let results = engine2.get_recent(10).unwrap();
+    assert_eq!(results.len(), 0);
+
+    engine.close().unwrap();
+    engine2.close().unwrap();
+}
+
+#[test]
+fn test_temporal_with_search() {
+    use mnemefusion_core::Timestamp;
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("temporal_search_test.mfdb");
+    let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+
+    let now = Timestamp::now();
+
+    // Add memories with semantic similarity and different times
+    let id1 = engine
+        .add(
+            "Team meeting about project deadline".to_string(),
+            vec![0.8; 384],
+            None,
+            Some(now.subtract_days(7)),
+        )
+        .unwrap();
+
+    let id2 = engine
+        .add(
+            "Client meeting regarding timeline".to_string(),
+            vec![0.7; 384],
+            None,
+            Some(now.subtract_days(3)),
+        )
+        .unwrap();
+
+    let id3 = engine
+        .add(
+            "Lunch with colleague".to_string(),
+            vec![0.1; 384],
+            None,
+            Some(now.subtract_days(1)),
+        )
+        .unwrap();
+
+    // Semantic search
+    let query_embedding = vec![0.75; 384];
+    let search_results = engine.search(&query_embedding, 10).unwrap();
+
+    // All should be found
+    assert_eq!(search_results.len(), 3);
+
+    // Temporal query for recent week
+    let temporal_results = engine
+        .get_range(now.subtract_days(5), now, 10)
+        .unwrap();
+
+    // Should get only id2 and id3 (within 5 days)
+    assert_eq!(temporal_results.len(), 2);
+    assert_eq!(temporal_results[0].0.id, id3); // Newest first
+    assert_eq!(temporal_results[1].0.id, id2);
+
+    // Get recent shows all in order
+    let recent = engine.get_recent(3).unwrap();
+    assert_eq!(recent.len(), 3);
+    assert_eq!(recent[0].0.id, id3);
+    assert_eq!(recent[1].0.id, id2);
+    assert_eq!(recent[2].0.id, id1);
+
+    engine.close().unwrap();
+}

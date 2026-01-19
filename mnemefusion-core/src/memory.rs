@@ -6,7 +6,7 @@
 use crate::{
     config::Config,
     error::{Error, Result},
-    index::{VectorIndex, VectorIndexConfig},
+    index::{TemporalIndex, VectorIndex, VectorIndexConfig},
     storage::StorageEngine,
     types::{Memory, MemoryId, Timestamp},
 };
@@ -21,6 +21,7 @@ use std::sync::{Arc, RwLock};
 pub struct MemoryEngine {
     storage: Arc<StorageEngine>,
     vector_index: Arc<RwLock<VectorIndex>>,
+    temporal_index: Arc<TemporalIndex>,
     config: Config,
 }
 
@@ -70,9 +71,13 @@ impl MemoryEngine {
         vector_index.load()?;
         let vector_index = Arc::new(RwLock::new(vector_index));
 
+        // Create temporal index
+        let temporal_index = Arc::new(TemporalIndex::new(Arc::clone(&storage)));
+
         Ok(Self {
             storage,
             vector_index,
+            temporal_index,
             config,
         })
     }
@@ -288,6 +293,94 @@ impl MemoryEngine {
             let key = vector_result.id.to_u64();
             if let Some(memory) = self.storage.get_memory_by_u64(key)? {
                 results.push((memory, vector_result.similarity));
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Query memories within a time range
+    ///
+    /// Returns memories whose timestamps fall within the specified range,
+    /// sorted by timestamp (newest first).
+    ///
+    /// # Arguments
+    ///
+    /// * `start` - Start of the time range (inclusive)
+    /// * `end` - End of the time range (inclusive)
+    /// * `limit` - Maximum number of results to return
+    ///
+    /// # Returns
+    ///
+    /// A vector of (Memory, Timestamp) tuples, sorted newest first
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mnemefusion_core::{MemoryEngine, Config, Timestamp};
+    /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
+    /// let now = Timestamp::now();
+    /// let week_ago = now.subtract_days(7);
+    ///
+    /// let results = engine.get_range(week_ago, now, 100).unwrap();
+    /// for (memory, timestamp) in results {
+    ///     println!("{}: {}", timestamp.as_unix_secs(), memory.content);
+    /// }
+    /// ```
+    pub fn get_range(
+        &self,
+        start: Timestamp,
+        end: Timestamp,
+        limit: usize,
+    ) -> Result<Vec<(Memory, Timestamp)>> {
+        // Query temporal index
+        let temporal_results = self.temporal_index.range_query(start, end, limit)?;
+
+        // Retrieve full memory records
+        let mut results = Vec::with_capacity(temporal_results.len());
+
+        for temp_result in temporal_results {
+            if let Some(memory) = self.storage.get_memory(&temp_result.id)? {
+                results.push((memory, temp_result.timestamp));
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Get the N most recent memories
+    ///
+    /// Returns the most recent memories, sorted by timestamp (newest first).
+    ///
+    /// # Arguments
+    ///
+    /// * `n` - Number of recent memories to retrieve
+    ///
+    /// # Returns
+    ///
+    /// A vector of (Memory, Timestamp) tuples, sorted newest first
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mnemefusion_core::{MemoryEngine, Config};
+    /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
+    /// let recent = engine.get_recent(10).unwrap();
+    /// println!("10 most recent memories:");
+    /// for (memory, timestamp) in recent {
+    ///     println!("  {} - {}", timestamp.as_unix_secs(), memory.content);
+    /// }
+    /// ```
+    pub fn get_recent(&self, n: usize) -> Result<Vec<(Memory, Timestamp)>> {
+        // Query temporal index
+        let temporal_results = self.temporal_index.recent(n)?;
+
+        // Retrieve full memory records
+        let mut results = Vec::with_capacity(temporal_results.len());
+
+        for temp_result in temporal_results {
+            if let Some(memory) = self.storage.get_memory(&temp_result.id)? {
+                results.push((memory, temp_result.timestamp));
             }
         }
 

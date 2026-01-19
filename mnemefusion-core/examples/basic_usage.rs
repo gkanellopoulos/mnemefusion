@@ -5,6 +5,7 @@
 //! - Adding memories with embeddings
 //! - Retrieving memories by ID
 //! - Searching by semantic similarity
+//! - Querying memories by time (recent, range)
 //! - Using metadata
 //! - Deleting memories
 //! - Persistence across restarts
@@ -87,6 +88,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (idx, (memory, similarity)) in results.iter().enumerate() {
         println!("    {}. [Similarity: {:.3}] {}", idx + 1, similarity, memory.content);
     }
+
+    // Temporal queries
+    println!("\nQuerying most recent memories...");
+    let recent = engine.get_recent(3)?;
+    println!("  3 most recent memories:");
+    for (idx, (memory, timestamp)) in recent.iter().enumerate() {
+        println!(
+            "    {}. [{}] {}",
+            idx + 1,
+            timestamp.as_unix_secs() as u64,
+            memory.content
+        );
+    }
+
+    // Time range query
+    use mnemefusion_core::Timestamp;
+    let now = Timestamp::now();
+    let one_hour_ago = now.subtract_days(0); // For demo, just use now as the range
+    println!("\nQuerying memories from the last session...");
+    let range_results = engine.get_range(one_hour_ago.subtract_days(1), now, 10)?;
+    println!("  Found {} memories in time range", range_results.len());
 
     // Delete a memory
     println!("\nDeleting the third memory...");

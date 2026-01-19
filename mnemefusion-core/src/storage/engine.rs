@@ -14,7 +14,7 @@ use super::FileHeader;
 
 // Table definitions
 const MEMORIES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("memories");
-const TEMPORAL_INDEX: TableDefinition<u64, &[u8]> = TableDefinition::new("temporal_index");
+pub(crate) const TEMPORAL_INDEX: TableDefinition<u64, &[u8]> = TableDefinition::new("temporal_index");
 const METADATA_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("metadata");
 const MEMORY_ID_INDEX: TableDefinition<u64, &[u8]> = TableDefinition::new("memory_id_index");
 
@@ -314,6 +314,14 @@ impl StorageEngine {
     /// Get the database path
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Get a reference to the underlying database
+    ///
+    /// This is used by index implementations (TemporalIndex, etc.) to access
+    /// tables directly for specialized queries.
+    pub(crate) fn db(&self) -> &Database {
+        &self.db
     }
 
     /// Store vector index data

@@ -4,6 +4,8 @@
 //! - Vector index (semantic similarity via HNSW)
 //! - Temporal index (time-based retrieval)
 
+pub mod temporal;
 pub mod vector;
 
+pub use temporal::{TemporalIndex, TemporalResult};
 pub use vector::{VectorIndex, VectorIndexConfig, VectorResult};
