@@ -6,6 +6,7 @@
 use crate::{
     config::Config,
     error::{Error, Result},
+    graph::{CausalTraversalResult, GraphManager},
     index::{TemporalIndex, VectorIndex, VectorIndexConfig},
     storage::StorageEngine,
     types::{Memory, MemoryId, Timestamp},
@@ -22,6 +23,7 @@ pub struct MemoryEngine {
     storage: Arc<StorageEngine>,
     vector_index: Arc<RwLock<VectorIndex>>,
     temporal_index: Arc<TemporalIndex>,
+    graph_manager: Arc<RwLock<GraphManager>>,
     config: Config,
 }
 
@@ -74,10 +76,16 @@ impl MemoryEngine {
         // Create temporal index
         let temporal_index = Arc::new(TemporalIndex::new(Arc::clone(&storage)));
 
+        // Create and load graph manager
+        let mut graph_manager = GraphManager::new();
+        crate::graph::persist::load_graph(&mut graph_manager, &storage)?;
+        let graph_manager = Arc::new(RwLock::new(graph_manager));
+
         Ok(Self {
             storage,
             vector_index,
             temporal_index,
+            graph_manager,
             config,
         })
     }
@@ -387,6 +395,101 @@ impl MemoryEngine {
         Ok(results)
     }
 
+    /// Add a causal link between two memories
+    ///
+    /// Links a cause memory to an effect memory with a confidence score.
+    ///
+    /// # Arguments
+    ///
+    /// * `cause` - The MemoryId of the cause
+    /// * `effect` - The MemoryId of the effect
+    /// * `confidence` - Confidence score (0.0 to 1.0)
+    /// * `evidence` - Evidence text explaining the causal relationship
+    ///
+    /// # Errors
+    ///
+    /// Returns error if confidence is not in range [0.0, 1.0]
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mnemefusion_core::{MemoryEngine, Config};
+    /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
+    /// # let id1 = engine.add("Cause".to_string(), vec![0.1; 384], None, None).unwrap();
+    /// # let id2 = engine.add("Effect".to_string(), vec![0.2; 384], None, None).unwrap();
+    /// engine.add_causal_link(&id1, &id2, 0.9, "id1 caused id2".to_string()).unwrap();
+    /// ```
+    pub fn add_causal_link(
+        &self,
+        cause: &MemoryId,
+        effect: &MemoryId,
+        confidence: f32,
+        evidence: String,
+    ) -> Result<()> {
+        let mut graph = self.graph_manager.write().unwrap();
+        graph.add_causal_link(cause, effect, confidence, evidence)
+    }
+
+    /// Get causes of a memory (backward traversal)
+    ///
+    /// Finds all memories that causally precede the given memory, up to max_hops.
+    ///
+    /// # Arguments
+    ///
+    /// * `memory_id` - The memory to find causes for
+    /// * `max_hops` - Maximum traversal depth
+    ///
+    /// # Returns
+    ///
+    /// CausalTraversalResult with all paths found
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mnemefusion_core::{MemoryEngine, Config};
+    /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
+    /// # let id = engine.add("Memory".to_string(), vec![0.1; 384], None, None).unwrap();
+    /// let causes = engine.get_causes(&id, 3).unwrap();
+    /// for path in causes.paths {
+    ///     println!("Found causal path with {} steps (confidence: {})",
+    ///              path.memories.len(), path.confidence);
+    /// }
+    /// ```
+    pub fn get_causes(&self, memory_id: &MemoryId, max_hops: usize) -> Result<CausalTraversalResult> {
+        let graph = self.graph_manager.read().unwrap();
+        graph.get_causes(memory_id, max_hops)
+    }
+
+    /// Get effects of a memory (forward traversal)
+    ///
+    /// Finds all memories that causally follow the given memory, up to max_hops.
+    ///
+    /// # Arguments
+    ///
+    /// * `memory_id` - The memory to find effects for
+    /// * `max_hops` - Maximum traversal depth
+    ///
+    /// # Returns
+    ///
+    /// CausalTraversalResult with all paths found
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mnemefusion_core::{MemoryEngine, Config};
+    /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
+    /// # let id = engine.add("Memory".to_string(), vec![0.1; 384], None, None).unwrap();
+    /// let effects = engine.get_effects(&id, 3).unwrap();
+    /// for path in effects.paths {
+    ///     println!("Found effect chain with {} steps (confidence: {})",
+    ///              path.memories.len(), path.confidence);
+    /// }
+    /// ```
+    pub fn get_effects(&self, memory_id: &MemoryId, max_hops: usize) -> Result<CausalTraversalResult> {
+        let graph = self.graph_manager.read().unwrap();
+        graph.get_effects(memory_id, max_hops)
+    }
+
     /// Close the database
     ///
     /// This saves all indexes and ensures all data is flushed to disk.
@@ -408,7 +511,12 @@ impl MemoryEngine {
             index.save()?;
         }
 
-        // TODO (Sprint 3+): Save other indexes
+        // Save causal graph
+        {
+            let graph = self.graph_manager.read().unwrap();
+            crate::graph::persist::save_graph(&graph, &self.storage)?;
+        }
+
         // Storage (redb) handles persistence automatically
         Ok(())
     }

@@ -74,6 +74,10 @@ pub enum Error {
     #[error("Configuration error: {0}")]
     Configuration(String),
 
+    /// Invalid parameter
+    #[error("Invalid parameter: {0}")]
+    InvalidParameter(String),
+
     /// Database already exists
     #[error("Database already exists at path: {0}")]
     DatabaseExists(String),

@@ -423,3 +423,204 @@ fn test_temporal_with_search() {
 
     engine.close().unwrap();
 }
+
+#[test]
+fn test_causal_simple_chain() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("causal_simple_test.mfdb");
+    let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+
+    // Create a simple causal chain: m1 → m2 → m3
+    let id1 = engine
+        .add(
+            "Meeting was scheduled".to_string(),
+            vec![0.1; 384],
+            None,
+            None,
+        )
+        .unwrap();
+
+    let id2 = engine
+        .add(
+            "Team prepared for meeting".to_string(),
+            vec![0.2; 384],
+            None,
+            None,
+        )
+        .unwrap();
+
+    let id3 = engine
+        .add(
+            "Meeting was successful".to_string(),
+            vec![0.3; 384],
+            None,
+            None,
+        )
+        .unwrap();
+
+    // Add causal links
+    engine
+        .add_causal_link(&id1, &id2, 0.9, "Scheduling caused preparation".to_string())
+        .unwrap();
+
+    engine
+        .add_causal_link(&id2, &id3, 0.8, "Preparation led to success".to_string())
+        .unwrap();
+
+    // Test get_effects from id1
+    let effects = engine.get_effects(&id1, 2).unwrap();
+    assert_eq!(effects.paths.len(), 2); // id1→id2 and id1→id2→id3
+
+    // Verify the longer path
+    let longest_path = effects
+        .paths
+        .iter()
+        .max_by_key(|p| p.memories.len())
+        .unwrap();
+    assert_eq!(longest_path.memories.len(), 3);
+    assert_eq!(longest_path.memories[0], id1);
+    assert_eq!(longest_path.memories[1], id2);
+    assert_eq!(longest_path.memories[2], id3);
+
+    // Verify cumulative confidence
+    let expected_confidence = 0.9 * 0.8;
+    assert!((longest_path.confidence - expected_confidence).abs() < 0.001);
+
+    // Test get_causes from id3
+    let causes = engine.get_causes(&id3, 2).unwrap();
+    assert_eq!(causes.paths.len(), 2); // id3←id2 and id3←id2←id1
+
+    engine.close().unwrap();
+}
+
+#[test]
+fn test_causal_multi_hop_traversal() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("causal_multi_hop_test.mfdb");
+    let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+
+    // Create a branching causal graph:
+    //     m1 → m2 → m4
+    //      ↓
+    //     m3 → m5
+    let id1 = engine
+        .add("Root cause".to_string(), vec![0.1; 384], None, None)
+        .unwrap();
+
+    let id2 = engine
+        .add("Effect A".to_string(), vec![0.2; 384], None, None)
+        .unwrap();
+
+    let id3 = engine
+        .add("Effect B".to_string(), vec![0.3; 384], None, None)
+        .unwrap();
+
+    let id4 = engine
+        .add("Second-order effect A".to_string(), vec![0.4; 384], None, None)
+        .unwrap();
+
+    let id5 = engine
+        .add("Second-order effect B".to_string(), vec![0.5; 384], None, None)
+        .unwrap();
+
+    // Add causal links
+    engine
+        .add_causal_link(&id1, &id2, 0.9, "Root → A".to_string())
+        .unwrap();
+
+    engine
+        .add_causal_link(&id1, &id3, 0.85, "Root → B".to_string())
+        .unwrap();
+
+    engine
+        .add_causal_link(&id2, &id4, 0.8, "A → 2nd A".to_string())
+        .unwrap();
+
+    engine
+        .add_causal_link(&id3, &id5, 0.75, "B → 2nd B".to_string())
+        .unwrap();
+
+    // Test get_effects from id1 with max_hops=2
+    let effects = engine.get_effects(&id1, 2).unwrap();
+    // Should find: id1→id2, id1→id3, id1→id2→id4, id1→id3→id5
+    assert_eq!(effects.paths.len(), 4);
+
+    // Test max_hops limiting
+    let effects_one_hop = engine.get_effects(&id1, 1).unwrap();
+    assert_eq!(effects_one_hop.paths.len(), 2); // Only id1→id2 and id1→id3
+
+    // Test get_causes from id5
+    let causes = engine.get_causes(&id5, 2).unwrap();
+    // Should find: id5←id3 and id5←id3←id1
+    assert_eq!(causes.paths.len(), 2);
+
+    engine.close().unwrap();
+}
+
+#[test]
+fn test_causal_graph_persistence() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("causal_persist_test.mfdb");
+
+    let id1;
+    let id2;
+    let id3;
+
+    // Create and save causal graph
+    {
+        let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+
+        id1 = engine
+            .add("Cause A".to_string(), vec![0.1; 384], None, None)
+            .unwrap();
+
+        id2 = engine
+            .add("Effect A".to_string(), vec![0.2; 384], None, None)
+            .unwrap();
+
+        id3 = engine
+            .add("Effect B".to_string(), vec![0.3; 384], None, None)
+            .unwrap();
+
+        // Add causal links
+        engine
+            .add_causal_link(&id1, &id2, 0.9, "A → B".to_string())
+            .unwrap();
+
+        engine
+            .add_causal_link(&id2, &id3, 0.8, "B → C".to_string())
+            .unwrap();
+
+        // Close (saves graph)
+        engine.close().unwrap();
+    }
+
+    // Reopen and verify causal graph persisted
+    {
+        let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+
+        // Verify memories persisted
+        assert_eq!(engine.count().unwrap(), 3);
+
+        // Verify causal links persisted
+        let effects = engine.get_effects(&id1, 2).unwrap();
+        assert_eq!(effects.paths.len(), 2); // id1→id2 and id1→id2→id3
+
+        // Verify cumulative confidence on longest path
+        let longest_path = effects
+            .paths
+            .iter()
+            .max_by_key(|p| p.memories.len())
+            .unwrap();
+        assert_eq!(longest_path.memories.len(), 3);
+
+        let expected_confidence = 0.9 * 0.8;
+        assert!((longest_path.confidence - expected_confidence).abs() < 0.001);
+
+        // Test get_causes too
+        let causes = engine.get_causes(&id3, 2).unwrap();
+        assert_eq!(causes.paths.len(), 2);
+
+        engine.close().unwrap();
+    }
+}

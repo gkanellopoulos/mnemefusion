@@ -6,6 +6,8 @@
 //! - Retrieving memories by ID
 //! - Searching by semantic similarity
 //! - Querying memories by time (recent, range)
+//! - Adding causal relationships between memories
+//! - Querying causal chains (causes and effects)
 //! - Using metadata
 //! - Deleting memories
 //! - Persistence across restarts
@@ -109,6 +111,55 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nQuerying memories from the last session...");
     let range_results = engine.get_range(one_hour_ago.subtract_days(1), now, 10)?;
     println!("  Found {} memories in time range", range_results.len());
+
+    // Causal relationships
+    println!("\nAdding causal relationships...");
+    // memory_ids[0] = "Project deadline moved"
+    // memory_ids[1] = "Team meeting scheduled"
+    // memory_ids[2] = "Budget approved"
+
+    // Create causal chain: deadline → meeting → budget
+    engine.add_causal_link(
+        &memory_ids[0],
+        &memory_ids[1],
+        0.85,
+        "Deadline change triggered team meeting".to_string(),
+    )?;
+
+    engine.add_causal_link(
+        &memory_ids[1],
+        &memory_ids[2],
+        0.75,
+        "Meeting led to budget approval".to_string(),
+    )?;
+
+    println!("  Added 2 causal links");
+
+    // Query causal effects
+    println!("\nQuerying causal effects of deadline change...");
+    let effects = engine.get_effects(&memory_ids[0], 2)?;
+    println!("  Found {} causal paths:", effects.paths.len());
+    for (idx, path) in effects.paths.iter().enumerate() {
+        println!(
+            "    {}. Path length: {}, confidence: {:.2}",
+            idx + 1,
+            path.memories.len(),
+            path.confidence
+        );
+    }
+
+    // Query causal causes
+    println!("\nQuerying causes of budget approval...");
+    let causes = engine.get_causes(&memory_ids[2], 2)?;
+    println!("  Found {} causal paths backward:", causes.paths.len());
+    for (idx, path) in causes.paths.iter().enumerate() {
+        println!(
+            "    {}. Path length: {}, confidence: {:.2}",
+            idx + 1,
+            path.memories.len(),
+            path.confidence
+        );
+    }
 
     // Delete a memory
     println!("\nDeleting the third memory...");

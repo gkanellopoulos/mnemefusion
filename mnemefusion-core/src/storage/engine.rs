@@ -17,6 +17,7 @@ const MEMORIES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("memories")
 pub(crate) const TEMPORAL_INDEX: TableDefinition<u64, &[u8]> = TableDefinition::new("temporal_index");
 const METADATA_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("metadata");
 const MEMORY_ID_INDEX: TableDefinition<u64, &[u8]> = TableDefinition::new("memory_id_index");
+const CAUSAL_GRAPH: TableDefinition<&str, &[u8]> = TableDefinition::new("causal_graph");
 
 /// Storage engine wrapper around redb
 ///
@@ -53,6 +54,8 @@ impl StorageEngine {
             let _ = write_txn.open_table(MEMORIES)?;
             let _ = write_txn.open_table(TEMPORAL_INDEX)?;
             let _ = write_txn.open_table(METADATA_TABLE)?;
+            let _ = write_txn.open_table(MEMORY_ID_INDEX)?;
+            let _ = write_txn.open_table(CAUSAL_GRAPH)?;
         }
         write_txn.commit()?;
         Ok(())
@@ -341,6 +344,28 @@ impl StorageEngine {
         let table = read_txn.open_table(METADATA_TABLE)?;
 
         match table.get("vector_index")? {
+            Some(data) => Ok(Some(data.value().to_vec())),
+            None => Ok(None),
+        }
+    }
+
+    /// Store causal graph data
+    pub fn store_causal_graph(&self, data: &[u8]) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(CAUSAL_GRAPH)?;
+            table.insert("graph", data)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Load causal graph data
+    pub fn load_causal_graph(&self) -> Result<Option<Vec<u8>>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(CAUSAL_GRAPH)?;
+
+        match table.get("graph")? {
             Some(data) => Ok(Some(data.value().to_vec())),
             None => Ok(None),
         }
