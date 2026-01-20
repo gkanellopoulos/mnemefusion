@@ -6,10 +6,11 @@
 use crate::{
     config::Config,
     error::{Error, Result},
-    graph::{CausalTraversalResult, GraphManager},
+    graph::{CausalTraversalResult, EntityQueryResult, GraphManager},
     index::{TemporalIndex, VectorIndex, VectorIndexConfig},
+    ingest::{EntityExtractor, SimpleEntityExtractor},
     storage::StorageEngine,
-    types::{Memory, MemoryId, Timestamp},
+    types::{Entity, EntityId, Memory, MemoryId, Timestamp},
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -24,6 +25,7 @@ pub struct MemoryEngine {
     vector_index: Arc<RwLock<VectorIndex>>,
     temporal_index: Arc<TemporalIndex>,
     graph_manager: Arc<RwLock<GraphManager>>,
+    entity_extractor: SimpleEntityExtractor,
     config: Config,
 }
 
@@ -81,11 +83,15 @@ impl MemoryEngine {
         crate::graph::persist::load_graph(&mut graph_manager, &storage)?;
         let graph_manager = Arc::new(RwLock::new(graph_manager));
 
+        // Create entity extractor
+        let entity_extractor = SimpleEntityExtractor::new();
+
         Ok(Self {
             storage,
             vector_index,
             temporal_index,
             graph_manager,
+            entity_extractor,
             config,
         })
     }
@@ -168,8 +174,35 @@ impl MemoryEngine {
             index.add(id.clone(), &memory.embedding)?;
         }
 
-        // TODO (Sprint 3): Add to temporal index
-        // TODO (Sprint 5): Extract and link entities
+        // Extract and link entities (if enabled)
+        if self.config.entity_extraction_enabled {
+            // Extract entity names from content
+            let entity_names = self.entity_extractor.extract(&memory.content)?;
+
+            // For each extracted entity
+            for entity_name in entity_names {
+                // Check if entity already exists
+                let entity = match self.storage.find_entity_by_name(&entity_name)? {
+                    Some(mut existing_entity) => {
+                        // Entity exists, increment mention count
+                        existing_entity.increment_mentions();
+                        self.storage.store_entity(&existing_entity)?;
+                        existing_entity
+                    }
+                    None => {
+                        // Create new entity (starts with mention_count = 1)
+                        let mut new_entity = Entity::new(entity_name);
+                        new_entity.increment_mentions();
+                        self.storage.store_entity(&new_entity)?;
+                        new_entity
+                    }
+                };
+
+                // Link memory to entity in graph
+                let mut graph = self.graph_manager.write().unwrap();
+                graph.link_memory_to_entity(&id, &entity.id);
+            }
+        }
 
         Ok(id)
     }
@@ -229,8 +262,13 @@ impl MemoryEngine {
             let mut index = self.vector_index.write().unwrap();
             index.remove(id)?;
 
-            // TODO (Sprint 3): Remove from temporal index
-            // TODO (Sprint 6): Remove from entity and causal graphs
+            // Remove from entity graph (Sprint 5)
+            {
+                let mut graph = self.graph_manager.write().unwrap();
+                graph.remove_memory_from_entity_graph(id);
+            }
+
+            // TODO (Sprint 6): Remove from causal graph
         }
 
         Ok(deleted)
@@ -488,6 +526,109 @@ impl MemoryEngine {
     pub fn get_effects(&self, memory_id: &MemoryId, max_hops: usize) -> Result<CausalTraversalResult> {
         let graph = self.graph_manager.read().unwrap();
         graph.get_effects(memory_id, max_hops)
+    }
+
+    // ========== Entity Operations ==========
+
+    /// Get all memories that mention a specific entity
+    ///
+    /// # Arguments
+    ///
+    /// * `entity_name` - The name of the entity to query (case-insensitive)
+    ///
+    /// # Returns
+    ///
+    /// A vector of Memory objects that mention this entity
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mnemefusion_core::{MemoryEngine, Config};
+    /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
+    /// let memories = engine.get_entity_memories("Project Alpha").unwrap();
+    /// for memory in memories {
+    ///     println!("{}", memory.content);
+    /// }
+    /// ```
+    pub fn get_entity_memories(&self, entity_name: &str) -> Result<Vec<Memory>> {
+        // Find the entity by name
+        let entity = self.storage.find_entity_by_name(entity_name)?;
+
+        match entity {
+            Some(entity) => {
+                // Query entity graph
+                let graph = self.graph_manager.read().unwrap();
+                let result = graph.get_entity_memories(&entity.id);
+
+                // Retrieve full memory records
+                let mut memories = Vec::with_capacity(result.memories.len());
+                for memory_id in result.memories {
+                    if let Some(memory) = self.storage.get_memory(&memory_id)? {
+                        memories.push(memory);
+                    }
+                }
+
+                Ok(memories)
+            }
+            None => Ok(Vec::new()), // Entity not found, return empty list
+        }
+    }
+
+    /// Get all entities mentioned in a specific memory
+    ///
+    /// # Arguments
+    ///
+    /// * `memory_id` - The memory to query
+    ///
+    /// # Returns
+    ///
+    /// A vector of Entity objects mentioned in this memory
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mnemefusion_core::{MemoryEngine, Config};
+    /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
+    /// # let id = engine.add("Alice met Bob".to_string(), vec![0.1; 384], None, None).unwrap();
+    /// let entities = engine.get_memory_entities(&id).unwrap();
+    /// for entity in entities {
+    ///     println!("Entity: {}", entity.name);
+    /// }
+    /// ```
+    pub fn get_memory_entities(&self, memory_id: &MemoryId) -> Result<Vec<Entity>> {
+        // Query entity graph
+        let graph = self.graph_manager.read().unwrap();
+        let entity_ids = graph.get_memory_entities(memory_id);
+
+        // Retrieve full entity records
+        let mut entities = Vec::with_capacity(entity_ids.len());
+        for entity_id in entity_ids {
+            if let Some(entity) = self.storage.get_entity(&entity_id)? {
+                entities.push(entity);
+            }
+        }
+
+        Ok(entities)
+    }
+
+    /// List all entities in the database
+    ///
+    /// # Returns
+    ///
+    /// A vector of all Entity objects
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mnemefusion_core::{MemoryEngine, Config};
+    /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
+    /// let all_entities = engine.list_entities().unwrap();
+    /// for entity in all_entities {
+    ///     println!("{}: {} mentions", entity.name, entity.mention_count);
+    /// }
+    /// ```
+    pub fn list_entities(&self) -> Result<Vec<Entity>> {
+        self.storage.list_entities()
     }
 
     /// Close the database

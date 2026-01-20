@@ -43,6 +43,7 @@ pub mod config;
 pub mod error;
 pub mod graph;
 pub mod index;
+pub mod ingest;
 pub mod memory;
 pub mod storage;
 pub mod types;
@@ -50,7 +51,8 @@ pub mod types;
 // Public API exports
 pub use config::Config;
 pub use error::{Error, Result};
-pub use graph::{CausalEdge, CausalPath, CausalTraversalResult, GraphManager};
+pub use graph::{CausalEdge, CausalPath, CausalTraversalResult, EntityQueryResult, GraphManager};
 pub use index::{TemporalIndex, TemporalResult, VectorIndex, VectorIndexConfig, VectorResult};
+pub use ingest::{EntityExtractor, SimpleEntityExtractor};
 pub use memory::MemoryEngine;
-pub use types::{Memory, MemoryId, Timestamp};
+pub use types::{Entity, EntityId, Memory, MemoryId, Timestamp};

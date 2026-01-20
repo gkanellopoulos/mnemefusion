@@ -161,6 +161,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
+    // Entity extraction and queries
+    println!("\nEntity extraction (automatic from memory content)...");
+    println!("  Entities were automatically extracted when memories were added");
+
+    // List all entities
+    let all_entities = engine.list_entities()?;
+    println!("  Found {} unique entities:", all_entities.len());
+    for entity in &all_entities {
+        println!("    - {} ({} mentions)", entity.name, entity.mention_count);
+    }
+
+    // Query memories by entity
+    if !all_entities.is_empty() {
+        let example_entity = &all_entities[0];
+        println!("\nQuerying memories that mention '{}'...", example_entity.name);
+        let entity_memories = engine.get_entity_memories(&example_entity.name)?;
+        println!("  Found {} memories:", entity_memories.len());
+        for (idx, memory) in entity_memories.iter().enumerate() {
+            println!("    {}. {}", idx + 1, memory.content);
+        }
+    }
+
+    // Query entities in a specific memory
+    println!("\nQuerying entities in first memory...");
+    let entities_in_memory = engine.get_memory_entities(&memory_ids[0])?;
+    println!("  Found {} entities:", entities_in_memory.len());
+    for entity in entities_in_memory {
+        println!("    - {}", entity.name);
+    }
+
     // Delete a memory
     println!("\nDeleting the third memory...");
     let deleted = engine.delete(&memory_ids[2])?;

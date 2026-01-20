@@ -3,6 +3,7 @@
 //! This module defines the core Memory type and MemoryId identifier.
 
 use crate::{Error, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use uuid::Uuid;
@@ -13,7 +14,7 @@ use super::Timestamp;
 ///
 /// MemoryId is a UUID-based identifier that can be converted to/from u64
 /// for use with the vector index (usearch requires u64 keys).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MemoryId(Uuid);
 
 impl MemoryId {

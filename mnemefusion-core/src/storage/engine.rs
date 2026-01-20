@@ -3,7 +3,7 @@
 //! Wraps redb and provides CRUD operations for memories and indexes.
 
 use crate::{
-    types::{Memory, MemoryId, Timestamp},
+    types::{Entity, EntityId, Memory, MemoryId, Timestamp},
     Error, Result,
 };
 use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
@@ -18,6 +18,8 @@ pub(crate) const TEMPORAL_INDEX: TableDefinition<u64, &[u8]> = TableDefinition::
 const METADATA_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("metadata");
 const MEMORY_ID_INDEX: TableDefinition<u64, &[u8]> = TableDefinition::new("memory_id_index");
 const CAUSAL_GRAPH: TableDefinition<&str, &[u8]> = TableDefinition::new("causal_graph");
+const ENTITIES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("entities");
+const ENTITY_NAMES: TableDefinition<&str, &[u8]> = TableDefinition::new("entity_names");
 
 /// Storage engine wrapper around redb
 ///
@@ -56,6 +58,8 @@ impl StorageEngine {
             let _ = write_txn.open_table(METADATA_TABLE)?;
             let _ = write_txn.open_table(MEMORY_ID_INDEX)?;
             let _ = write_txn.open_table(CAUSAL_GRAPH)?;
+            let _ = write_txn.open_table(ENTITIES)?;
+            let _ = write_txn.open_table(ENTITY_NAMES)?;
         }
         write_txn.commit()?;
         Ok(())
@@ -366,6 +370,150 @@ impl StorageEngine {
         let table = read_txn.open_table(CAUSAL_GRAPH)?;
 
         match table.get("graph")? {
+            Some(data) => Ok(Some(data.value().to_vec())),
+            None => Ok(None),
+        }
+    }
+
+    /// Store an entity
+    pub fn store_entity(&self, entity: &Entity) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut entities = write_txn.open_table(ENTITIES)?;
+            let mut names = write_txn.open_table(ENTITY_NAMES)?;
+
+            // Serialize entity to JSON
+            let entity_data = serde_json::to_vec(entity)
+                .map_err(|e| Error::Serialization(e.to_string()))?;
+
+            // Store entity by ID
+            entities.insert(entity.id.as_bytes().as_slice(), entity_data.as_slice())?;
+
+            // Index by normalized name (case-insensitive)
+            let normalized_name = entity.normalized_name();
+            names.insert(normalized_name.as_str(), entity.id.as_bytes().as_slice())?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Get an entity by ID
+    pub fn get_entity(&self, id: &EntityId) -> Result<Option<Entity>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(ENTITIES)?;
+
+        match table.get(id.as_bytes().as_slice())? {
+            Some(data) => {
+                let entity: Entity = serde_json::from_slice(data.value())
+                    .map_err(|e| Error::Deserialization(e.to_string()))?;
+                Ok(Some(entity))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Find an entity by name (case-insensitive)
+    pub fn find_entity_by_name(&self, name: &str) -> Result<Option<Entity>> {
+        let read_txn = self.db.begin_read()?;
+        let names_table = read_txn.open_table(ENTITY_NAMES)?;
+        let entities_table = read_txn.open_table(ENTITIES)?;
+
+        // Normalize the search name
+        let normalized = name.to_lowercase();
+
+        // Look up entity ID by normalized name
+        match names_table.get(normalized.as_str())? {
+            Some(id_bytes) => {
+                let id_bytes = id_bytes.value().to_vec();
+                let entity_id = EntityId::from_bytes(&id_bytes)?;
+
+                // Get the entity
+                match entities_table.get(entity_id.as_bytes().as_slice())? {
+                    Some(data) => {
+                        let entity: Entity = serde_json::from_slice(data.value())
+                            .map_err(|e| Error::Deserialization(e.to_string()))?;
+                        Ok(Some(entity))
+                    }
+                    None => Ok(None),
+                }
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Delete an entity
+    pub fn delete_entity(&self, id: &EntityId) -> Result<bool> {
+        let write_txn = self.db.begin_write()?;
+        let deleted = {
+            let mut entities = write_txn.open_table(ENTITIES)?;
+            let mut names = write_txn.open_table(ENTITY_NAMES)?;
+
+            // Get entity to find its name for name index cleanup
+            // Store the normalized name before dropping the guard
+            let normalized_name = if let Some(data) = entities.get(id.as_bytes().as_slice())? {
+                let entity: Entity = serde_json::from_slice(data.value())
+                    .map_err(|e| Error::Deserialization(e.to_string()))?;
+                Some(entity.normalized_name())
+            } else {
+                None
+            };
+
+            // Now we can mutate
+            if let Some(name) = normalized_name {
+                // Remove from name index
+                names.remove(name.as_str())?;
+
+                // Remove entity
+                entities.remove(id.as_bytes().as_slice())?;
+                true
+            } else {
+                false
+            }
+        };
+        write_txn.commit()?;
+        Ok(deleted)
+    }
+
+    /// List all entities
+    pub fn list_entities(&self) -> Result<Vec<Entity>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(ENTITIES)?;
+
+        let mut entities = Vec::new();
+        for result in table.iter()? {
+            let (_, value) = result?;
+            let entity: Entity = serde_json::from_slice(value.value())
+                .map_err(|e| Error::Deserialization(e.to_string()))?;
+            entities.push(entity);
+        }
+
+        Ok(entities)
+    }
+
+    /// Count entities
+    pub fn count_entities(&self) -> Result<usize> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(ENTITIES)?;
+        Ok(table.len()? as usize)
+    }
+
+    /// Store entity graph data
+    pub fn store_entity_graph(&self, data: &[u8]) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(METADATA_TABLE)?;
+            table.insert("entity_graph", data)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Load entity graph data
+    pub fn load_entity_graph(&self) -> Result<Option<Vec<u8>>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(METADATA_TABLE)?;
+
+        match table.get("entity_graph")? {
             Some(data) => Ok(Some(data.value().to_vec())),
             None => Ok(None),
         }

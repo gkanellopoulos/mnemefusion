@@ -5,7 +5,8 @@
 //! - Each edge is a CausalEdge (confidence + evidence)
 //! - Supports multi-hop traversal with configurable depth
 
-use crate::{types::MemoryId, Error, Result};
+use crate::{types::{EntityId, MemoryId}, Error, Result};
+use super::entity::{EntityGraph, EntityQueryResult};
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;
@@ -51,12 +52,14 @@ pub struct CausalTraversalResult {
     pub paths: Vec<CausalPath>,
 }
 
-/// Manages the causal graph structure.
+/// Manages the causal and entity graph structures.
 pub struct GraphManager {
     /// The directed graph (cause → effect)
     graph: DiGraph<MemoryId, CausalEdge>,
     /// Maps MemoryId to NodeIndex for efficient lookup
     node_map: HashMap<MemoryId, NodeIndex>,
+    /// Entity graph (memory ↔ entity relationships)
+    entity_graph: EntityGraph,
 }
 
 impl GraphManager {
@@ -65,6 +68,7 @@ impl GraphManager {
         Self {
             graph: DiGraph::new(),
             node_map: HashMap::new(),
+            entity_graph: EntityGraph::new(),
         }
     }
 
@@ -270,6 +274,74 @@ impl GraphManager {
     pub fn clear(&mut self) {
         self.graph.clear();
         self.node_map.clear();
+        self.entity_graph.clear();
+    }
+
+    // ========== Entity Graph Operations ==========
+
+    /// Link a memory to an entity
+    ///
+    /// # Arguments
+    ///
+    /// * `memory_id` - The memory that mentions the entity
+    /// * `entity_id` - The entity being mentioned
+    pub fn link_memory_to_entity(&mut self, memory_id: &MemoryId, entity_id: &EntityId) {
+        self.entity_graph.link_memory_to_entity(memory_id, entity_id);
+    }
+
+    /// Get all memories that mention a specific entity
+    ///
+    /// # Arguments
+    ///
+    /// * `entity_id` - The entity to query
+    ///
+    /// # Returns
+    ///
+    /// EntityQueryResult containing list of memory IDs
+    pub fn get_entity_memories(&self, entity_id: &EntityId) -> EntityQueryResult {
+        self.entity_graph.get_entity_memories(entity_id)
+    }
+
+    /// Get all entities mentioned in a specific memory
+    ///
+    /// # Arguments
+    ///
+    /// * `memory_id` - The memory to query
+    ///
+    /// # Returns
+    ///
+    /// List of entity IDs mentioned in this memory
+    pub fn get_memory_entities(&self, memory_id: &MemoryId) -> Vec<EntityId> {
+        self.entity_graph.get_memory_entities(memory_id)
+    }
+
+    /// Remove a memory from the entity graph (called when memory is deleted)
+    pub fn remove_memory_from_entity_graph(&mut self, memory_id: &MemoryId) {
+        self.entity_graph.remove_memory(memory_id);
+    }
+
+    /// Remove an entity from the entity graph (called when entity is deleted)
+    pub fn remove_entity_from_graph(&mut self, entity_id: &EntityId) {
+        self.entity_graph.remove_entity(entity_id);
+    }
+
+    /// Get entity graph statistics
+    pub fn entity_graph_stats(&self) -> (usize, usize, usize) {
+        (
+            self.entity_graph.memory_count(),
+            self.entity_graph.entity_count(),
+            self.entity_graph.edge_count(),
+        )
+    }
+
+    /// Get a reference to the entity graph (for persistence)
+    pub(super) fn entity_graph(&self) -> &EntityGraph {
+        &self.entity_graph
+    }
+
+    /// Get a mutable reference to the entity graph (for persistence)
+    pub(super) fn entity_graph_mut(&mut self) -> &mut EntityGraph {
+        &mut self.entity_graph
     }
 }
 
