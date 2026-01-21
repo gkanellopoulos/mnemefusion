@@ -45,6 +45,7 @@ pub mod graph;
 pub mod index;
 pub mod ingest;
 pub mod memory;
+pub mod query;
 pub mod storage;
 pub mod types;
 
@@ -55,4 +56,8 @@ pub use graph::{CausalEdge, CausalPath, CausalTraversalResult, EntityQueryResult
 pub use index::{TemporalIndex, TemporalResult, VectorIndex, VectorIndexConfig, VectorResult};
 pub use ingest::{EntityExtractor, SimpleEntityExtractor};
 pub use memory::MemoryEngine;
+pub use query::{
+    AdaptiveWeightConfig, FusedResult, FusionEngine, IntentClassification, IntentClassifier,
+    IntentWeights, QueryIntent, QueryPlanner,
+};
 pub use types::{Entity, EntityId, Memory, MemoryId, Timestamp};

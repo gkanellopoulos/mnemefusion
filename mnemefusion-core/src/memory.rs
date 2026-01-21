@@ -9,6 +9,7 @@ use crate::{
     graph::{CausalTraversalResult, GraphManager},
     index::{TemporalIndex, VectorIndex, VectorIndexConfig},
     ingest::IngestionPipeline,
+    query::{FusedResult, IntentClassification, QueryPlanner},
     storage::StorageEngine,
     types::{Entity, Memory, MemoryId, Timestamp},
 };
@@ -26,6 +27,7 @@ pub struct MemoryEngine {
     temporal_index: Arc<TemporalIndex>,
     graph_manager: Arc<RwLock<GraphManager>>,
     pipeline: IngestionPipeline,
+    query_planner: QueryPlanner,
     config: Config,
 }
 
@@ -92,12 +94,21 @@ impl MemoryEngine {
             config.entity_extraction_enabled,
         );
 
+        // Create query planner
+        let query_planner = QueryPlanner::new(
+            Arc::clone(&storage),
+            Arc::clone(&vector_index),
+            Arc::clone(&temporal_index),
+            Arc::clone(&graph_manager),
+        );
+
         Ok(Self {
             storage,
             vector_index,
             temporal_index,
             graph_manager,
             pipeline,
+            query_planner,
             config,
         })
     }
@@ -293,6 +304,60 @@ impl MemoryEngine {
         }
 
         Ok(results)
+    }
+
+    /// Intelligent multi-dimensional query with intent classification
+    ///
+    /// This method performs intent-aware retrieval across all dimensions:
+    /// - Classifies the query intent (temporal, causal, entity, factual)
+    /// - Retrieves results from relevant dimensions
+    /// - Fuses results with adaptive weights based on intent
+    ///
+    /// # Arguments
+    ///
+    /// * `query_text` - Natural language query text
+    /// * `query_embedding` - Vector embedding of the query
+    /// * `limit` - Maximum number of results to return
+    ///
+    /// # Returns
+    ///
+    /// Tuple of (intent classification, fused results with full memory records)
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mnemefusion_core::{MemoryEngine, Config};
+    /// # let engine = MemoryEngine::open("test.mfdb", Config::default()).unwrap();
+    /// # let query_embedding = vec![0.1; 384];
+    /// let (intent, results) = engine.query(
+    ///     "Why was the meeting cancelled?",
+    ///     &query_embedding,
+    ///     10
+    /// ).unwrap();
+    ///
+    /// println!("Query intent: {:?}", intent.intent);
+    /// for result in results {
+    ///     println!("Score: {:.3} - {}", result.1.fused_score, result.0.content);
+    /// }
+    /// ```
+    pub fn query(
+        &self,
+        query_text: &str,
+        query_embedding: &[f32],
+        limit: usize,
+    ) -> Result<(IntentClassification, Vec<(Memory, FusedResult)>)> {
+        // Execute query using query planner
+        let (intent, fused_results) = self.query_planner.query(query_text, query_embedding, limit)?;
+
+        // Retrieve full memory records
+        let mut results = Vec::with_capacity(fused_results.len());
+        for fused_result in fused_results {
+            if let Some(memory) = self.storage.get_memory(&fused_result.id)? {
+                results.push((memory, fused_result));
+            }
+        }
+
+        Ok((intent, results))
     }
 
     /// Query memories within a time range
