@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "mnemefusion-core",
+    "mnemefusion-python",
 ]
 resolver = "2"
 
