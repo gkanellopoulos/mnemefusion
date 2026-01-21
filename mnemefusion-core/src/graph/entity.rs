@@ -159,18 +159,50 @@ impl EntityGraph {
     }
 
     /// Remove all links for a memory (when memory is deleted)
+    ///
+    /// Note: Rebuilds node index maps since petgraph's remove_node
+    /// can invalidate existing NodeIndex values.
     pub fn remove_memory(&mut self, memory_id: &MemoryId) {
         if let Some(&idx) = self.memory_nodes.get(memory_id) {
             self.graph.remove_node(idx);
-            self.memory_nodes.remove(memory_id);
+
+            // Rebuild the node maps to ensure consistency
+            self.rebuild_node_maps();
         }
     }
 
     /// Remove all links for an entity (when entity is deleted)
+    ///
+    /// Note: Rebuilds node index maps since petgraph's remove_node
+    /// can invalidate existing NodeIndex values.
     pub fn remove_entity(&mut self, entity_id: &EntityId) {
         if let Some(&idx) = self.entity_nodes.get(entity_id) {
             self.graph.remove_node(idx);
-            self.entity_nodes.remove(entity_id);
+
+            // Rebuild the node maps to ensure consistency
+            self.rebuild_node_maps();
+        }
+    }
+
+    /// Rebuild node maps after node removal
+    ///
+    /// This is necessary because petgraph's remove_node() can invalidate
+    /// existing NodeIndex values when nodes are swapped.
+    fn rebuild_node_maps(&mut self) {
+        self.memory_nodes.clear();
+        self.entity_nodes.clear();
+
+        for node_idx in self.graph.node_indices() {
+            if let Some(node) = self.graph.node_weight(node_idx) {
+                match node {
+                    EntityNode::Memory(memory_id) => {
+                        self.memory_nodes.insert(memory_id.clone(), node_idx);
+                    }
+                    EntityNode::Entity(entity_id) => {
+                        self.entity_nodes.insert(entity_id.clone(), node_idx);
+                    }
+                }
+            }
         }
     }
 

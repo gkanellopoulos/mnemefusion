@@ -325,6 +325,31 @@ impl GraphManager {
         self.entity_graph.remove_entity(entity_id);
     }
 
+    /// Remove a memory from the causal graph (called when memory is deleted)
+    ///
+    /// This removes all causal links (both incoming and outgoing) associated
+    /// with the specified memory.
+    pub fn remove_memory_from_causal_graph(&mut self, memory_id: &MemoryId) {
+        // Find the node for this memory
+        if let Some(&node_idx) = self.node_map.get(memory_id) {
+            // Remove the node (this also removes all edges)
+            self.graph.remove_node(node_idx);
+
+            // Remove from the node map
+            self.node_map.remove(memory_id);
+
+            // Note: NodeIndex values may have changed after remove_node
+            // Rebuild the node_map to ensure consistency
+            let mut new_map = HashMap::new();
+            for node_idx in self.graph.node_indices() {
+                if let Some(mem_id) = self.graph.node_weight(node_idx) {
+                    new_map.insert(mem_id.clone(), node_idx);
+                }
+            }
+            self.node_map = new_map;
+        }
+    }
+
     /// Get entity graph statistics
     pub fn entity_graph_stats(&self) -> (usize, usize, usize) {
         (

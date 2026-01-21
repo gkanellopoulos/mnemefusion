@@ -164,6 +164,64 @@ impl TemporalIndex {
 
         Ok(count)
     }
+
+    /// Add a memory to the temporal index
+    ///
+    /// This is called automatically when a memory is added to the database.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The memory ID to index
+    /// * `timestamp` - The timestamp of the memory
+    pub fn add(&self, id: &MemoryId, timestamp: Timestamp) -> Result<()> {
+        let write_txn = self.storage.db().begin_write()?;
+        {
+            let mut table = write_txn.open_table(crate::storage::engine::TEMPORAL_INDEX)?;
+            table.insert(timestamp.as_micros(), id.as_bytes().as_slice())?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Remove a memory from the temporal index
+    ///
+    /// This is called automatically when a memory is deleted from the database.
+    /// Since we don't have the timestamp during deletion, we need to scan for it.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The memory ID to remove
+    pub fn remove(&self, id: &MemoryId) -> Result<()> {
+        use redb::ReadableTable;
+
+        let write_txn = self.storage.db().begin_write()?;
+        {
+            // First, find the timestamp(s) associated with this memory
+            let timestamps_to_remove: Vec<u64> = {
+                let table = write_txn.open_table(crate::storage::engine::TEMPORAL_INDEX)?;
+                let mut timestamps = Vec::new();
+
+                for entry in table.iter()? {
+                    let (ts_key, id_bytes) = entry?;
+                    if let Ok(entry_id) = MemoryId::from_bytes(id_bytes.value()) {
+                        if &entry_id == id {
+                            timestamps.push(ts_key.value());
+                        }
+                    }
+                }
+
+                timestamps
+            };
+
+            // Now remove all found entries
+            let mut table = write_txn.open_table(crate::storage::engine::TEMPORAL_INDEX)?;
+            for ts in timestamps_to_remove {
+                table.remove(ts)?;
+            }
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -6,11 +6,11 @@
 use crate::{
     config::Config,
     error::{Error, Result},
-    graph::{CausalTraversalResult, EntityQueryResult, GraphManager},
+    graph::{CausalTraversalResult, GraphManager},
     index::{TemporalIndex, VectorIndex, VectorIndexConfig},
-    ingest::{EntityExtractor, SimpleEntityExtractor},
+    ingest::IngestionPipeline,
     storage::StorageEngine,
-    types::{Entity, EntityId, Memory, MemoryId, Timestamp},
+    types::{Entity, Memory, MemoryId, Timestamp},
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -25,7 +25,7 @@ pub struct MemoryEngine {
     vector_index: Arc<RwLock<VectorIndex>>,
     temporal_index: Arc<TemporalIndex>,
     graph_manager: Arc<RwLock<GraphManager>>,
-    entity_extractor: SimpleEntityExtractor,
+    pipeline: IngestionPipeline,
     config: Config,
 }
 
@@ -83,15 +83,21 @@ impl MemoryEngine {
         crate::graph::persist::load_graph(&mut graph_manager, &storage)?;
         let graph_manager = Arc::new(RwLock::new(graph_manager));
 
-        // Create entity extractor
-        let entity_extractor = SimpleEntityExtractor::new();
+        // Create ingestion pipeline
+        let pipeline = IngestionPipeline::new(
+            Arc::clone(&storage),
+            Arc::clone(&vector_index),
+            Arc::clone(&temporal_index),
+            Arc::clone(&graph_manager),
+            config.entity_extraction_enabled,
+        );
 
         Ok(Self {
             storage,
             vector_index,
             temporal_index,
             graph_manager,
-            entity_extractor,
+            pipeline,
             config,
         })
     }
@@ -163,48 +169,8 @@ impl MemoryEngine {
             mem
         };
 
-        let id = memory.id.clone();
-
-        // Store memory
-        self.storage.store_memory(&memory)?;
-
-        // Add to vector index
-        {
-            let mut index = self.vector_index.write().unwrap();
-            index.add(id.clone(), &memory.embedding)?;
-        }
-
-        // Extract and link entities (if enabled)
-        if self.config.entity_extraction_enabled {
-            // Extract entity names from content
-            let entity_names = self.entity_extractor.extract(&memory.content)?;
-
-            // For each extracted entity
-            for entity_name in entity_names {
-                // Check if entity already exists
-                let entity = match self.storage.find_entity_by_name(&entity_name)? {
-                    Some(mut existing_entity) => {
-                        // Entity exists, increment mention count
-                        existing_entity.increment_mentions();
-                        self.storage.store_entity(&existing_entity)?;
-                        existing_entity
-                    }
-                    None => {
-                        // Create new entity (starts with mention_count = 1)
-                        let mut new_entity = Entity::new(entity_name);
-                        new_entity.increment_mentions();
-                        self.storage.store_entity(&new_entity)?;
-                        new_entity
-                    }
-                };
-
-                // Link memory to entity in graph
-                let mut graph = self.graph_manager.write().unwrap();
-                graph.link_memory_to_entity(&id, &entity.id);
-            }
-        }
-
-        Ok(id)
+        // Delegate to ingestion pipeline for atomic indexing
+        self.pipeline.add(memory)
     }
 
     /// Retrieve a memory by ID
@@ -254,24 +220,8 @@ impl MemoryEngine {
     /// assert!(deleted);
     /// ```
     pub fn delete(&self, id: &MemoryId) -> Result<bool> {
-        // Check if memory exists
-        let deleted = self.storage.delete_memory(id)?;
-
-        if deleted {
-            // Remove from vector index
-            let mut index = self.vector_index.write().unwrap();
-            index.remove(id)?;
-
-            // Remove from entity graph (Sprint 5)
-            {
-                let mut graph = self.graph_manager.write().unwrap();
-                graph.remove_memory_from_entity_graph(id);
-            }
-
-            // TODO (Sprint 6): Remove from causal graph
-        }
-
-        Ok(deleted)
+        // Delegate to ingestion pipeline for atomic cleanup
+        self.pipeline.delete(id)
     }
 
     /// Get the number of memories in the database
