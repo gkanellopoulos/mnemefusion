@@ -1,9 +1,9 @@
 # MnemeFusion: Project State
 
-**Last Updated**: January 21, 2026
-**Current Sprint**: Sprint 8.5 COMPLETE (Polish & Validation) → Ready for Sprint 9 ✅
-**Phase**: Phase 1 COMPLETE (8/8 sprints) | Phase 2 READY (Essential Features & Hardening)
-**Overall Progress**: Phase 1: 100% | Sprint 8.5: 100% | Total: 187 tests passing
+**Last Updated**: January 22, 2026
+**Current Sprint**: Sprint 9 IN PROGRESS (Provenance & Batch Operations) - Part 1 COMPLETE ✅
+**Phase**: Phase 2 STARTED (Essential Features & Hardening)
+**Overall Progress**: Phase 1: 100% | Sprint 9: 50% (Source tracking done) | Total: 155 tests passing
 
 ---
 
@@ -640,6 +640,145 @@ Total Automated Tests: 187/187 PASSING ✅
 - ✅ Features validated with live examples
 - ✅ Documentation comprehensive
 - ✅ **Phase 1 foundation is production-quality** 🎉
+
+---
+
+## ⏳ Sprint 9: IN PROGRESS (January 22, 2026)
+
+### 🎯 Sprint 9: Provenance & Batch Operations (Weeks 17-18) - Part 1 COMPLETE
+
+**Objective**: Add source tracking and batch operations for production use
+
+**Status**: Part 1 (Source Tracking) COMPLETE ✅ | Part 2 (Batch Operations) PENDING ⏳
+
+#### Part 1: Source Tracking (COMPLETE ✅)
+
+**What We Built:**
+- Complete source/provenance tracking system for memories
+- SourceType enum with 5 types (Conversation, Document, Url, Manual, Inference)
+- Source struct with all provenance fields (id, location, timestamp, original_text, confidence, extractor, metadata)
+- **Backward compatible** storage using reserved metadata key `__mf_source__`
+- Builder pattern API for constructing Source objects
+- Full Rust and Python integration
+
+**Key Files Created/Modified:**
+```
+mnemefusion-core/src/types/source.rs (NEW - 350+ LOC)
+  - SourceType enum with Display and FromStr
+  - Source struct with all fields
+  - JSON serialization/deserialization
+  - Builder pattern methods
+  - 8 comprehensive unit tests
+
+mnemefusion-core/src/types/memory.rs
+  - Added set_source(), get_source(), clear_source() methods
+  - Source stored as JSON in metadata HashMap
+  - 3 integration tests for source methods
+
+mnemefusion-core/src/memory.rs
+  - Updated add() signature with optional source parameter
+  - Source validation and attachment before storage
+  - All existing tests updated (144 tests passing)
+
+mnemefusion-python/src/lib.rs
+  - parse_source_from_dict() helper (60 LOC)
+  - source_to_pydict() helper (40 LOC)
+  - Updated add() to accept source dict
+  - Updated get(), search(), query() to include source in results
+  - Python bindings compile and work end-to-end
+```
+
+**Technical Achievements:**
+- **Backward Compatibility**: Works with v1 file format, no migration needed
+- **Metadata-Based Storage**: Source stored as JSON in reserved key `__mf_source__`
+- **Clean API**: Builder pattern makes source construction ergonomic
+- **Type Safety**: Strong typing with SourceType enum
+- **Full Integration**: Source included in all retrieval methods (get, search, query)
+
+**Test Results:**
+```
+Rust Unit Tests (source):     8/8   PASSING ✅
+Rust Integration Tests:      3/3   PASSING ✅
+Rust Core Tests Total:      155/155 PASSING ✅
+Python Bindings:             BUILD SUCCESS ✅
+Python Manual Test:          END-TO-END SUCCESS ✅
+──────────────────────────────────────────────
+Total: 155 automated tests passing
+```
+
+**API Examples:**
+
+Rust:
+```rust
+use mnemefusion_core::types::{Source, SourceType};
+
+let source = Source::new(SourceType::Conversation)
+    .with_id("conv_123")
+    .with_confidence(0.95)
+    .with_extractor("ChatExtractor v1.0");
+
+let id = engine.add(
+    "Meeting notes".into(),
+    embedding,
+    None,
+    None,
+    Some(source),
+)?;
+```
+
+Python:
+```python
+source = {
+    "type": "conversation",
+    "id": "conv_123",
+    "location": "message #42",
+    "confidence": 0.95,
+    "extractor": "ChatExtractor"
+}
+
+memory_id = memory.add(
+    "Meeting notes",
+    embedding,
+    source=source
+)
+
+# Source included in retrieval
+result = memory.get(memory_id)
+print(result['source']['type'])  # "conversation"
+```
+
+**Stories Completed:**
+- ✅ [STORY-9.1] Source tracking for memories (8 pts) - COMPLETE
+
+**Key Decisions:**
+| Date | Decision | Rationale | Impact |
+|------|----------|-----------|--------|
+| 2026-01-22 | Store Source in metadata HashMap | Backward compatible with v1 format, no migration | ✅ Zero breaking changes |
+| 2026-01-22 | Use reserved key prefix `__mf_source__` | Prevents user metadata conflicts | Clear ownership |
+| 2026-01-22 | Builder pattern for Source construction | Ergonomic API with optional fields | Clean user code |
+| 2026-01-22 | Include source in all retrieval methods | Complete provenance tracking | Full transparency |
+
+**Commit:**
+- Commit 014fc43: feat: add source tracking (provenance) for memories - Sprint 9 Part 1
+- Files changed: 6 files, +617 lines, -23 lines
+
+#### Part 2: Batch Operations (PENDING ⏳)
+
+**Remaining Work:**
+- [ ] Create MemoryInput and BatchResult types
+- [ ] Implement batch_store_memories() - single transaction
+- [ ] Implement batch_add_to_vector_index() - lock once
+- [ ] Implement batch_extract_and_link_entities() - deduplicate across batch
+- [ ] Implement add_batch() in IngestionPipeline
+- [ ] Implement delete_batch() in IngestionPipeline
+- [ ] Add Python bindings for batch operations
+- [ ] Write comprehensive tests
+- [ ] Performance benchmarks (target: 1,000 in <500ms)
+
+**Sprint 9 Progress:**
+- ✅ Part 1: Source Tracking - COMPLETE (50%)
+- ⏳ Part 2: Batch Operations - PENDING (50%)
+- **Overall Sprint 9: 50% complete**
 
 ---
 

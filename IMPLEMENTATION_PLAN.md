@@ -867,11 +867,11 @@ Each sprint is 2 weeks with:
 
 #### Tasks
 
-**Provenance / Source Tracking**
-- [ ] Define Source struct with schema:
+**Provenance / Source Tracking** ✅ COMPLETE (January 22, 2026)
+- [x] Define Source struct with schema:
   ```rust
   pub struct Source {
-      pub type: String,              // conversation, document, url, manual, inference
+      pub source_type: SourceType,   // Enum: Conversation, Document, Url, Manual, Inference
       pub id: Option<String>,        // External reference
       pub location: Option<String>,  // Position within source
       pub timestamp: Option<String>, // When source was created
@@ -881,13 +881,13 @@ Each sprint is 2 weeks with:
       pub metadata: Option<HashMap<String, String>>,
   }
   ```
-- [ ] Add `source: Option<Source>` field to Memory struct
-- [ ] Update storage schema to persist source
-- [ ] Update IngestionPipeline to handle source
-- [ ] Update search results to include source
-- [ ] Add Python API parameter for source
-- [ ] Write unit tests for source tracking
-- [ ] Update examples to demonstrate provenance
+- [x] Add source methods to Memory struct (set_source, get_source, clear_source)
+- [x] Store source as JSON in reserved metadata key (__mf_source__) - backward compatible
+- [x] Update MemoryEngine::add() to accept optional source parameter
+- [x] Update search/query results to include source in returned dicts
+- [x] Add Python API parameter for source (parse_source_from_dict, source_to_pydict)
+- [x] Write unit tests for source tracking (8 tests for Source, 3 for Memory integration)
+- [ ] Update examples to demonstrate provenance (deferred to documentation phase)
 
 **Batch Operations**
 - [ ] Implement `add_batch()` in IngestionPipeline:
@@ -919,10 +919,17 @@ Each sprint is 2 weeks with:
 - [ ] Add provenance examples to README
 - [ ] Add batch import example
 
-**Sprint 9 Review**
-- ✅ Source tracking working
-- ✅ Batch operations 10x faster
-- ✅ Python API updated
+**Sprint 9 Review** (IN PROGRESS - 50% complete as of January 22, 2026)
+- ✅ Part 1: Source tracking working (COMPLETE)
+  - Source struct with SourceType enum implemented
+  - Backward compatible storage via metadata
+  - Full Python bindings with parse/convert helpers
+  - 11 tests passing (8 Source + 3 Memory integration)
+  - Commit 014fc43
+- ⏳ Part 2: Batch operations (PENDING)
+  - Batch add/delete not yet implemented
+  - Performance targets not yet measured
+- ✅ Python API updated for source tracking
 
 ---
 
