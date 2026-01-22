@@ -7,27 +7,37 @@ MnemeFusion provides four-dimensional memory indexing (semantic, temporal, causa
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
 
-## Status: Phase 1 - Sprint 1 Complete ✅
+## Status: 🎉 Phase 1 COMPLETE ✅
 
-Currently in active development. Sprint 1 objectives achieved:
-- ✅ Core Rust project structure
-- ✅ Storage layer with redb
-- ✅ Memory CRUD operations
-- ✅ File format with validation
-- ✅ 50+ unit tests passing
-- ✅ 6 integration tests passing
-- ✅ Working example code
+**All 8 sprints of Phase 1 finished!** (January 21, 2026)
 
-**Next:** Sprint 2 will add vector indexing with usearch for semantic search.
+Phase 1 achievements:
+- ✅ **Storage Layer**: redb-based single-file database with ACID guarantees
+- ✅ **Vector Search**: usearch HNSW index for semantic similarity
+- ✅ **Temporal Indexing**: Time-based range queries and recency search
+- ✅ **Causal Graph**: Multi-hop causal relationship traversal
+- ✅ **Entity Graph**: Automatic entity extraction and entity-memory linking
+- ✅ **Ingestion Pipeline**: Atomic operations across all dimensions
+- ✅ **Query Intelligence**: Intent classification and adaptive fusion
+- ✅ **Python Bindings**: Production-ready PyO3 bindings with comprehensive tests
+
+**Test Status:**
+- 166 Rust tests passing (133 unit + 12 integration + 21 doc)
+- 21 Python tests passing
+- All features validated and working
+
+**Next:** Phase 2 will add essential features (provenance, batch operations, deduplication, namespaces, metadata filtering) based on competitive analysis.
 
 ## Features
 
 - **Single File Storage**: All data in one portable `.mfdb` file
 - **ACID Transactions**: Built on redb for reliability
-- **Four Dimensions**: Semantic, temporal, causal, and entity indexing (in progress)
+- **Four Dimensions**: Semantic, temporal, causal, and entity indexing ✅
+- **Intent Classification**: Automatic query type detection (temporal, causal, entity, factual)
+- **Adaptive Fusion**: Smart weighting of dimensions based on intent
 - **Zero Dependencies**: Embedded library, no servers to deploy
 - **Rust Core**: Memory-safe, high-performance implementation
-- **Python Bindings**: First-class Python API (coming Sprint 8)
+- **Python Bindings**: First-class Python API with PyO3 ✅
 
 ## Quick Start
 
@@ -69,22 +79,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### Python (Coming in Sprint 8)
+### Python ✅
 
 ```python
-from mnemefusion import Memory, Config
+import mnemefusion
 
 # Open database
-memory = Memory("./brain.mfdb")
+memory = mnemefusion.Memory("./brain.mfdb")
 
-# Add memory
-memory_id = memory.add("Meeting cancelled due to storm", embedding)
+# Add memory with metadata
+memory_id = memory.add(
+    content="Meeting cancelled due to storm",
+    embedding=[0.1] * 384,  # Your embedding model output
+    metadata={"type": "event", "priority": "high"}
+)
 
-# Search (intent-aware)
-results = memory.search("Why was the meeting cancelled?", query_embedding)
+# Intelligent query with intent classification
+intent, results = memory.query(
+    query_text="Why was the meeting cancelled?",
+    query_embedding=[0.1] * 384,
+    limit=10
+)
 
-memory.close()
+print(f"Intent: {intent['intent']} (confidence: {intent['confidence']})")
+
+for mem, scores in results:
+    print(f"Fused score: {scores['fused_score']}")
+    print(f"Content: {mem['content']}")
+
+# Or use context manager (recommended)
+with mnemefusion.Memory("./brain.mfdb") as memory:
+    memory.add("Some content", embedding)
+    # Automatically closes on exit
 ```
+
+**Installation (Development):**
+```bash
+cd mnemefusion-python
+python -m venv .venv
+.venv/Scripts/activate  # On Windows
+pip install maturin
+maturin develop
+```
+
+See [GETTING_STARTED.md](GETTING_STARTED.md) for a comprehensive tutorial.
 
 ## Architecture
 
@@ -167,24 +205,33 @@ cargo run --example basic_usage
 
 ## Testing
 
+### Rust Tests
 ```bash
-# Run all tests
+# Run all Rust tests
 cargo test --all
+
+# Run core tests only
+cargo test --package mnemefusion-core
 
 # Run with output
 cargo test -- --nocapture
-
-# Run specific test
-cargo test test_memory_engine
-
-# Run integration tests
-cargo test --test integration_test
 ```
 
-Current test coverage:
-- **50 unit tests** across all core modules
-- **6 integration tests** covering end-to-end workflows
-- **7 doc tests** ensuring examples compile
+### Python Tests
+```bash
+cd mnemefusion-python
+.venv/Scripts/activate
+pytest tests/ -v
+```
+
+**Current test coverage:**
+- ✅ **133 Rust unit tests** across all core modules
+- ✅ **12 integration tests** covering end-to-end workflows
+- ✅ **21 doc tests** ensuring examples compile
+- ✅ **21 Python tests** validating bindings
+- **Total: 187 tests, all passing**
+
+See [VALIDATION_RESULTS.md](VALIDATION_RESULTS.md) for detailed test results.
 
 ## Configuration
 
@@ -253,10 +300,19 @@ Licensed under either of:
 
 at your option.
 
+## Documentation
+
+- **[Getting Started Guide](GETTING_STARTED.md)** - Step-by-step tutorial for new users
+- **[Python API Reference](mnemefusion-python/README.md)** - Complete Python API documentation
+- **[Validation Results](VALIDATION_RESULTS.md)** - Phase 1 testing and validation report
+- **[Developer Guide](CLAUDE.md)** - For contributors
+- **[Project State](PROJECT_STATE.md)** - Current status and sprint history
+- **[Implementation Plan](IMPLEMENTATION_PLAN.md)** - Full roadmap (Phases 1-4)
+- **[Feature Roadmap](mnemefusion_feature_roadmap.md)** - Competitive analysis and future features
+
 ## Links
 
-- **Documentation**: Coming in Sprint 12
-- **Examples**: [examples/](./mnemefusion-core/examples/)
+- **Examples**: [Rust examples](./mnemefusion-core/examples/) | [Python examples](./mnemefusion-python/examples/)
 - **Issue Tracker**: [GitHub Issues](https://github.com/yourusername/mnemefusion/issues)
 - **Project Plan**: [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md)
 
@@ -269,7 +325,9 @@ Built on excellent Rust libraries:
 
 ## Status Updates
 
-**January 14, 2026** - Sprint 1 complete! Core foundation solid with 56 passing tests. Moving to Sprint 2 for vector indexing.
+**January 21, 2026** - 🎉 **Phase 1 COMPLETE!** All 8 sprints finished. 187 tests passing. Python bindings fully functional. Ready for Phase 2 (essential features).
+
+**January 14, 2026** - Sprint 1 complete! Core foundation solid with 63 passing tests.
 
 ---
 
