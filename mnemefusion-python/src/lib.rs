@@ -2,13 +2,84 @@
 //!
 //! This module provides a Pythonic interface to the MnemeFusion memory engine.
 
-use mnemefusion_core::{Config, MemoryEngine, MemoryId, Timestamp};
+use mnemefusion_core::{
+    types::{Source, SourceType},
+    Config, MemoryEngine, MemoryId, Timestamp,
+};
 use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::str::FromStr;
+
+/// Helper function to parse Source from Python dict
+fn parse_source_from_dict(dict: &PyDict) -> PyResult<Source> {
+    let source_type_str: String = dict
+        .get_item("type")?
+        .ok_or_else(|| PyValueError::new_err("Source 'type' is required"))?
+        .extract()?;
+
+    let source_type = SourceType::from_str(&source_type_str)
+        .map_err(|e| PyValueError::new_err(format!("Invalid source type: {}", e)))?;
+
+    let mut source = Source::new(source_type);
+
+    if let Some(id) = dict.get_item("id")? {
+        source = source.with_id(id.extract::<String>()?);
+    }
+    if let Some(location) = dict.get_item("location")? {
+        source = source.with_location(location.extract::<String>()?);
+    }
+    if let Some(timestamp) = dict.get_item("timestamp")? {
+        source = source.with_timestamp(timestamp.extract::<String>()?);
+    }
+    if let Some(original_text) = dict.get_item("original_text")? {
+        source = source.with_original_text(original_text.extract::<String>()?);
+    }
+    if let Some(confidence) = dict.get_item("confidence")? {
+        source = source.with_confidence(confidence.extract::<f32>()?);
+    }
+    if let Some(extractor) = dict.get_item("extractor")? {
+        source = source.with_extractor(extractor.extract::<String>()?);
+    }
+    if let Some(metadata) = dict.get_item("metadata")? {
+        source = source.with_metadata(metadata.extract::<HashMap<String, String>>()?);
+    }
+
+    Ok(source)
+}
+
+/// Helper function to convert Source to Python dict
+fn source_to_pydict(py: Python, source: &Source) -> PyResult<PyObject> {
+    let dict = PyDict::new(py);
+    dict.set_item("type", source.source_type.to_string())?;
+
+    if let Some(id) = &source.id {
+        dict.set_item("id", id)?;
+    }
+    if let Some(location) = &source.location {
+        dict.set_item("location", location)?;
+    }
+    if let Some(timestamp) = &source.timestamp {
+        dict.set_item("timestamp", timestamp)?;
+    }
+    if let Some(original_text) = &source.original_text {
+        dict.set_item("original_text", original_text)?;
+    }
+    if let Some(confidence) = source.confidence {
+        dict.set_item("confidence", confidence)?;
+    }
+    if let Some(extractor) = &source.extractor {
+        dict.set_item("extractor", extractor)?;
+    }
+    if let Some(metadata) = &source.metadata {
+        dict.set_item("metadata", metadata)?;
+    }
+
+    Ok(dict.into())
+}
 
 /// Python wrapper for MemoryEngine
 #[pyclass(name = "Memory")]
@@ -72,6 +143,7 @@ impl PyMemory {
     ///     embedding: Vector embedding (list of floats)
     ///     metadata: Optional metadata dictionary
     ///     timestamp: Optional Unix timestamp (seconds since epoch)
+    ///     source: Optional source/provenance tracking dictionary
     ///
     /// Returns:
     ///     Memory ID as a string
@@ -80,19 +152,29 @@ impl PyMemory {
     ///     >>> embedding = [0.1] * 384
     ///     >>> memory_id = memory.add("Meeting notes", embedding)
     ///     >>> memory_id = memory.add("Meeting notes", embedding, metadata={"project": "Alpha"})
-    #[pyo3(signature = (content, embedding, metadata=None, timestamp=None))]
+    ///     >>> source = {"type": "conversation", "id": "conv_123", "confidence": 0.95}
+    ///     >>> memory_id = memory.add("Meeting notes", embedding, source=source)
+    #[pyo3(signature = (content, embedding, metadata=None, timestamp=None, source=None))]
     fn add(
         &self,
         content: String,
         embedding: Vec<f32>,
         metadata: Option<HashMap<String, String>>,
         timestamp: Option<f64>,
+        source: Option<&PyDict>,
     ) -> PyResult<String> {
         let engine = self.get_engine()?;
         let ts = timestamp.map(|t| Timestamp::from_unix_secs(t));
 
+        // Parse source from Python dict
+        let rust_source = if let Some(src_dict) = source {
+            Some(parse_source_from_dict(src_dict)?)
+        } else {
+            None
+        };
+
         let id = engine
-            .add(content, embedding, metadata, ts)
+            .add(content, embedding, metadata, ts, rust_source)
             .map_err(|e| PyValueError::new_err(format!("Failed to add memory: {}", e)))?;
 
         Ok(id.to_string())
@@ -123,10 +205,19 @@ impl PyMemory {
             Python::with_gil(|py| {
                 let dict = PyDict::new(py);
                 dict.set_item("id", memory.id.to_string())?;
-                dict.set_item("content", memory.content)?;
-                dict.set_item("embedding", memory.embedding)?;
-                dict.set_item("metadata", memory.metadata)?;
+                dict.set_item("content", memory.content.clone())?;
+                dict.set_item("embedding", memory.embedding.clone())?;
+                dict.set_item("metadata", memory.metadata.clone())?;
                 dict.set_item("created_at", memory.created_at.as_unix_secs())?;
+
+                // Add source if present
+                if let Ok(Some(source)) = memory.get_source() {
+                    let source_dict = source_to_pydict(py, &source)?;
+                    dict.set_item("source", source_dict)?;
+                } else {
+                    dict.set_item("source", py.None())?;
+                }
+
                 Ok(Some(dict.into()))
             })
         } else {
@@ -177,10 +268,19 @@ impl PyMemory {
                 .map(|(memory, score)| {
                     let dict = PyDict::new(py);
                     dict.set_item("id", memory.id.to_string())?;
-                    dict.set_item("content", memory.content)?;
-                    dict.set_item("embedding", memory.embedding)?;
-                    dict.set_item("metadata", memory.metadata)?;
+                    dict.set_item("content", memory.content.clone())?;
+                    dict.set_item("embedding", memory.embedding.clone())?;
+                    dict.set_item("metadata", memory.metadata.clone())?;
                     dict.set_item("created_at", memory.created_at.as_unix_secs())?;
+
+                    // Add source if present
+                    if let Ok(Some(source)) = memory.get_source() {
+                        let source_dict = source_to_pydict(py, &source)?;
+                        dict.set_item("source", source_dict)?;
+                    } else {
+                        dict.set_item("source", py.None())?;
+                    }
+
                     let tuple = (dict, score);
                     Ok(tuple.into_py(py))
                 })
@@ -229,10 +329,18 @@ impl PyMemory {
                 .map(|(memory, fused_result)| {
                     let mem_dict = PyDict::new(py);
                     mem_dict.set_item("id", memory.id.to_string())?;
-                    mem_dict.set_item("content", memory.content)?;
-                    mem_dict.set_item("embedding", memory.embedding)?;
-                    mem_dict.set_item("metadata", memory.metadata)?;
+                    mem_dict.set_item("content", memory.content.clone())?;
+                    mem_dict.set_item("embedding", memory.embedding.clone())?;
+                    mem_dict.set_item("metadata", memory.metadata.clone())?;
                     mem_dict.set_item("created_at", memory.created_at.as_unix_secs())?;
+
+                    // Add source if present
+                    if let Ok(Some(source)) = memory.get_source() {
+                        let source_dict = source_to_pydict(py, &source)?;
+                        mem_dict.set_item("source", source_dict)?;
+                    } else {
+                        mem_dict.set_item("source", py.None())?;
+                    }
 
                     let scores_dict = PyDict::new(py);
                     scores_dict.set_item("semantic_score", fused_result.semantic_score)?;

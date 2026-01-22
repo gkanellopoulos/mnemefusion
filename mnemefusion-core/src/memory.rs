@@ -11,7 +11,7 @@ use crate::{
     ingest::IngestionPipeline,
     query::{FusedResult, IntentClassification, QueryPlanner},
     storage::StorageEngine,
-    types::{Entity, Memory, MemoryId, Timestamp},
+    types::{Entity, Memory, MemoryId, Source, Timestamp},
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -126,6 +126,7 @@ impl MemoryEngine {
     /// * `embedding` - Vector embedding (must match configured dimension)
     /// * `metadata` - Optional key-value metadata
     /// * `timestamp` - Optional custom timestamp (defaults to now)
+    /// * `source` - Optional provenance/source tracking information
     ///
     /// # Returns
     ///
@@ -136,18 +137,27 @@ impl MemoryEngine {
     /// Returns an error if:
     /// - Embedding dimension doesn't match configuration
     /// - Storage operation fails
+    /// - Source serialization fails
     ///
     /// # Example
     ///
     /// ```no_run
     /// # use mnemefusion_core::{MemoryEngine, Config};
+    /// # use mnemefusion_core::types::{Source, SourceType};
     /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
     /// let embedding = vec![0.1; 384];
+    ///
+    /// // Add memory with source tracking
+    /// let source = Source::new(SourceType::Conversation)
+    ///     .with_id("conv_123")
+    ///     .with_confidence(0.95);
+    ///
     /// let id = engine.add(
     ///     "Meeting scheduled for next week".to_string(),
     ///     embedding,
     ///     None,
     ///     None,
+    ///     Some(source),
     /// ).unwrap();
     /// ```
     pub fn add(
@@ -156,6 +166,7 @@ impl MemoryEngine {
         embedding: Vec<f32>,
         metadata: Option<HashMap<String, String>>,
         timestamp: Option<Timestamp>,
+        source: Option<Source>,
     ) -> Result<MemoryId> {
         // Validate embedding dimension
         if embedding.len() != self.config.embedding_dim {
@@ -166,7 +177,7 @@ impl MemoryEngine {
         }
 
         // Create memory
-        let memory = if let Some(ts) = timestamp {
+        let mut memory = if let Some(ts) = timestamp {
             let mut mem = Memory::new_with_timestamp(content, embedding, ts);
             if let Some(meta) = metadata {
                 mem.metadata = meta;
@@ -179,6 +190,11 @@ impl MemoryEngine {
             }
             mem
         };
+
+        // Add source if provided
+        if let Some(src) = source {
+            memory.set_source(src)?;
+        }
 
         // Delegate to ingestion pipeline for atomic indexing
         self.pipeline.add(memory)
@@ -199,7 +215,7 @@ impl MemoryEngine {
     /// ```no_run
     /// # use mnemefusion_core::{MemoryEngine, Config};
     /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
-    /// # let id = engine.add("test".to_string(), vec![0.1; 384], None, None).unwrap();
+    /// # let id = engine.add("test".to_string(), vec![0.1; 384], None, None, None).unwrap();
     /// let memory = engine.get(&id).unwrap();
     /// if let Some(mem) = memory {
     ///     println!("Content: {}", mem.content);
@@ -226,7 +242,7 @@ impl MemoryEngine {
     /// ```no_run
     /// # use mnemefusion_core::{MemoryEngine, Config};
     /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
-    /// # let id = engine.add("test".to_string(), vec![0.1; 384], None, None).unwrap();
+    /// # let id = engine.add("test".to_string(), vec![0.1; 384], None, None, None).unwrap();
     /// let deleted = engine.delete(&id).unwrap();
     /// assert!(deleted);
     /// ```
@@ -713,7 +729,7 @@ mod tests {
         let content = "Test memory content".to_string();
         let embedding = vec![0.1; 384];
 
-        let id = engine.add(content.clone(), embedding.clone(), None, None).unwrap();
+        let id = engine.add(content.clone(), embedding.clone(), None, None, None).unwrap();
 
         let memory = engine.get(&id).unwrap();
         assert!(memory.is_some());
@@ -732,6 +748,7 @@ mod tests {
         let result = engine.add(
             "test".to_string(),
             vec![0.1; 512], // Wrong dimension
+            None,
             None,
             None,
         );
@@ -753,6 +770,7 @@ mod tests {
                 vec![0.1; 384],
                 Some(metadata),
                 None,
+                None,
             )
             .unwrap();
 
@@ -773,6 +791,7 @@ mod tests {
                 vec![0.1; 384],
                 None,
                 Some(ts),
+                None,
             )
             .unwrap();
 
@@ -786,7 +805,7 @@ mod tests {
         let path = dir.path().join("test.mfdb");
         let engine = MemoryEngine::open(&path, Config::default()).unwrap();
 
-        let id = engine.add("test".to_string(), vec![0.1; 384], None, None).unwrap();
+        let id = engine.add("test".to_string(), vec![0.1; 384], None, None, None).unwrap();
 
         let deleted = engine.delete(&id).unwrap();
         assert!(deleted);
@@ -803,10 +822,10 @@ mod tests {
 
         assert_eq!(engine.count().unwrap(), 0);
 
-        engine.add("test1".to_string(), vec![0.1; 384], None, None).unwrap();
+        engine.add("test1".to_string(), vec![0.1; 384], None, None, None).unwrap();
         assert_eq!(engine.count().unwrap(), 1);
 
-        engine.add("test2".to_string(), vec![0.2; 384], None, None).unwrap();
+        engine.add("test2".to_string(), vec![0.2; 384], None, None, None).unwrap();
         assert_eq!(engine.count().unwrap(), 2);
     }
 
@@ -816,8 +835,8 @@ mod tests {
         let path = dir.path().join("test.mfdb");
         let engine = MemoryEngine::open(&path, Config::default()).unwrap();
 
-        let id1 = engine.add("test1".to_string(), vec![0.1; 384], None, None).unwrap();
-        let id2 = engine.add("test2".to_string(), vec![0.2; 384], None, None).unwrap();
+        let id1 = engine.add("test1".to_string(), vec![0.1; 384], None, None, None).unwrap();
+        let id2 = engine.add("test2".to_string(), vec![0.2; 384], None, None, None).unwrap();
 
         let ids = engine.list_ids().unwrap();
         assert_eq!(ids.len(), 2);
@@ -832,7 +851,7 @@ mod tests {
 
         let id = {
             let engine = MemoryEngine::open(&path, Config::default()).unwrap();
-            let id = engine.add("persistent".to_string(), vec![0.5; 384], None, None).unwrap();
+            let id = engine.add("persistent".to_string(), vec![0.5; 384], None, None, None).unwrap();
             engine.close().unwrap();
             id
         };

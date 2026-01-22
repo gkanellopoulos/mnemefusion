@@ -4,8 +4,10 @@
 
 pub mod entity;
 pub mod memory;
+pub mod source;
 pub mod timestamp;
 
 pub use entity::{Entity, EntityId};
 pub use memory::{Memory, MemoryId};
+pub use source::{Source, SourceType, SOURCE_METADATA_KEY};
 pub use timestamp::Timestamp;

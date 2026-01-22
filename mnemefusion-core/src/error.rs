@@ -70,6 +70,10 @@ pub enum Error {
     #[error("Invalid timestamp: {0}")]
     InvalidTimestamp(String),
 
+    /// Invalid source
+    #[error("Invalid source: {0}")]
+    InvalidSource(String),
+
     /// Configuration error
     #[error("Configuration error: {0}")]
     Configuration(String),

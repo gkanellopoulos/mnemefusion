@@ -176,6 +176,74 @@ impl Memory {
             Ok(())
         }
     }
+
+    /// Set the source (provenance) for this memory
+    ///
+    /// The source is stored as JSON in a reserved metadata key.
+    /// This allows backward compatibility with the v1 file format.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mnemefusion_core::types::memory::Memory;
+    /// use mnemefusion_core::types::source::{Source, SourceType};
+    ///
+    /// let mut memory = Memory::new("test content".into(), vec![0.1; 384]);
+    /// let source = Source::new(SourceType::Manual).with_id("test_123");
+    /// memory.set_source(source).unwrap();
+    ///
+    /// let retrieved = memory.get_source().unwrap();
+    /// assert!(retrieved.is_some());
+    /// ```
+    pub fn set_source(&mut self, source: super::Source) -> Result<()> {
+        let json = source.to_json()?;
+        self.metadata
+            .insert(super::SOURCE_METADATA_KEY.to_string(), json);
+        Ok(())
+    }
+
+    /// Get the source (provenance) for this memory, if it exists
+    ///
+    /// Returns None if no source was set, or an error if the source
+    /// JSON is invalid.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mnemefusion_core::types::memory::Memory;
+    ///
+    /// let memory = Memory::new("test content".into(), vec![0.1; 384]);
+    ///
+    /// let source = memory.get_source().unwrap();
+    /// assert!(source.is_none());
+    /// ```
+    pub fn get_source(&self) -> Result<Option<super::Source>> {
+        if let Some(json) = self.metadata.get(super::SOURCE_METADATA_KEY) {
+            let source = super::Source::from_json(json)?;
+            Ok(Some(source))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Remove the source from this memory
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mnemefusion_core::types::memory::Memory;
+    /// use mnemefusion_core::types::source::{Source, SourceType};
+    ///
+    /// let mut memory = Memory::new("test content".into(), vec![0.1; 384]);
+    /// let source = Source::new(SourceType::Manual);
+    /// memory.set_source(source).unwrap();
+    ///
+    /// memory.clear_source();
+    /// assert!(memory.get_source().unwrap().is_none());
+    /// ```
+    pub fn clear_source(&mut self) {
+        self.metadata.remove(super::SOURCE_METADATA_KEY);
+    }
 }
 
 #[cfg(test)]
@@ -266,5 +334,65 @@ mod tests {
         );
 
         assert_eq!(memory.get_metadata("source"), Some(&"test".to_string()));
+    }
+
+    #[test]
+    fn test_memory_source_integration() {
+        use super::super::{Source, SourceType};
+
+        let mut memory = Memory::new("test content".to_string(), vec![0.1; 384]);
+
+        // Initially no source
+        assert!(memory.get_source().unwrap().is_none());
+
+        // Set a source
+        let source = Source::new(SourceType::Conversation)
+            .with_id("conv_123")
+            .with_confidence(0.9);
+        memory.set_source(source.clone()).unwrap();
+
+        // Retrieve and verify
+        let retrieved = memory.get_source().unwrap().unwrap();
+        assert_eq!(retrieved.source_type, SourceType::Conversation);
+        assert_eq!(retrieved.id, Some("conv_123".to_string()));
+        assert_eq!(retrieved.confidence, Some(0.9));
+    }
+
+    #[test]
+    fn test_memory_source_clear() {
+        use super::super::{Source, SourceType};
+
+        let mut memory = Memory::new("test content".to_string(), vec![0.1; 384]);
+        let source = Source::new(SourceType::Manual);
+
+        memory.set_source(source).unwrap();
+        assert!(memory.get_source().unwrap().is_some());
+
+        memory.clear_source();
+        assert!(memory.get_source().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_memory_source_roundtrip() {
+        use super::super::{Source, SourceType};
+
+        let mut memory = Memory::new("test content".to_string(), vec![0.1; 384]);
+
+        let source = Source::new(SourceType::Document)
+            .with_id("doc_456")
+            .with_location("page 42")
+            .with_extractor("PDFExtractor");
+
+        memory.set_source(source.clone()).unwrap();
+
+        // Source should be stored in metadata
+        assert!(memory.metadata.contains_key(super::super::SOURCE_METADATA_KEY));
+
+        // Should be able to retrieve it
+        let retrieved = memory.get_source().unwrap().unwrap();
+        assert_eq!(retrieved.source_type, source.source_type);
+        assert_eq!(retrieved.id, source.id);
+        assert_eq!(retrieved.location, source.location);
+        assert_eq!(retrieved.extractor, source.extractor);
     }
 }
