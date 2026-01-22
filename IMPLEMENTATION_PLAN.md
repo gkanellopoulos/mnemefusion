@@ -1,8 +1,15 @@
 # MnemeFusion: Implementation Plan
 
-**Document Version:** 1.0
+**Document Version:** 2.0
 **Created:** January 2026
-**Status:** Active Development Plan
+**Last Updated:** January 21, 2026
+**Status:** Phase 1 Complete ✅ | Phase 2 Planning
+
+---
+
+## 🎉 Phase 1 Complete!
+
+**As of January 21, 2026:** All 8 sprints of Phase 1 are complete. The core engine with 4D indexing and Python bindings is fully functional. See PROJECT_STATE.md for detailed status.
 
 ---
 
@@ -10,23 +17,45 @@
 
 1. [Overview](#overview)
 2. [Sprint Structure](#sprint-structure)
-3. [Phase 1: Core Engine (Sprints 1-8)](#phase-1-core-engine)
-4. [Phase 2: Production Hardening (Sprints 9-14)](#phase-2-production-hardening)
-5. [Phase 3: Ecosystem (Sprints 15+)](#phase-3-ecosystem)
-6. [Risk Management](#risk-management)
-7. [Success Criteria](#success-criteria)
+3. [Phase 1: Core Engine (Sprints 1-8)](#phase-1-core-engine) ✅ **COMPLETE**
+4. [Phase 2: Essential Features & Hardening (Sprints 9-14)](#phase-2-essential-features--production-hardening)
+5. [Phase 3: Testing, Documentation & Release (Sprints 15-18)](#phase-3-testing-documentation--release)
+6. [Phase 4: Ecosystem & Advanced Features (Sprints 19+)](#phase-4-ecosystem--advanced-features)
+7. [Risk Management](#risk-management)
+8. [Success Criteria](#success-criteria)
 
 ---
 
 ## Overview
 
+**IMPORTANT UPDATE (January 21, 2026):** Phase 2 has been reorganized to incorporate essential features identified through competitive analysis (see mnemefusion_feature_roadmap.md). These P0 and P1 features are critical for real-world adoption and will be implemented before production hardening.
+
 ### Timeline Summary
 
-| Phase | Duration | Sprints | Focus |
-|-------|----------|---------|-------|
-| Phase 1 | 4 months | 1-8 | Core engine with 4D indexing |
-| Phase 2 | 3 months | 9-14 | Production hardening & optimization |
-| Phase 3 | Ongoing | 15+ | Ecosystem & community |
+| Phase | Duration | Sprints | Focus | Status |
+|-------|----------|---------|-------|--------|
+| **Phase 1** | 16 weeks | 1-8 | Core engine with 4D indexing + Python bindings | ✅ **COMPLETE** |
+| **Phase 2** | 12 weeks | 9-14 | Essential features (provenance, batch, dedup, namespaces, metadata) + hardening | 📋 Planning |
+| **Phase 3** | 8 weeks | 15-18 | Testing, documentation, PyPI release, 1.0 launch | 📋 Planning |
+| **Phase 4** | Ongoing | 19+ | Ecosystem, community, P2 features as demand warrants | 📋 Planning |
+
+### Phase 2 Reorganization
+
+**New Sprints 9-12** (Essential Features from Roadmap):
+- Sprint 9: Provenance & Batch Operations
+- Sprint 10: Deduplication & Upsert
+- Sprint 11: Namespaces & Scoping
+- Sprint 12: Metadata Indexing & Filtering
+
+**Sprints 13-14** (Production Hardening):
+- Sprint 13: Reliability & ACID (formerly Sprint 9)
+- Sprint 14: Performance Optimization (formerly Sprint 10)
+
+**Phase 3** (Testing & Release):
+- Sprint 15: Comprehensive Testing (formerly Sprint 11)
+- Sprint 16: API Stability & Documentation (formerly Sprint 12)
+- Sprint 17: Python Package Distribution (formerly Sprint 13)
+- Sprint 18: Production Readiness & 1.0 Release (formerly Sprint 14)
 
 ### Development Principles
 
@@ -799,17 +828,404 @@ Each sprint is 2 weeks with:
 
 ---
 
-## Phase 2: Production Hardening
+## Phase 2: Essential Features & Production Hardening
 
-**Goal**: Production-ready reliability, performance optimization, comprehensive testing
+**Goal**: Add essential features from competitive analysis, then production-ready reliability
 
-### Sprint 9: Reliability & ACID (Weeks 17-18)
+**Note**: Phase 2 has been reorganized to incorporate P0 and P1 features identified in the competitive analysis (see mnemefusion_feature_roadmap.md). These features are essential for real-world adoption and should be implemented before hardening.
 
-**Objective**: Ensure ACID guarantees and crash recovery
+---
+
+### Sprint 9: Provenance & Batch Operations (Weeks 17-18)
+
+**Objective**: Add source tracking and batch operations for production use
+
+**Note**: Features from mnemefusion_feature_roadmap.md - P0 priority
 
 #### Stories
 
-**[STORY-9.1] As a user, my data is safe even if the process crashes**
+**[STORY-9.1] As a developer, I can track the source of every memory**
+- **Priority**: P0 (Critical)
+- **Points**: 8
+- **Acceptance Criteria**:
+  - Memories have optional structured `source` field
+  - Source tracks: type, id, location, timestamp, original_text, confidence, extractor
+  - Source displayed in search results
+  - Source persisted to storage
+  - Python API supports source parameter
+
+**[STORY-9.2] As a developer, I can add/delete memories in batches efficiently**
+- **Priority**: P0 (Critical)
+- **Points**: 8
+- **Acceptance Criteria**:
+  - `add_batch()` API for bulk inserts
+  - Single transaction for batch operations
+  - Batch vector indexing
+  - 10x+ performance improvement vs single operations
+  - Progress callback support
+  - `delete_batch()` for bulk deletion
+
+#### Tasks
+
+**Provenance / Source Tracking**
+- [ ] Define Source struct with schema:
+  ```rust
+  pub struct Source {
+      pub type: String,              // conversation, document, url, manual, inference
+      pub id: Option<String>,        // External reference
+      pub location: Option<String>,  // Position within source
+      pub timestamp: Option<String>, // When source was created
+      pub original_text: Option<String>,
+      pub confidence: Option<f32>,   // 0.0-1.0
+      pub extractor: Option<String>,
+      pub metadata: Option<HashMap<String, String>>,
+  }
+  ```
+- [ ] Add `source: Option<Source>` field to Memory struct
+- [ ] Update storage schema to persist source
+- [ ] Update IngestionPipeline to handle source
+- [ ] Update search results to include source
+- [ ] Add Python API parameter for source
+- [ ] Write unit tests for source tracking
+- [ ] Update examples to demonstrate provenance
+
+**Batch Operations**
+- [ ] Implement `add_batch()` in IngestionPipeline:
+  - Accept `Vec<MemoryInput>` with all fields
+  - Single transaction for all inserts
+  - Batch vector index add
+  - Batch temporal index add
+  - Batch entity extraction
+  - Progress callback: `Option<Fn(usize, usize)>`
+- [ ] Return BatchResult with:
+  - `ids: Vec<MemoryId>`
+  - `created_count: usize`
+  - `duplicate_count: usize` (if dedup enabled)
+  - `errors: Vec<BatchError>`
+- [ ] Implement `delete_batch()`:
+  - Accept `Vec<MemoryId>`
+  - Remove from all indexes atomically
+  - Return count deleted
+- [ ] Benchmark performance:
+  - Target: 1,000 memories in <500ms
+  - Target: 10,000 memories in <3 seconds
+- [ ] Add Python bindings for batch operations
+- [ ] Write batch operation tests
+- [ ] Update examples to demonstrate batch usage
+
+**Documentation**
+- [ ] Document Source schema and use cases
+- [ ] Document batch operation performance characteristics
+- [ ] Add provenance examples to README
+- [ ] Add batch import example
+
+**Sprint 9 Review**
+- ✅ Source tracking working
+- ✅ Batch operations 10x faster
+- ✅ Python API updated
+
+---
+
+### Sprint 10: Deduplication & Upsert (Weeks 19-20)
+
+**Objective**: Prevent memory pollution with deduplication and upsert operations
+
+**Note**: Features from mnemefusion_feature_roadmap.md - P0 priority
+
+#### Stories
+
+**[STORY-10.1] As a developer, I can prevent duplicate memories automatically**
+- **Priority**: P0 (Critical)
+- **Points**: 8
+- **Acceptance Criteria**:
+  - Content-hash based deduplication
+  - Configurable via `dedup` parameter
+  - Returns whether memory was created or duplicate found
+  - Existing ID returned for duplicates
+  - Optional: update timestamp on duplicate (touch)
+
+**[STORY-10.2] As a developer, I can upsert memories by logical key**
+- **Priority**: P0 (Critical)
+- **Points**: 8
+- **Acceptance Criteria**:
+  - `upsert()` method with developer-defined keys
+  - Replaces content/embedding if key exists
+  - Returns whether created or updated
+  - Atomic operation
+  - Python API support
+
+#### Tasks
+
+**Content-Hash Deduplication**
+- [ ] Add content hash index: `content_hash -> memory_id`
+- [ ] Implement hash function (SHA-256 or blake3)
+- [ ] Modify `add()` to check hash before inserting:
+  - If hash exists and dedup=True, return existing ID
+  - If dedup=False, allow duplicate (escape hatch)
+- [ ] Return AddResult struct:
+  ```rust
+  pub struct AddResult {
+      pub id: MemoryId,
+      pub created: bool,
+      pub existing_id: Option<MemoryId>,
+  }
+  ```
+- [ ] Handle hash collisions with full content comparison
+- [ ] Add storage table: CONTENT_HASH_INDEX
+- [ ] Update IngestionPipeline for deduplication
+- [ ] Write deduplication tests
+
+**Key-Based Upsert**
+- [ ] Add logical key index: `key -> memory_id`
+- [ ] Implement `upsert()` method:
+  - Lookup by key
+  - If exists: replace content, embedding, metadata
+  - If not exists: create new
+  - Atomic operation
+- [ ] Return UpsertResult struct:
+  ```rust
+  pub struct UpsertResult {
+      pub id: MemoryId,
+      pub created: bool,
+      pub updated: bool,
+      pub previous_content: Option<String>,
+  }
+  ```
+- [ ] Add storage table: LOGICAL_KEY_INDEX
+- [ ] Handle cascade updates (vector index, temporal index, etc.)
+- [ ] Write upsert tests
+
+**API Integration**
+- [ ] Update Memory::add() signature with dedup parameter
+- [ ] Add Memory::upsert() method
+- [ ] Add Python bindings for both operations
+- [ ] Update batch operations to support dedup
+
+**Edge Cases**
+- [ ] Handle: Same content, different embedding → treat as duplicate
+- [ ] Handle: Same key, different content → replace
+- [ ] Handle: Hash collision → full content comparison
+- [ ] Document escape hatch: dedup=False
+
+**Documentation**
+- [ ] Document deduplication strategy
+- [ ] Document upsert semantics
+- [ ] Add examples for both patterns
+- [ ] Add migration guide for existing databases
+
+**Sprint 10 Review**
+- ✅ Deduplication working
+- ✅ Upsert functional
+- ✅ No duplicate pollution
+
+---
+
+### Sprint 11: Namespaces & Scoping (Weeks 21-22)
+
+**Objective**: Enable multi-user and multi-context isolation
+
+**Note**: Features from mnemefusion_feature_roadmap.md - P1 priority
+
+#### Stories
+
+**[STORY-11.1] As a developer, I can isolate memories by namespace**
+- **Priority**: P1 (High)
+- **Points**: 13
+- **Acceptance Criteria**:
+  - Namespace parameter on all operations
+  - Queries only return results from same namespace
+  - Scoped view API: `memory.scope(namespace)`
+  - Default namespace (empty string)
+  - Support nested namespaces (e.g., "org_1/user_123")
+  - Namespace management: list, delete
+
+#### Tasks
+
+**Storage Model**
+- [ ] Extend storage schema with namespace:
+  ```rust
+  // Composite key: (namespace, id)
+  Table: memories
+    namespace: String (indexed)
+    id: MemoryId
+    content: String
+    ...
+  ```
+- [ ] Migrate existing memories to default namespace ""
+- [ ] Create namespace index for efficient filtering
+
+**API Design**
+- [ ] Add namespace parameter to all operations:
+  - `add(content, embedding, namespace="")`
+  - `search(query, embedding, namespace="")`
+  - `delete(id, namespace="")`
+  - `query(query_text, embedding, limit, namespace="")`
+- [ ] Implement `scope()` method:
+  ```rust
+  pub fn scope(&self, namespace: &str) -> ScopedMemory
+
+  pub struct ScopedMemory {
+      engine: Arc<MemoryEngine>,
+      namespace: String,
+  }
+  // ScopedMemory implements all operations, automatically scoped
+  ```
+- [ ] Implement namespace management:
+  - `list_namespaces() -> Vec<String>`
+  - `delete_namespace(namespace) -> usize` (returns count deleted)
+  - `count_namespace(namespace) -> usize`
+
+**Vector Index Filtering**
+- [ ] Implement post-filtering strategy:
+  1. Search globally in vector index
+  2. Filter results by namespace
+  3. Return top-k after filtering
+- [ ] Document trade-off: simplicity vs performance
+- [ ] Consider future optimization: separate indexes per namespace
+
+**Integration**
+- [ ] Update IngestionPipeline for namespaced operations
+- [ ] Update QueryPlanner to filter by namespace
+- [ ] Update all graph operations (entity, causal) for namespace isolation
+- [ ] Update temporal index queries for namespace filtering
+
+**Python Bindings**
+- [ ] Add namespace parameter to all Python methods
+- [ ] Implement ScopedMemory class in Python
+- [ ] Add namespace management methods
+
+**Testing**
+- [ ] Test namespace isolation
+- [ ] Test cross-namespace queries don't leak
+- [ ] Test namespace deletion cascades properly
+- [ ] Test nested namespace support
+
+**Documentation**
+- [ ] Document namespace semantics
+- [ ] Add multi-user example
+- [ ] Add multi-context example
+- [ ] Document migration strategy
+
+**Sprint 11 Review**
+- ✅ Namespace isolation working
+- ✅ Scoped API functional
+- ✅ Multi-tenant ready
+
+---
+
+### Sprint 12: Metadata Indexing & Filtering (Weeks 23-24)
+
+**Objective**: Enable filtered retrieval based on metadata
+
+**Note**: Features from mnemefusion_feature_roadmap.md - P1 priority
+
+#### Stories
+
+**[STORY-12.1] As a developer, I can filter search results by metadata fields**
+- **Priority**: P1 (High)
+- **Points**: 13
+- **Acceptance Criteria**:
+  - Declare indexed metadata fields at config time
+  - Filter syntax with operators: exact, $gte, $lte, $in, $ne
+  - Filters applied efficiently (index-backed)
+  - Filters compose with namespaces
+  - Python API support
+
+#### Tasks
+
+**Metadata Index Design**
+- [ ] Add config for indexed metadata fields:
+  ```rust
+  pub struct Config {
+      ...
+      pub indexed_metadata: Vec<String>,  // e.g., ["type", "category", "confidence"]
+  }
+  ```
+- [ ] Create metadata index tables:
+  ```
+  METADATA_INDEX_{field_name}:
+    value -> Set<(namespace, memory_id)>
+  ```
+- [ ] Build indexes on memory add
+- [ ] Update indexes on memory delete/update
+
+**Filter Syntax**
+- [ ] Define Filter types:
+  ```rust
+  pub enum FilterOp {
+      Eq(String),                // Exact match
+      Gt(String), Gte(String),   // Greater than
+      Lt(String), Lte(String),   // Less than
+      In(Vec<String>),           // In list
+      Ne(String),                // Not equal
+  }
+
+  pub struct MetadataFilter {
+      pub field: String,
+      pub op: FilterOp,
+  }
+  ```
+- [ ] Implement filter evaluation
+- [ ] Optimize for common cases (single exact match)
+
+**Query Integration**
+- [ ] Add filters parameter to search():
+  ```rust
+  pub fn search(
+      &self,
+      query_embedding: &[f32],
+      top_k: usize,
+      namespace: &str,
+      filters: Option<Vec<MetadataFilter>>,
+  ) -> Result<Vec<SearchResult>>
+  ```
+- [ ] Apply filters before or after vector search (selectivity-based)
+- [ ] Support filter-only queries (no embedding)
+
+**Python API**
+- [ ] Add Python dict-based filter syntax:
+  ```python
+  results = memory.search(
+      query_embedding,
+      top_k=10,
+      filters={
+          "type": "preference",
+          "confidence": {"$gte": 0.8},
+          "category": {"$in": ["food", "travel"]}
+      }
+  )
+  ```
+- [ ] Convert Python filters to Rust MetadataFilter
+
+**Testing**
+- [ ] Test exact match filtering
+- [ ] Test range filtering (gte, lte)
+- [ ] Test list filtering (in)
+- [ ] Test filter + namespace composition
+- [ ] Benchmark filtered vs unfiltered queries
+
+**Documentation**
+- [ ] Document filter syntax
+- [ ] Document indexed_metadata configuration
+- [ ] Add filtering examples
+- [ ] Document performance characteristics
+
+**Sprint 12 Review**
+- ✅ Metadata filtering working
+- ✅ Efficient index-backed queries
+- ✅ Python API functional
+
+---
+
+### Sprint 13: Reliability & ACID (Weeks 25-26)
+
+**Objective**: Ensure ACID guarantees and crash recovery
+
+**Note**: Moved from original Sprint 9, now Sprint 13 after essential features
+
+#### Stories
+
+**[STORY-13.1] As a user, my data is safe even if the process crashes**
 - **Priority**: P0 (Critical)
 - **Points**: 13
 - **Acceptance Criteria**:
@@ -819,7 +1235,7 @@ Each sprint is 2 weeks with:
   - Redb transactions fully utilized
   - Vector index recoverable
 
-**[STORY-9.2] As a developer, I can detect and handle corrupt databases**
+**[STORY-13.2] As a developer, I can detect and handle corrupt databases**
 - **Priority**: P1 (High)
 - **Points**: 8
 - **Acceptance Criteria**:
@@ -864,20 +1280,22 @@ Each sprint is 2 weeks with:
 - [ ] Document crash recovery behavior
 - [ ] Add troubleshooting guide
 
-**Sprint 9 Review**
+**Sprint 13 Review**
 - ✅ ACID guarantees verified
 - ✅ Crash recovery working
 - ✅ Corruption detection functional
 
 ---
 
-### Sprint 10: Performance Optimization (Weeks 19-20)
+### Sprint 14: Performance Optimization (Weeks 27-28)
 
 **Objective**: Optimize hot paths and meet latency targets
 
+**Note**: Moved from original Sprint 10, now Sprint 14 after essential features
+
 #### Stories
 
-**[STORY-10.1] As a user, search latency is consistently under 10ms for 100K memories**
+**[STORY-14.1] As a user, search latency is consistently under 10ms for 100K memories**
 - **Priority**: P0 (Critical)
 - **Points**: 13
 - **Acceptance Criteria**:
@@ -928,20 +1346,26 @@ Each sprint is 2 weeks with:
 - [ ] Document performance characteristics
 - [ ] Add optimization guide
 
-**Sprint 10 Review**
+**Sprint 14 Review**
 - ✅ Latency targets met
 - ✅ Memory usage acceptable
 - ✅ Benchmark suite established
 
 ---
 
-### Sprint 11: Comprehensive Testing (Weeks 21-22)
+## Phase 3: Testing, Documentation & Release
+
+**Goal**: Comprehensive testing, stable API, and production release
+
+### Sprint 15: Comprehensive Testing (Weeks 29-30)
 
 **Objective**: Achieve >80% test coverage, add property-based tests
 
+**Note**: Moved from original Sprint 11, now Sprint 15 in Phase 3
+
 #### Stories
 
-**[STORY-11.1] As a developer, I have confidence in code quality through comprehensive tests**
+**[STORY-15.1] As a developer, I have confidence in code quality through comprehensive tests**
 - **Priority**: P1 (High)
 - **Points**: 13
 - **Acceptance Criteria**:
@@ -991,20 +1415,22 @@ Each sprint is 2 weeks with:
 - [ ] Testing guide for contributors
 - [ ] CI/CD documentation
 
-**Sprint 11 Review**
+**Sprint 15 Review**
 - ✅ Test coverage >80%
 - ✅ Property tests passing
 - ✅ CI/CD functional
 
 ---
 
-### Sprint 12: API Stability & Documentation (Weeks 23-24)
+### Sprint 16: API Stability & Documentation (Weeks 31-32)
 
 **Objective**: Finalize API for 1.0, comprehensive documentation
 
+**Note**: Moved from original Sprint 12, now Sprint 16 in Phase 3
+
 #### Stories
 
-**[STORY-12.1] As a user, the API is stable and well-documented**
+**[STORY-16.1] As a user, the API is stable and well-documented**
 - **Priority**: P0 (Critical)
 - **Points**: 13
 - **Acceptance Criteria**:
@@ -1059,20 +1485,22 @@ Each sprint is 2 weeks with:
 - [ ] Add quickstart guide
 - [ ] Add API playground (optional)
 
-**Sprint 12 Review**
+**Sprint 16 Review**
 - ✅ API stable
 - ✅ Documentation comprehensive
 - ✅ Examples working
 
 ---
 
-### Sprint 13: Python Package Distribution (Weeks 25-26)
+### Sprint 17: Python Package Distribution (Weeks 33-34)
 
 **Objective**: Publish Python package, automated builds
 
+**Note**: Moved from original Sprint 13, now Sprint 17 in Phase 3
+
 #### Stories
 
-**[STORY-13.1] As a Python user, I can `pip install mnemefusion` without Rust**
+**[STORY-17.1] As a Python user, I can `pip install mnemefusion` without Rust**
 - **Priority**: P0 (Critical)
 - **Points**: 13
 - **Acceptance Criteria**:
@@ -1125,20 +1553,22 @@ Each sprint is 2 weeks with:
 - [ ] Release notes template
 - [ ] Changelog
 
-**Sprint 13 Review**
+**Sprint 17 Review**
 - ✅ Wheels build successfully
 - ✅ Package installable via pip
 - ✅ Automated releases working
 
 ---
 
-### Sprint 14: Production Readiness & Polish (Weeks 27-28)
+### Sprint 18: Production Readiness & 1.0 Release (Weeks 35-36)
 
 **Objective**: Final polish, prepare for 1.0 release
 
+**Note**: Moved from original Sprint 14, now Sprint 18 - the final sprint before 1.0 launch
+
 #### Stories
 
-**[STORY-14.1] As a user, I have confidence that MnemeFusion is production-ready**
+**[STORY-18.1] As a user, I have confidence that MnemeFusion is production-ready**
 - **Priority**: P0 (Critical)
 - **Points**: 13
 - **Acceptance Criteria**:
@@ -1199,18 +1629,21 @@ Each sprint is 2 weeks with:
 - [ ] License in place
 - [ ] Security audit complete
 
-**Sprint 14 Review**
+**Sprint 18 Review**
 - ✅ Production ready
 - ✅ 1.0 release candidate
-- ✅ Phase 2 complete! 🚀
+- ✅ Phase 3 complete! 🚀
+- ✅ **MnemeFusion 1.0 LAUNCHED!**
 
 ---
 
-## Phase 3: Ecosystem
+## Phase 4: Ecosystem & Advanced Features
 
-**Goal**: Adoption, community building, enterprise features
+**Goal**: Adoption, community building, enterprise features, P2 features from roadmap
 
-### Sprint 15+: Community & Growth (Ongoing)
+**Note**: Phase 4 includes P2 features from mnemefusion_feature_roadmap.md as demand warrants
+
+### Sprint 19+: Community & Growth (Ongoing)
 
 #### Focus Areas
 
@@ -1235,7 +1668,38 @@ Each sprint is 2 weeks with:
 - [ ] Go bindings (cgo)
 - [ ] Other languages as requested
 
-**Advanced Features**
+**Advanced Features (P2 from Feature Roadmap)**
+
+These features from mnemefusion_feature_roadmap.md are P2 priority - implement as demand warrants:
+
+- [ ] **Memory Versioning / History** (High effort - 5+ days)
+  - Track history of memory changes
+  - Point-in-time queries: "what did we know at time T?"
+  - Audit trail and undo capability
+  - Significant storage overhead
+  - See roadmap line 585-634
+
+- [ ] **Memory Expiration / TTL** (Medium effort - 3-4 days)
+  - Auto-expire memories after TTL
+  - Time-limited information handling
+  - Session-specific context cleanup
+  - Background cleanup process
+  - See roadmap line 636-678
+
+- [ ] **Generic Relationships** (Medium effort - 3-4 days)
+  - Beyond causal: "contradicts", "supports", "supersedes", "relates_to"
+  - Custom relationship types
+  - Traverse arbitrary relationships in search
+  - See roadmap line 682-729
+
+- [ ] **Import / Export** (Low-Medium effort - 2-3 days)
+  - Export to JSON/JSONL/Parquet
+  - Import from portable formats
+  - Backup in human-readable format
+  - Namespace-specific export
+  - See roadmap line 732-791
+
+**Other Advanced Features**
 - [ ] Advanced NER for entity extraction
 - [ ] LLM-based causal inference
 - [ ] Compression for storage efficiency
@@ -1290,24 +1754,43 @@ Each sprint is 2 weeks with:
 
 ## Success Criteria
 
-### Phase 1 (Sprint 8 Exit)
+### Phase 1 (Sprint 8 Exit) ✅ COMPLETE
 
-- [ ] All four dimensions functional
-- [ ] Python bindings working
-- [ ] Can install with maturin develop
-- [ ] Basic performance targets met (<10ms search for 100K)
-- [ ] Core documentation complete
-- [ ] 50+ unit tests passing
+- [x] All four dimensions functional
+- [x] Python bindings working
+- [x] Can install with maturin develop
+- [x] Basic performance targets met (<10ms search)
+- [x] Core documentation complete
+- [x] 160+ tests passing (133 Rust + 50+ Python)
+- **Status**: Phase 1 complete as of January 21, 2026
 
 ### Phase 2 (Sprint 14 Exit)
 
+**Essential Features:**
+- [ ] Provenance / source tracking implemented
+- [ ] Batch operations (add_batch, delete_batch)
+- [ ] Deduplication (content-hash + upsert)
+- [ ] Namespaces / scoping for multi-tenant use
+- [ ] Metadata indexing and filtering
+
+**Production Hardening:**
 - [ ] ACID guarantees verified
 - [ ] Performance benchmarks published
+- [ ] Latency targets met for 100K+ memories
+
+**Status**: Ready to begin Sprint 9
+
+### Phase 3 (Sprint 18 Exit) - 1.0 Release
+
 - [ ] >80% test coverage
-- [ ] API stable (1.0 candidate)
+- [ ] Property-based tests passing
+- [ ] API stable (1.0)
 - [ ] Published to PyPI
 - [ ] Comprehensive documentation
 - [ ] Example applications working
+- [ ] CI/CD automated
+- [ ] Security audit complete
+- [ ] 1.0 launched!
 
 ### Phase 3 (Long-term)
 
