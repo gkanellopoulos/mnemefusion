@@ -29,5 +29,4 @@ Repository = "https://github.com/yourusername/mnemefusion"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
-python-source = "python"
 module-name = "mnemefusion"
