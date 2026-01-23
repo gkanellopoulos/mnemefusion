@@ -1698,6 +1698,356 @@ pub enum Error {
 
 ---
 
+## Scaling & Limits
+
+### Design Philosophy
+
+MnemeFusion follows the **SQLite scaling model**: optimize for single-user/single-context performance, and scale horizontally by deploying many instances. This is not a limitation—it's a deliberate architectural choice that enables:
+
+- Predictable performance characteristics
+- Simple deployment (no coordination overhead)
+- Data isolation by design
+- Edge/offline capability
+
+**Target deployment pattern:**
+```
+NOT: One massive database for all users
+YES: One database per user/context, managed by application
+```
+
+### Component Limits
+
+#### Storage Layer (redb)
+
+| Aspect | Limit | Notes |
+|--------|-------|-------|
+| Max file size | ~64 TB | Filesystem dependent |
+| Max records | Billions | Key-value store scales well |
+| Single record size | ~4 GB | redb limit per value |
+| Concurrent readers | Unlimited | MVCC |
+| Concurrent writers | 1 | Single-writer model |
+
+**Storage is not the bottleneck.** redb handles large datasets efficiently.
+
+#### Vector Index (usearch/HNSW)
+
+| Aspect | Limit | Notes |
+|--------|-------|-------|
+| Max vectors | ~10-100 million | Memory bound |
+| Memory per vector (384-dim) | ~1.5 KB | With HNSW overhead |
+| Memory per vector (768-dim) | ~3 KB | With HNSW overhead |
+| Memory per vector (1536-dim) | ~6 KB | With HNSW overhead |
+
+**Memory requirements by scale (768-dim embeddings):**
+
+| Memories | RAM for Vectors | Notes |
+|----------|-----------------|-------|
+| 10K | ~30 MB | Trivial |
+| 100K | ~300 MB | Comfortable |
+| 500K | ~1.5 GB | Workable |
+| 1M | ~3 GB | Needs dedicated memory |
+| 10M | ~30 GB | Requires optimization |
+
+**Vector index is memory-bound. This is the primary constraint for most deployments.**
+
+#### Graph Layer (petgraph)
+
+| Aspect | Limit | Notes |
+|--------|-------|-------|
+| Storage | In-memory | Current design loads entire graph into RAM |
+| Node overhead | ~64 bytes | Per node |
+| Edge overhead | ~48 bytes | Per edge |
+
+**Memory requirements by scale:**
+
+| Nodes | Edges (5× nodes) | RAM | Notes |
+|-------|------------------|-----|-------|
+| 10K | 50K | ~5 MB | Trivial |
+| 100K | 500K | ~50 MB | Comfortable |
+| 500K | 2.5M | ~250 MB | Workable |
+| 1M | 5M | ~500 MB | Getting heavy |
+| 10M | 50M | ~5 GB | Problem |
+
+**Graph is the secondary constraint.** For most use cases, graph is smaller than vectors.
+
+### Practical Limits
+
+Combining all components, here are practical limits for typical deployments:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    PRACTICAL LIMITS                              │
+│                                                                  │
+│   Sweet spot:       10K - 100K memories per file                │
+│   Comfortable:      100K - 500K memories per file               │
+│   Workable:         500K - 1M memories per file                 │
+│   Needs care:       1M+ memories per file                       │
+│                                                                  │
+│   Typical file sizes:                                           │
+│   • 10K memories:   ~50-100 MB                                  │
+│   • 100K memories:  ~500 MB - 1 GB                              │
+│   • 1M memories:    ~5-10 GB                                    │
+│                                                                  │
+│   RAM requirements (768-dim):                                   │
+│   • 10K memories:   ~50 MB                                      │
+│   • 100K memories:  ~400 MB                                     │
+│   • 1M memories:    ~4 GB                                       │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Use Case Fit
+
+| Use Case | Memories/User | Users/File | Total | Verdict |
+|----------|---------------|------------|-------|--------|
+| Personal AI assistant | 1K-10K | 1 | 10K | ✅ Perfect fit |
+| Session memory | 100-1K | 1 | 1K | ✅ Perfect fit |
+| Project knowledge base | 10K-50K | 1 | 50K | ✅ Comfortable |
+| Enterprise per-user | 10K-100K | 1 | 100K | ✅ Comfortable |
+| Team shared memory | 50K-200K | 1 | 200K | ✅ Workable |
+| Large knowledge base | 500K-1M | 1 | 1M | ⚠️ Needs optimization |
+| Global corpus | 10M+ | 1 | 10M+ | ❌ Wrong tool |
+| Multi-user single file | 10K × 1000 | 1000 | 10M | ❌ Use file-per-user |
+
+### Recommended Deployment Patterns
+
+#### Pattern 1: File-Per-User (Recommended)
+
+```python
+class UserMemoryManager:
+    def __init__(self, base_path: str):
+        self.base_path = Path(base_path)
+        self.base_path.mkdir(exist_ok=True)
+        self._cache: Dict[str, Memory] = {}
+    
+    def get_memory(self, user_id: str) -> Memory:
+        if user_id not in self._cache:
+            path = self.base_path / f"{user_id}.mfdb"
+            self._cache[user_id] = Memory(str(path))
+        return self._cache[user_id]
+    
+    def close_user(self, user_id: str):
+        if user_id in self._cache:
+            self._cache[user_id].close()
+            del self._cache[user_id]
+```
+
+**Benefits:**
+- Natural isolation
+- Predictable performance
+- Easy backup/restore per user
+- User deletion = file deletion
+- No coordination needed
+
+#### Pattern 2: File-Per-Context
+
+```python
+# Different contexts for same user
+work_memory = Memory(f"./data/{user_id}_work.mfdb")
+personal_memory = Memory(f"./data/{user_id}_personal.mfdb")
+project_memory = Memory(f"./data/{user_id}_project_{project_id}.mfdb")
+```
+
+**Use when:**
+- User has distinct contexts that shouldn't mix
+- Different retention policies per context
+- Different sharing requirements
+
+#### Pattern 3: Sharded by Time
+
+```python
+# For append-heavy workloads with time-based access patterns
+def get_memory_for_date(user_id: str, date: datetime) -> Memory:
+    year_month = date.strftime("%Y-%m")
+    path = f"./data/{user_id}/{year_month}.mfdb"
+    return Memory(path)
+```
+
+**Use when:**
+- Queries are primarily time-bounded
+- Old data can be archived/deleted
+- Very high write volume
+
+### Scaling Strategies
+
+#### Strategy 1: Stay Within Limits (Recommended for v1)
+
+Design application to work within comfortable limits:
+
+```python
+MAX_MEMORIES_PER_FILE = 100_000
+
+def add_memory_with_limit(memory: Memory, content: str, embedding: List[float]):
+    # Check current count (implement via metadata or counter)
+    if memory.count() >= MAX_MEMORIES_PER_FILE:
+        # Option A: Reject
+        raise MemoryLimitExceeded()
+        
+        # Option B: Archive old memories
+        archive_oldest_memories(memory, count=10_000)
+        
+        # Option C: Start new file
+        return rotate_memory_file(memory)
+    
+    return memory.add(content, embedding)
+```
+
+#### Strategy 2: Memory-Mapped Vectors (v1.1+)
+
+Enable usearch memory-mapping to remove vector RAM constraint:
+
+```rust
+// Instead of loading into RAM
+let index = Index::new(...)?;
+index.load("vectors.usearch")?;  // Loads into RAM
+
+// Use memory-mapping
+let index = Index::new(...)?;
+index.view("vectors.usearch")?;  // Memory-mapped, OS manages paging
+```
+
+**Impact:** Vector index no longer RAM-bound. Can handle 10M+ vectors with minimal RAM.
+
+**Tradeoff:** Slightly higher latency for cold queries.
+
+#### Strategy 3: Lazy Graph Loading (v1.2+)
+
+Don't load entire graph into memory. Load on-demand:
+
+```
+Current:
+  Open file → Load all graph nodes/edges into petgraph → Ready
+
+Improved:
+  Open file → Graph stays on disk → Load subgraphs on query → Cache hot nodes
+```
+
+**Impact:** Graph no longer RAM-bound.
+
+**Effort:** Significant redesign of graph layer.
+
+#### Strategy 4: Tiered Storage (v2.0+)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    TIERED STORAGE                                │
+│                                                                  │
+│   Hot tier (RAM):      Last 1K memories                         │
+│   • Full vectors in memory                                      │
+│   • Full graph in memory                                        │
+│   • <10ms queries                                               │
+│                                                                  │
+│   Warm tier (Memory-mapped):  Next 100K memories                │
+│   • Memory-mapped vectors                                       │
+│   • On-demand graph loading                                     │
+│   • <50ms queries                                               │
+│                                                                  │
+│   Cold tier (Disk):    Archived memories                        │
+│   • Compressed storage                                          │
+│   • Explicit retrieval required                                 │
+│   • <500ms queries                                              │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Impact:** Handle millions of memories per file.
+
+**Effort:** Major architectural change.
+
+### Configuration for Scale
+
+```python
+from mnemefusion import Memory, Config
+
+# For small deployments (< 50K memories)
+small_config = Config(
+    embedding_dim=384,          # Smaller embeddings
+    hnsw_ef_construction=128,   # Standard
+    hnsw_ef_search=64,          # Standard
+    cache_size_mb=100,          # Minimal cache
+)
+
+# For medium deployments (50K - 500K memories)
+medium_config = Config(
+    embedding_dim=768,          # Standard embeddings
+    hnsw_ef_construction=200,   # Better index quality
+    hnsw_ef_search=100,         # Better search quality
+    cache_size_mb=500,          # Larger cache
+    use_mmap_vectors=True,      # Memory-map vectors (when available)
+)
+
+# For large deployments (500K+ memories)
+large_config = Config(
+    embedding_dim=768,
+    hnsw_ef_construction=200,
+    hnsw_ef_search=100,
+    cache_size_mb=1000,
+    use_mmap_vectors=True,
+    lazy_graph_loading=True,    # Load graph on-demand (when available)
+    vector_quantization="f16",  # Reduce memory 50%
+)
+```
+
+### What MnemeFusion is NOT For
+
+Be explicit about anti-patterns:
+
+| Anti-Pattern | Why It Fails | Alternative |
+|--------------|--------------|-------------|
+| Global knowledge base with 100M+ documents | Exceeds single-file limits | Use distributed vector DB |
+| Real-time multi-writer | Single-writer model | Use server-based solution |
+| Multi-tenant single file | No isolation, coordination overhead | File-per-tenant |
+| Petabyte-scale storage | Not designed for this | Use data warehouse |
+
+### Monitoring & Alerts
+
+Applications should monitor and alert on:
+
+```python
+class MemoryHealthCheck:
+    def __init__(self, memory: Memory, thresholds: dict):
+        self.memory = memory
+        self.thresholds = thresholds
+    
+    def check(self) -> List[Alert]:
+        alerts = []
+        stats = self.memory.stats()  # Future API
+        
+        if stats.memory_count > self.thresholds['max_memories']:
+            alerts.append(Alert(
+                level='warning',
+                message=f"Memory count {stats.memory_count} exceeds threshold"
+            ))
+        
+        if stats.file_size_mb > self.thresholds['max_file_size_mb']:
+            alerts.append(Alert(
+                level='warning', 
+                message=f"File size {stats.file_size_mb}MB exceeds threshold"
+            ))
+        
+        if stats.ram_usage_mb > self.thresholds['max_ram_mb']:
+            alerts.append(Alert(
+                level='critical',
+                message=f"RAM usage {stats.ram_usage_mb}MB exceeds threshold"
+            ))
+        
+        return alerts
+```
+
+### Summary
+
+| Question | Answer |
+|----------|--------|
+| Max memories per file? | Comfortable: 100K. Workable: 1M. |
+| Max file size? | ~64TB (not the constraint) |
+| Main constraint? | RAM for vectors and graphs |
+| How to scale? | File-per-user pattern |
+| When to use something else? | 10M+ memories in single queryable corpus |
+
+MnemeFusion is designed for **many small-to-medium memory stores**, not one massive global store. This is the SQLite philosophy applied to AI memory.
+
+---
+
 ## Open Questions
 
 ### To Resolve in Implementation

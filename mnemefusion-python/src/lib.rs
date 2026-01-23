@@ -3,7 +3,7 @@
 //! This module provides a Pythonic interface to the MnemeFusion memory engine.
 
 use mnemefusion_core::{
-    types::{Source, SourceType},
+    types::{BatchResult, MemoryInput, Source, SourceType},
     Config, MemoryEngine, MemoryId, Timestamp,
 };
 use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
@@ -240,6 +240,137 @@ impl PyMemory {
         engine
             .delete(&id)
             .map_err(|e| PyIOError::new_err(format!("Failed to delete memory: {}", e)))
+    }
+
+    /// Add multiple memories in a batch operation (10x+ faster than individual adds)
+    ///
+    /// Args:
+    ///     memories: List of dicts with memory data:
+    ///         - content: Text content (required)
+    ///         - embedding: Vector embedding (required)
+    ///         - metadata: Optional metadata dict
+    ///         - timestamp: Optional Unix timestamp
+    ///         - source: Optional source tracking dict
+    ///
+    /// Returns:
+    ///     Dictionary with results:
+    ///         - ids: List of created memory IDs
+    ///         - created_count: Number of memories successfully created
+    ///         - duplicate_count: Number of duplicates detected
+    ///         - errors: List of error dicts (index, message, memory_id)
+    ///
+    /// Example:
+    ///     >>> memories = [
+    ///     >>>     {"content": "mem 1", "embedding": [0.1] * 384},
+    ///     >>>     {"content": "mem 2", "embedding": [0.2] * 384},
+    ///     >>> ]
+    ///     >>> result = memory.add_batch(memories)
+    ///     >>> print(f"Created {result['created_count']} memories")
+    fn add_batch(&self, memories: Vec<&PyDict>) -> PyResult<PyObject> {
+        let engine = self.get_engine()?;
+
+        // Convert Python dicts to MemoryInput
+        let mut inputs = Vec::new();
+        for mem_dict in memories {
+            // Extract required fields
+            let content: String = mem_dict
+                .get_item("content")?
+                .ok_or_else(|| PyValueError::new_err("'content' is required"))?
+                .extract()?;
+
+            let embedding: Vec<f32> = mem_dict
+                .get_item("embedding")?
+                .ok_or_else(|| PyValueError::new_err("'embedding' is required"))?
+                .extract()?;
+
+            // Create MemoryInput
+            let mut input = MemoryInput::new(content, embedding);
+
+            // Add optional fields
+            if let Some(metadata_item) = mem_dict.get_item("metadata")? {
+                let metadata: HashMap<String, String> = metadata_item.extract()?;
+                input = input.with_metadata(metadata);
+            }
+
+            if let Some(timestamp_item) = mem_dict.get_item("timestamp")? {
+                let ts: f64 = timestamp_item.extract()?;
+                input = input.with_timestamp(Timestamp::from_unix_secs(ts));
+            }
+
+            if let Some(source_item) = mem_dict.get_item("source")? {
+                let source_dict: &PyDict = source_item.downcast()?;
+                let source = parse_source_from_dict(source_dict)?;
+                input = input.with_source(source);
+            }
+
+            inputs.push(input);
+        }
+
+        // Call batch add
+        let result: BatchResult = engine
+            .add_batch(inputs)
+            .map_err(|e| PyIOError::new_err(format!("Batch add failed: {}", e)))?;
+
+        // Convert result to Python dict
+        Python::with_gil(|py| {
+            let result_dict = PyDict::new(py);
+
+            // Convert IDs to strings
+            let ids: Vec<String> = result.ids.iter().map(|id| id.to_string()).collect();
+            result_dict.set_item("ids", ids)?;
+            result_dict.set_item("created_count", result.created_count)?;
+            result_dict.set_item("duplicate_count", result.duplicate_count)?;
+
+            // Convert errors
+            let errors: Vec<PyObject> = result
+                .errors
+                .iter()
+                .map(|err| {
+                    let err_dict = PyDict::new(py);
+                    err_dict.set_item("index", err.index).ok();
+                    err_dict.set_item("message", &err.message).ok();
+                    if let Some(ref id) = err.memory_id {
+                        err_dict.set_item("memory_id", id.to_string()).ok();
+                    } else {
+                        err_dict.set_item("memory_id", py.None()).ok();
+                    }
+                    err_dict.into()
+                })
+                .collect();
+            result_dict.set_item("errors", errors)?;
+
+            Ok(result_dict.into())
+        })
+    }
+
+    /// Delete multiple memories in a batch operation (faster than individual deletes)
+    ///
+    /// Args:
+    ///     memory_ids: List of memory ID strings to delete
+    ///
+    /// Returns:
+    ///     Number of memories actually deleted
+    ///
+    /// Example:
+    ///     >>> ids = [id1, id2, id3]
+    ///     >>> deleted = memory.delete_batch(ids)
+    ///     >>> print(f"Deleted {deleted} memories")
+    fn delete_batch(&self, memory_ids: Vec<String>) -> PyResult<usize> {
+        let engine = self.get_engine()?;
+
+        // Parse all IDs
+        let ids: Result<Vec<MemoryId>, _> = memory_ids
+            .iter()
+            .map(|id_str| MemoryId::parse(id_str))
+            .collect();
+
+        let ids =
+            ids.map_err(|e| PyValueError::new_err(format!("Invalid memory ID: {}", e)))?;
+
+        // Call batch delete
+        engine
+            .delete_batch(ids)
+            .map_err(|e| PyIOError::new_err(format!("Batch delete failed: {}", e)))
     }
 
     /// Semantic similarity search

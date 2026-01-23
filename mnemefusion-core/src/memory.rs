@@ -11,7 +11,7 @@ use crate::{
     ingest::IngestionPipeline,
     query::{FusedResult, IntentClassification, QueryPlanner},
     storage::StorageEngine,
-    types::{Entity, Memory, MemoryId, Source, Timestamp},
+    types::{BatchResult, Entity, Memory, MemoryId, MemoryInput, Source, Timestamp},
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -249,6 +249,96 @@ impl MemoryEngine {
     pub fn delete(&self, id: &MemoryId) -> Result<bool> {
         // Delegate to ingestion pipeline for atomic cleanup
         self.pipeline.delete(id)
+    }
+
+    /// Add multiple memories in a batch operation
+    ///
+    /// This is significantly faster than calling `add()` multiple times (10x+ improvement)
+    /// because it uses:
+    /// - Single transaction for all storage operations
+    /// - Vector index locked once for all additions
+    /// - Batched entity extraction with deduplication
+    ///
+    /// # Arguments
+    ///
+    /// * `inputs` - Vector of MemoryInput to add
+    ///
+    /// # Returns
+    ///
+    /// BatchResult containing IDs of created memories and any errors
+    ///
+    /// # Performance
+    ///
+    /// Target: 1,000 memories in <500ms
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use mnemefusion_core::{MemoryEngine, Config};
+    /// use mnemefusion_core::types::MemoryInput;
+    ///
+    /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
+    /// let inputs = vec![
+    ///     MemoryInput::new("content 1".to_string(), vec![0.1; 384]),
+    ///     MemoryInput::new("content 2".to_string(), vec![0.2; 384]),
+    /// ];
+    ///
+    /// let result = engine.add_batch(inputs).unwrap();
+    /// println!("Created {} memories", result.created_count);
+    /// if result.has_errors() {
+    ///     println!("Encountered {} errors", result.errors.len());
+    /// }
+    /// ```
+    pub fn add_batch(&self, inputs: Vec<MemoryInput>) -> Result<BatchResult> {
+        // Validate all embeddings upfront
+        for (index, input) in inputs.iter().enumerate() {
+            if input.embedding.len() != self.config.embedding_dim {
+                let mut result = BatchResult::new();
+                result.errors.push(crate::types::BatchError::new(
+                    index,
+                    format!(
+                        "Invalid embedding dimension: expected {}, got {}",
+                        self.config.embedding_dim,
+                        input.embedding.len()
+                    ),
+                ));
+                return Ok(result);
+            }
+        }
+
+        // Delegate to ingestion pipeline
+        self.pipeline.add_batch(inputs, None)
+    }
+
+    /// Delete multiple memories in a batch operation
+    ///
+    /// This is faster than calling `delete()` multiple times because it uses:
+    /// - Single transaction for all storage operations
+    /// - Batched entity cleanup
+    ///
+    /// # Arguments
+    ///
+    /// * `ids` - Vector of MemoryIds to delete
+    ///
+    /// # Returns
+    ///
+    /// Number of memories actually deleted (may be less than input if some don't exist)
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use mnemefusion_core::{MemoryEngine, Config};
+    ///
+    /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
+    /// # let id1 = engine.add("test1".to_string(), vec![0.1; 384], None, None, None).unwrap();
+    /// # let id2 = engine.add("test2".to_string(), vec![0.2; 384], None, None, None).unwrap();
+    /// let ids = vec![id1, id2];
+    /// let deleted_count = engine.delete_batch(ids).unwrap();
+    /// println!("Deleted {} memories", deleted_count);
+    /// ```
+    pub fn delete_batch(&self, ids: Vec<MemoryId>) -> Result<usize> {
+        // Delegate to ingestion pipeline
+        self.pipeline.delete_batch(ids)
     }
 
     /// Get the number of memories in the database

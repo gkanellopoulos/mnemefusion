@@ -60,4 +60,7 @@ pub use query::{
     AdaptiveWeightConfig, FusedResult, FusionEngine, IntentClassification, IntentClassifier,
     IntentWeights, QueryIntent, QueryPlanner,
 };
-pub use types::{Entity, EntityId, Memory, MemoryId, Timestamp};
+pub use types::{
+    BatchError, BatchResult, Entity, EntityId, Memory, MemoryId, MemoryInput, Source, SourceType,
+    Timestamp, SOURCE_METADATA_KEY,
+};
