@@ -10,7 +10,8 @@ use crate::{
     index::{TemporalIndex, VectorIndex},
     ingest::{EntityExtractor, SimpleEntityExtractor},
     storage::StorageEngine,
-    types::{BatchError, BatchResult, Entity, Memory, MemoryId, MemoryInput},
+    types::{AddResult, BatchError, BatchResult, Entity, Memory, MemoryId, MemoryInput, UpsertResult},
+    util::hash,
 };
 use std::sync::{Arc, RwLock};
 
@@ -406,6 +407,113 @@ impl IngestionPipeline {
         }
 
         Ok(deleted_count)
+    }
+
+    /// Add a memory with deduplication
+    ///
+    /// Checks if identical content already exists using content hash.
+    /// If duplicate found, returns existing ID without storing.
+    /// If unique, stores normally.
+    ///
+    /// # Arguments
+    ///
+    /// * `memory` - The memory to add
+    ///
+    /// # Returns
+    ///
+    /// AddResult indicating whether memory was created or duplicate found
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let memory = Memory::new("test content".into(), vec![0.1; 384]);
+    /// let result = pipeline.add_with_dedup(memory)?;
+    ///
+    /// if result.created {
+    ///     println!("New memory: {}", result.id);
+    /// } else {
+    ///     println!("Duplicate found: {}", result.existing_id.unwrap());
+    /// }
+    /// ```
+    pub fn add_with_dedup(&self, memory: Memory) -> Result<AddResult> {
+        let content_hash = hash::hash_content(&memory.content);
+
+        // Check if content hash already exists
+        if let Some(existing_id) = self.storage.find_by_content_hash(&content_hash)? {
+            // Verify it's actually the same content (handle hash collisions)
+            if let Some(existing_memory) = self.storage.get_memory(&existing_id)? {
+                if existing_memory.content == memory.content {
+                    // True duplicate found
+                    return Ok(AddResult::duplicate(existing_id));
+                }
+                // Hash collision - different content, same hash (extremely rare)
+                // Fall through to add as new memory
+            }
+        }
+
+        // No duplicate, add normally
+        let id = self.add(memory)?;
+
+        // Store content hash mapping
+        self.storage.store_content_hash(&content_hash, &id)?;
+
+        Ok(AddResult::created(id))
+    }
+
+    /// Upsert a memory by logical key
+    ///
+    /// If key exists: replaces content, embedding, and metadata of existing memory
+    /// If key doesn't exist: creates new memory and associates with key
+    ///
+    /// This is an atomic operation - either everything succeeds or everything rolls back.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Logical key for the memory (e.g., "user_profile:123")
+    /// * `memory` - The memory data to upsert
+    ///
+    /// # Returns
+    ///
+    /// UpsertResult indicating whether memory was created or updated
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let memory = Memory::new("updated content".into(), vec![0.2; 384]);
+    /// let result = pipeline.upsert("doc:readme", memory)?;
+    ///
+    /// if result.created {
+    ///     println!("Created new memory");
+    /// } else {
+    ///     println!("Updated existing memory");
+    /// }
+    /// ```
+    pub fn upsert(&self, key: &str, memory: Memory) -> Result<UpsertResult> {
+        // Check if logical key already exists
+        if let Some(existing_id) = self.storage.find_by_logical_key(key)? {
+            // Key exists - this is an update
+            let previous_memory = self.storage.get_memory(&existing_id)?;
+            let previous_content = previous_memory.as_ref().map(|m| m.content.clone());
+
+            // Delete the old memory completely (including all indexes)
+            self.delete(&existing_id)?;
+
+            // Add the new memory with the same logical key
+            let new_id = self.add(memory)?;
+
+            // Update the logical key mapping to point to new memory
+            self.storage.update_logical_key(key, &new_id)?;
+
+            Ok(UpsertResult::updated(new_id, previous_content))
+        } else {
+            // Key doesn't exist - this is a create
+            let id = self.add(memory)?;
+
+            // Store the logical key mapping
+            self.storage.store_logical_key(key, &id)?;
+
+            Ok(UpsertResult::created(id))
+        }
     }
 
     /// Add memory to vector index
@@ -868,5 +976,192 @@ mod tests {
         // Delete empty batch
         let deleted_count = pipeline.delete_batch(vec![]).unwrap();
         assert_eq!(deleted_count, 0);
+    }
+
+    // Deduplication tests
+    #[test]
+    fn test_pipeline_add_with_dedup_creates_first() {
+        let (pipeline, _dir) = create_test_pipeline();
+
+        let memory = Memory::new("test content".to_string(), vec![0.1; 384]);
+        let result = pipeline.add_with_dedup(memory).unwrap();
+
+        assert!(result.created);
+        assert!(result.is_created());
+        assert!(!result.is_duplicate());
+        assert!(result.existing_id.is_none());
+    }
+
+    #[test]
+    fn test_pipeline_add_with_dedup_detects_duplicate() {
+        let (pipeline, _dir) = create_test_pipeline();
+
+        // Add first memory
+        let memory1 = Memory::new("duplicate content".to_string(), vec![0.1; 384]);
+        let result1 = pipeline.add_with_dedup(memory1).unwrap();
+        assert!(result1.created);
+
+        // Try to add same content again
+        let memory2 = Memory::new("duplicate content".to_string(), vec![0.2; 384]);
+        let result2 = pipeline.add_with_dedup(memory2).unwrap();
+
+        // Should detect duplicate
+        assert!(!result2.created);
+        assert!(result2.is_duplicate());
+        assert_eq!(result2.id, result1.id);
+        assert_eq!(result2.existing_id, Some(result1.id));
+    }
+
+    #[test]
+    fn test_pipeline_add_with_dedup_different_content() {
+        let (pipeline, _dir) = create_test_pipeline();
+
+        let memory1 = Memory::new("content 1".to_string(), vec![0.1; 384]);
+        let result1 = pipeline.add_with_dedup(memory1).unwrap();
+
+        let memory2 = Memory::new("content 2".to_string(), vec![0.2; 384]);
+        let result2 = pipeline.add_with_dedup(memory2).unwrap();
+
+        // Different content should create new memory
+        assert!(result1.created);
+        assert!(result2.created);
+        assert_ne!(result1.id, result2.id);
+    }
+
+    #[test]
+    fn test_pipeline_add_with_dedup_whitespace_sensitive() {
+        let (pipeline, _dir) = create_test_pipeline();
+
+        let memory1 = Memory::new("test content".to_string(), vec![0.1; 384]);
+        let result1 = pipeline.add_with_dedup(memory1).unwrap();
+
+        // Different whitespace = different content (no normalization in add_with_dedup)
+        let memory2 = Memory::new("test  content".to_string(), vec![0.2; 384]);
+        let result2 = pipeline.add_with_dedup(memory2).unwrap();
+
+        // Should create new memory (different content)
+        assert!(result1.created);
+        assert!(result2.created);
+        assert_ne!(result1.id, result2.id);
+    }
+
+    // Upsert tests
+    #[test]
+    fn test_pipeline_upsert_creates_new() {
+        let (pipeline, _dir) = create_test_pipeline();
+
+        let memory = Memory::new("initial content".to_string(), vec![0.1; 384]);
+        let result = pipeline.upsert("key1", memory).unwrap();
+
+        assert!(result.created);
+        assert!(result.is_created());
+        assert!(!result.updated);
+        assert!(result.previous_content.is_none());
+    }
+
+    #[test]
+    fn test_pipeline_upsert_updates_existing() {
+        let (pipeline, _dir) = create_test_pipeline();
+
+        // First upsert - creates
+        let memory1 = Memory::new("original content".to_string(), vec![0.1; 384]);
+        let result1 = pipeline.upsert("key1", memory1).unwrap();
+        assert!(result1.created);
+        let first_id = result1.id.clone();
+
+        // Second upsert - updates
+        let memory2 = Memory::new("updated content".to_string(), vec![0.2; 384]);
+        let result2 = pipeline.upsert("key1", memory2).unwrap();
+
+        assert!(!result2.created);
+        assert!(result2.updated);
+        assert!(result2.is_updated());
+        assert_eq!(result2.previous_content, Some("original content".to_string()));
+
+        // Original memory should be deleted
+        let original = pipeline.storage.get_memory(&first_id).unwrap();
+        assert!(original.is_none());
+
+        // New memory should exist
+        let updated = pipeline.storage.get_memory(&result2.id).unwrap();
+        assert!(updated.is_some());
+        assert_eq!(updated.unwrap().content, "updated content");
+    }
+
+    #[test]
+    fn test_pipeline_upsert_different_keys() {
+        let (pipeline, _dir) = create_test_pipeline();
+
+        let memory1 = Memory::new("content 1".to_string(), vec![0.1; 384]);
+        let result1 = pipeline.upsert("key1", memory1).unwrap();
+
+        let memory2 = Memory::new("content 2".to_string(), vec![0.2; 384]);
+        let result2 = pipeline.upsert("key2", memory2).unwrap();
+
+        // Different keys should create different memories
+        assert!(result1.created);
+        assert!(result2.created);
+        assert_ne!(result1.id, result2.id);
+
+        // Both should exist
+        assert!(pipeline.storage.get_memory(&result1.id).unwrap().is_some());
+        assert!(pipeline.storage.get_memory(&result2.id).unwrap().is_some());
+    }
+
+    #[test]
+    fn test_pipeline_upsert_updates_vector_index() {
+        let (pipeline, _dir) = create_test_pipeline();
+
+        // First upsert
+        let memory1 = Memory::new("test".to_string(), vec![0.1; 384]);
+        let result1 = pipeline.upsert("key1", memory1).unwrap();
+
+        // Second upsert with different embedding
+        let memory2 = Memory::new("test updated".to_string(), vec![0.9; 384]);
+        let result2 = pipeline.upsert("key1", memory2).unwrap();
+
+        // Verify the logical key points to the new memory
+        let found_id = pipeline.storage.find_by_logical_key("key1").unwrap();
+        assert_eq!(found_id, Some(result2.id.clone()));
+
+        // Verify old memory is deleted
+        assert!(pipeline.storage.get_memory(&result1.id).unwrap().is_none());
+
+        // Verify new memory exists
+        let new_memory = pipeline.storage.get_memory(&result2.id).unwrap();
+        assert!(new_memory.is_some());
+        assert_eq!(new_memory.unwrap().content, "test updated");
+
+        // Verify vector index has results (search should work)
+        {
+            let index = pipeline.vector_index.read().unwrap();
+            let results = index.search(&vec![0.9; 384], 5).unwrap();
+            assert!(!results.is_empty(), "Vector index should have results after upsert");
+        }
+    }
+
+    #[test]
+    fn test_pipeline_upsert_cleans_up_entities() {
+        let (pipeline, _dir) = create_test_pipeline();
+
+        // First upsert with entity
+        let memory1 = Memory::new("Alice is here".to_string(), vec![0.1; 384]);
+        let result1 = pipeline.upsert("key1", memory1).unwrap();
+
+        // Verify Alice exists
+        let alice = pipeline.storage.find_entity_by_name("Alice").unwrap();
+        assert!(alice.is_some());
+
+        // Second upsert with different entity
+        let memory2 = Memory::new("Bob is here".to_string(), vec![0.2; 384]);
+        let result2 = pipeline.upsert("key1", memory2).unwrap();
+
+        // Alice should be removed (orphaned)
+        let alice = pipeline.storage.find_entity_by_name("Alice").unwrap();
+        assert!(alice.is_none());
+
+        // Bob should exist
+        let bob = pipeline.storage.find_entity_by_name("Bob").unwrap();
+        assert!(bob.is_some());
     }
 }

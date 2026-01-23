@@ -48,6 +48,7 @@ pub mod memory;
 pub mod query;
 pub mod storage;
 pub mod types;
+pub mod util;
 
 // Public API exports
 pub use config::Config;
@@ -61,6 +62,6 @@ pub use query::{
     IntentWeights, QueryIntent, QueryPlanner,
 };
 pub use types::{
-    BatchError, BatchResult, Entity, EntityId, Memory, MemoryId, MemoryInput, Source, SourceType,
-    Timestamp, SOURCE_METADATA_KEY,
+    AddResult, BatchError, BatchResult, Entity, EntityId, Memory, MemoryId, MemoryInput, Source,
+    SourceType, Timestamp, UpsertResult, SOURCE_METADATA_KEY,
 };

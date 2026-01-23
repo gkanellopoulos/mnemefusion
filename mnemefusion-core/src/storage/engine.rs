@@ -20,6 +20,8 @@ const MEMORY_ID_INDEX: TableDefinition<u64, &[u8]> = TableDefinition::new("memor
 const CAUSAL_GRAPH: TableDefinition<&str, &[u8]> = TableDefinition::new("causal_graph");
 const ENTITIES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("entities");
 const ENTITY_NAMES: TableDefinition<&str, &[u8]> = TableDefinition::new("entity_names");
+const CONTENT_HASH_INDEX: TableDefinition<&str, &[u8]> = TableDefinition::new("content_hash_index");
+const LOGICAL_KEY_INDEX: TableDefinition<&str, &[u8]> = TableDefinition::new("logical_key_index");
 
 /// Storage engine wrapper around redb
 ///
@@ -60,6 +62,8 @@ impl StorageEngine {
             let _ = write_txn.open_table(CAUSAL_GRAPH)?;
             let _ = write_txn.open_table(ENTITIES)?;
             let _ = write_txn.open_table(ENTITY_NAMES)?;
+            let _ = write_txn.open_table(CONTENT_HASH_INDEX)?;
+            let _ = write_txn.open_table(LOGICAL_KEY_INDEX)?;
         }
         write_txn.commit()?;
         Ok(())
@@ -517,6 +521,98 @@ impl StorageEngine {
             Some(data) => Ok(Some(data.value().to_vec())),
             None => Ok(None),
         }
+    }
+
+    // Content hash operations for deduplication
+
+    /// Store content hash → memory ID mapping
+    ///
+    /// Used for deduplication to quickly find if content already exists
+    pub fn store_content_hash(&self, hash: &str, memory_id: &MemoryId) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(CONTENT_HASH_INDEX)?;
+            table.insert(hash, memory_id.as_bytes() as &[u8])?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Find memory ID by content hash
+    ///
+    /// Returns None if hash not found (content is unique)
+    pub fn find_by_content_hash(&self, hash: &str) -> Result<Option<MemoryId>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(CONTENT_HASH_INDEX)?;
+
+        match table.get(hash)? {
+            Some(bytes) => {
+                let id = MemoryId::from_bytes(bytes.value())?;
+                Ok(Some(id))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Delete content hash mapping
+    pub fn delete_content_hash(&self, hash: &str) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(CONTENT_HASH_INDEX)?;
+            table.remove(hash)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    // Logical key operations for upsert
+
+    /// Store logical key → memory ID mapping
+    ///
+    /// Used for upsert operations with developer-defined keys
+    pub fn store_logical_key(&self, key: &str, memory_id: &MemoryId) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(LOGICAL_KEY_INDEX)?;
+            table.insert(key, memory_id.as_bytes() as &[u8])?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Find memory ID by logical key
+    ///
+    /// Returns None if key not found
+    pub fn find_by_logical_key(&self, key: &str) -> Result<Option<MemoryId>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(LOGICAL_KEY_INDEX)?;
+
+        match table.get(key)? {
+            Some(bytes) => {
+                let id = MemoryId::from_bytes(bytes.value())?;
+                Ok(Some(id))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Delete logical key mapping
+    pub fn delete_logical_key(&self, key: &str) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(LOGICAL_KEY_INDEX)?;
+            table.remove(key)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Update logical key mapping to point to a new memory ID
+    ///
+    /// This is used when an upsert operation replaces an existing memory
+    pub fn update_logical_key(&self, key: &str, new_memory_id: &MemoryId) -> Result<()> {
+        // Just overwrite - same as store
+        self.store_logical_key(key, new_memory_id)
     }
 }
 

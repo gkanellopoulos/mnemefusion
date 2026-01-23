@@ -373,6 +373,133 @@ impl PyMemory {
             .map_err(|e| PyIOError::new_err(format!("Batch delete failed: {}", e)))
     }
 
+    /// Add a memory with automatic deduplication
+    ///
+    /// Checks if identical content already exists. If duplicate found,
+    /// returns existing ID without creating a new memory.
+    ///
+    /// Args:
+    ///     content: Text content to store
+    ///     embedding: Vector embedding (list of floats)
+    ///     metadata: Optional metadata dictionary
+    ///     timestamp: Optional Unix timestamp (seconds since epoch)
+    ///     source: Optional source/provenance tracking dictionary
+    ///
+    /// Returns:
+    ///     Dictionary with results:
+    ///         - id: Memory ID (either new or existing)
+    ///         - created: True if new memory created, False if duplicate
+    ///         - existing_id: ID of existing memory if duplicate (same as id)
+    ///
+    /// Example:
+    ///     >>> embedding = [0.1] * 384
+    ///     >>> result1 = memory.add_with_dedup("Meeting notes", embedding)
+    ///     >>> print(f"Created: {result1['created']}")  # True
+    ///     >>> result2 = memory.add_with_dedup("Meeting notes", embedding)
+    ///     >>> print(f"Created: {result2['created']}")  # False (duplicate)
+    #[pyo3(signature = (content, embedding, metadata=None, timestamp=None, source=None))]
+    fn add_with_dedup(
+        &self,
+        content: String,
+        embedding: Vec<f32>,
+        metadata: Option<HashMap<String, String>>,
+        timestamp: Option<f64>,
+        source: Option<&PyDict>,
+    ) -> PyResult<PyObject> {
+        let engine = self.get_engine()?;
+        let ts = timestamp.map(|t| Timestamp::from_unix_secs(t));
+
+        // Parse source from Python dict
+        let rust_source = if let Some(src_dict) = source {
+            Some(parse_source_from_dict(src_dict)?)
+        } else {
+            None
+        };
+
+        let result = engine
+            .add_with_dedup(content, embedding, metadata, ts, rust_source)
+            .map_err(|e| PyValueError::new_err(format!("Failed to add with dedup: {}", e)))?;
+
+        // Convert result to Python dict
+        Python::with_gil(|py| {
+            let result_dict = PyDict::new(py);
+            result_dict.set_item("id", result.id.to_string())?;
+            result_dict.set_item("created", result.created)?;
+            if let Some(existing) = result.existing_id {
+                result_dict.set_item("existing_id", existing.to_string())?;
+            } else {
+                result_dict.set_item("existing_id", py.None())?;
+            }
+            Ok(result_dict.into())
+        })
+    }
+
+    /// Upsert a memory by logical key
+    ///
+    /// If key exists: replaces content, embedding, and metadata of existing memory
+    /// If key doesn't exist: creates new memory and associates with key
+    ///
+    /// Args:
+    ///     key: Logical key for the memory (e.g., "user_profile:123")
+    ///     content: Text content to store
+    ///     embedding: Vector embedding (list of floats)
+    ///     metadata: Optional metadata dictionary
+    ///     timestamp: Optional Unix timestamp (seconds since epoch)
+    ///     source: Optional source/provenance tracking dictionary
+    ///
+    /// Returns:
+    ///     Dictionary with results:
+    ///         - id: Memory ID
+    ///         - created: True if new memory created
+    ///         - updated: True if existing memory updated
+    ///         - previous_content: Previous content if updated (None if created)
+    ///
+    /// Example:
+    ///     >>> embedding = [0.1] * 384
+    ///     >>> result1 = memory.upsert("user:123", "Alice likes hiking", embedding)
+    ///     >>> print(f"Created: {result1['created']}")  # True
+    ///     >>> result2 = memory.upsert("user:123", "Alice likes hiking and photography", embedding)
+    ///     >>> print(f"Updated: {result2['updated']}")  # True
+    ///     >>> print(f"Previous: {result2['previous_content']}")  # "Alice likes hiking"
+    #[pyo3(signature = (key, content, embedding, metadata=None, timestamp=None, source=None))]
+    fn upsert(
+        &self,
+        key: String,
+        content: String,
+        embedding: Vec<f32>,
+        metadata: Option<HashMap<String, String>>,
+        timestamp: Option<f64>,
+        source: Option<&PyDict>,
+    ) -> PyResult<PyObject> {
+        let engine = self.get_engine()?;
+        let ts = timestamp.map(|t| Timestamp::from_unix_secs(t));
+
+        // Parse source from Python dict
+        let rust_source = if let Some(src_dict) = source {
+            Some(parse_source_from_dict(src_dict)?)
+        } else {
+            None
+        };
+
+        let result = engine
+            .upsert(&key, content, embedding, metadata, ts, rust_source)
+            .map_err(|e| PyValueError::new_err(format!("Failed to upsert: {}", e)))?;
+
+        // Convert result to Python dict
+        Python::with_gil(|py| {
+            let result_dict = PyDict::new(py);
+            result_dict.set_item("id", result.id.to_string())?;
+            result_dict.set_item("created", result.created)?;
+            result_dict.set_item("updated", result.updated)?;
+            if let Some(prev) = result.previous_content {
+                result_dict.set_item("previous_content", prev)?;
+            } else {
+                result_dict.set_item("previous_content", py.None())?;
+            }
+            Ok(result_dict.into())
+        })
+    }
+
     /// Semantic similarity search
     ///
     /// Args:

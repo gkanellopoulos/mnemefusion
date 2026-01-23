@@ -11,7 +11,7 @@ use crate::{
     ingest::IngestionPipeline,
     query::{FusedResult, IntentClassification, QueryPlanner},
     storage::StorageEngine,
-    types::{BatchResult, Entity, Memory, MemoryId, MemoryInput, Source, Timestamp},
+    types::{AddResult, BatchResult, Entity, Memory, MemoryId, MemoryInput, Source, Timestamp, UpsertResult},
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -339,6 +339,182 @@ impl MemoryEngine {
     pub fn delete_batch(&self, ids: Vec<MemoryId>) -> Result<usize> {
         // Delegate to ingestion pipeline
         self.pipeline.delete_batch(ids)
+    }
+
+    /// Add a memory with automatic deduplication
+    ///
+    /// Uses content hash to detect duplicates. If identical content already exists,
+    /// returns the existing memory ID without creating a duplicate.
+    ///
+    /// # Arguments
+    ///
+    /// * `content` - Text content
+    /// * `embedding` - Vector embedding
+    /// * `metadata` - Optional metadata
+    /// * `timestamp` - Optional custom timestamp
+    /// * `source` - Optional source/provenance
+    ///
+    /// # Returns
+    ///
+    /// AddResult with created flag and ID (either new or existing)
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use mnemefusion_core::{MemoryEngine, Config};
+    ///
+    /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
+    /// let embedding = vec![0.1; 384];
+    ///
+    /// // First add
+    /// let result1 = engine.add_with_dedup(
+    ///     "Meeting notes".to_string(),
+    ///     embedding.clone(),
+    ///     None,
+    ///     None,
+    ///     None,
+    /// ).unwrap();
+    /// assert!(result1.created);
+    ///
+    /// // Second add with same content
+    /// let result2 = engine.add_with_dedup(
+    ///     "Meeting notes".to_string(),
+    ///     embedding.clone(),
+    ///     None,
+    ///     None,
+    ///     None,
+    /// ).unwrap();
+    /// assert!(!result2.created); // Duplicate detected
+    /// assert_eq!(result1.id, result2.id); // Same ID returned
+    /// ```
+    pub fn add_with_dedup(
+        &self,
+        content: String,
+        embedding: Vec<f32>,
+        metadata: Option<HashMap<String, String>>,
+        timestamp: Option<Timestamp>,
+        source: Option<Source>,
+    ) -> Result<AddResult> {
+        // Validate embedding dimension
+        if embedding.len() != self.config.embedding_dim {
+            return Err(Error::InvalidEmbeddingDimension {
+                expected: self.config.embedding_dim,
+                got: embedding.len(),
+            });
+        }
+
+        // Create memory
+        let mut memory = if let Some(ts) = timestamp {
+            Memory::new_with_timestamp(content, embedding, ts)
+        } else {
+            Memory::new(content, embedding)
+        };
+
+        // Add metadata
+        if let Some(meta) = metadata {
+            for (key, value) in meta {
+                memory.set_metadata(key, value);
+            }
+        }
+
+        // Add source
+        if let Some(src) = source {
+            memory.set_source(src)?;
+        }
+
+        // Delegate to pipeline with deduplication
+        self.pipeline.add_with_dedup(memory)
+    }
+
+    /// Upsert a memory by logical key
+    ///
+    /// If key exists: replaces content, embedding, and metadata
+    /// If key doesn't exist: creates new memory and associates with key
+    ///
+    /// This is useful for updating facts that may change over time.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Logical key (e.g., "user_profile:123", "doc:readme")
+    /// * `content` - Text content
+    /// * `embedding` - Vector embedding
+    /// * `metadata` - Optional metadata
+    /// * `timestamp` - Optional custom timestamp
+    /// * `source` - Optional source/provenance
+    ///
+    /// # Returns
+    ///
+    /// UpsertResult indicating whether memory was created or updated
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use mnemefusion_core::{MemoryEngine, Config};
+    ///
+    /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
+    /// let embedding = vec![0.1; 384];
+    ///
+    /// // First upsert - creates new
+    /// let result1 = engine.upsert(
+    ///     "user:profile",
+    ///     "Alice likes hiking".to_string(),
+    ///     embedding.clone(),
+    ///     None,
+    ///     None,
+    ///     None,
+    /// ).unwrap();
+    /// assert!(result1.created);
+    ///
+    /// // Second upsert - updates existing
+    /// let result2 = engine.upsert(
+    ///     "user:profile",
+    ///     "Alice likes hiking and photography".to_string(),
+    ///     vec![0.2; 384],
+    ///     None,
+    ///     None,
+    ///     None,
+    /// ).unwrap();
+    /// assert!(result2.updated);
+    /// assert_eq!(result2.previous_content, Some("Alice likes hiking".to_string()));
+    /// ```
+    pub fn upsert(
+        &self,
+        key: &str,
+        content: String,
+        embedding: Vec<f32>,
+        metadata: Option<HashMap<String, String>>,
+        timestamp: Option<Timestamp>,
+        source: Option<Source>,
+    ) -> Result<UpsertResult> {
+        // Validate embedding dimension
+        if embedding.len() != self.config.embedding_dim {
+            return Err(Error::InvalidEmbeddingDimension {
+                expected: self.config.embedding_dim,
+                got: embedding.len(),
+            });
+        }
+
+        // Create memory
+        let mut memory = if let Some(ts) = timestamp {
+            Memory::new_with_timestamp(content, embedding, ts)
+        } else {
+            Memory::new(content, embedding)
+        };
+
+        // Add metadata
+        if let Some(meta) = metadata {
+            for (key, value) in meta {
+                memory.set_metadata(key, value);
+            }
+        }
+
+        // Add source
+        if let Some(src) = source {
+            memory.set_source(src)?;
+        }
+
+        // Delegate to pipeline
+        self.pipeline.upsert(key, memory)
     }
 
     /// Get the number of memories in the database
