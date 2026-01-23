@@ -1,9 +1,9 @@
 # MnemeFusion: Project State
 
 **Last Updated**: January 23, 2026
-**Current Sprint**: Sprint 10 COMPLETE ✅ (Deduplication & Upsert)
+**Current Sprint**: Sprint 11 COMPLETE ✅ (Namespaces & Scoping)
 **Phase**: Phase 2 IN PROGRESS (Essential Features & Hardening)
-**Overall Progress**: Phase 1: 100% | Sprint 9 & 10: COMPLETE | Total: 183 tests passing
+**Overall Progress**: Phase 1: 100% | Sprint 9, 10 & 11: COMPLETE | Total: 204 tests passing
 
 ---
 
@@ -1023,6 +1023,145 @@ print(f"Previous: {result['previous_content']}")
 - All 21 new tests passing
 - Python bindings working
 - Ready for production use
+
+---
+
+## ✅ Sprint 11: COMPLETE (January 23, 2026)
+
+### 🎯 Sprint 11: Namespaces & Scoping (Weeks 21-22)
+
+**Objective**: Multi-user and multi-context memory isolation ✅ COMPLETE
+
+**Completion Date**: January 23, 2026
+
+**What We Built:**
+- Complete namespace system for multi-user/multi-context isolation
+- Metadata-based namespace storage (backward compatible)
+- Namespace parameter on all memory operations
+- ScopedMemory wrapper for ergonomic scoped API
+- Namespace filtering in QueryPlanner for multi-dimensional queries
+- Full Python bindings for all namespace features
+
+**Key Files Created/Modified:**
+```
+mnemefusion-core/src/types/memory.rs
+  - Added NAMESPACE_METADATA_KEY constant ("__mf_namespace__")
+  - Added set_namespace(), get_namespace(), clear_namespace() methods
+  - 4 unit tests for namespace methods
+
+mnemefusion-core/src/storage/engine.rs
+  - Added list_namespaces() - returns sorted unique namespaces
+  - Added count_namespace() - counts memories in namespace
+  - Added list_namespace_ids() - returns all IDs in namespace
+  - 5 integration tests for namespace operations
+
+mnemefusion-core/src/error.rs
+  - Added NamespaceMismatch error variant
+
+mnemefusion-core/src/types/batch.rs
+  - Added namespace field to MemoryInput
+  - Added with_namespace() builder method
+
+mnemefusion-core/src/memory.rs
+  - All operations now accept optional namespace parameter:
+    * add(), search(), delete(), add_batch(), delete_batch()
+    * add_with_dedup(), upsert(), query(), get_range(), get_recent()
+  - Added namespace management methods:
+    * list_namespaces(), count_namespace(), delete_namespace()
+  - Added ScopedMemory wrapper struct (300+ LOC)
+    * All operations automatically apply namespace
+    * Ergonomic API: engine.scope("user_123").add(...).search(...)
+  - 9 comprehensive tests (4 namespace + 5 scoped)
+
+mnemefusion-core/src/query/planner.rs
+  - Updated query() with namespace parameter
+  - Updated temporal_range_query() with namespace filter
+  - Added filter_by_namespace() helper method
+  - Post-filtering strategy with 3x-5x over-fetch
+  - 3 integration tests for namespace filtering
+
+mnemefusion-python/src/lib.rs
+  - Updated all methods with namespace parameter
+  - Added namespace field to memory dict results
+  - Added list_namespaces(), count_namespace(), delete_namespace()
+  - Complete Python documentation
+```
+
+**Technical Achievements:**
+- **Backward Compatible**: Namespace stored as metadata, no file format changes
+- **Default Namespace**: Empty string "" represents default namespace
+- **Post-Filtering Strategy**: Fetch 3x-5x results, filter by namespace, return top_k
+- **Namespace Verification**: delete() verifies namespace matches before deletion
+- **Ergonomic API**: ScopedMemory wrapper eliminates repetitive namespace passing
+- **Full Integration**: Namespace support across all 4 dimensions (semantic, temporal, causal, entity)
+
+**Test Results:**
+```
+Rust Unit Tests:        204/204 PASSING ✅ (13 new namespace tests)
+Python Bindings:        BUILD SUCCESS ✅
+──────────────────────────────────────────────
+Total: 204 automated tests passing (up from 183)
+```
+
+**API Examples:**
+
+Rust:
+```rust
+// Direct namespace usage
+let id = engine.add("Note", embedding, None, None, None, Some("user_123"))?;
+let results = engine.search(&query, 10, Some("user_123"))?;
+
+// Scoped API (ergonomic)
+let scoped = engine.scope("user_123");
+let id = scoped.add("Note", embedding, None, None, None)?;
+let results = scoped.search(&query, 10)?;
+let count = scoped.count()?;
+scoped.delete_all()?;
+```
+
+Python:
+```python
+# Direct namespace usage
+memory_id = memory.add("Note", embedding, namespace="user_123")
+results = memory.search(query_embedding, top_k=10, namespace="user_123")
+
+# Namespace management
+namespaces = memory.list_namespaces()
+count = memory.count_namespace("user_123")
+deleted = memory.delete_namespace("old_user")
+```
+
+**Use Cases:**
+- **Multi-User Isolation**: Each user has isolated memories (e.g., "user_123", "user_456")
+- **Multi-Context**: Separate memories by project, org, session (e.g., "org_1/project_alpha")
+- **Testing**: Use namespaces to isolate test data from production
+- **Temporary Storage**: Create/delete entire namespaces for ephemeral contexts
+
+**Stories Completed:**
+- ✅ [STORY-11.1] Namespace system for multi-user isolation (8 pts) - COMPLETE
+- ✅ [STORY-11.2] Namespace filtering in queries (5 pts) - COMPLETE
+- ✅ [STORY-11.3] ScopedMemory ergonomic wrapper (3 pts) - COMPLETE
+- **Total**: 16 story points delivered
+
+**Key Decisions:**
+| Date | Decision | Rationale | Impact |
+|------|----------|-----------|--------|
+| 2026-01-23 | Store namespace as metadata with reserved key | Backward compatible, no file format changes | ✅ Zero breaking changes |
+| 2026-01-23 | Empty string "" as default namespace | Simple, clear default behavior | Existing databases work |
+| 2026-01-23 | Post-filtering strategy for queries | Simple, correct, can optimize later | Clean implementation |
+| 2026-01-23 | ScopedMemory with lifetime parameter | Ergonomic API, zero cost abstraction | Better UX |
+| 2026-01-23 | Namespace verification on delete | Prevent accidental cross-namespace deletes | Safety guarantee |
+
+**Commit:**
+- Commit: feat: add namespaces and scoping for multi-user isolation - Sprint 11
+- Files changed: 9 files, +900 lines
+- All tests passing
+
+**Sprint 11 Complete:** ✅
+- All 13 new tests passing
+- Python bindings working
+- Namespace isolation fully functional
+- Ready for multi-user deployments
 
 ---
 

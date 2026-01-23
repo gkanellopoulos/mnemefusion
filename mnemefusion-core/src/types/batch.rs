@@ -23,6 +23,7 @@ use std::collections::HashMap;
 ///     metadata: None,
 ///     timestamp: None,
 ///     source: Some(Source::new(SourceType::Conversation).with_id("conv_123")),
+///     namespace: Some("user_123".to_string()),
 /// };
 /// ```
 #[derive(Debug, Clone)]
@@ -41,6 +42,9 @@ pub struct MemoryInput {
 
     /// Optional source/provenance tracking
     pub source: Option<Source>,
+
+    /// Optional namespace (defaults to empty string "" for default namespace)
+    pub namespace: Option<String>,
 }
 
 impl MemoryInput {
@@ -60,6 +64,7 @@ impl MemoryInput {
             metadata: None,
             timestamp: None,
             source: None,
+            namespace: None,
         }
     }
 
@@ -78,6 +83,12 @@ impl MemoryInput {
     /// Builder pattern: set source
     pub fn with_source(mut self, source: Source) -> Self {
         self.source = Some(source);
+        self
+    }
+
+    /// Builder pattern: set namespace
+    pub fn with_namespace(mut self, namespace: impl Into<String>) -> Self {
+        self.namespace = Some(namespace.into());
         self
     }
 
@@ -102,6 +113,11 @@ impl MemoryInput {
         if let Some(source) = &self.source {
             // Ignore error - if source serialization fails, just skip it
             let _ = memory.set_source(source.clone());
+        }
+
+        // Set namespace if present
+        if let Some(namespace) = &self.namespace {
+            memory.set_namespace(namespace);
         }
 
         memory
@@ -213,6 +229,7 @@ mod tests {
         assert!(input.metadata.is_none());
         assert!(input.timestamp.is_none());
         assert!(input.source.is_none());
+        assert!(input.namespace.is_none());
     }
 
     #[test]

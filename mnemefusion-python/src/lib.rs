@@ -144,6 +144,7 @@ impl PyMemory {
     ///     metadata: Optional metadata dictionary
     ///     timestamp: Optional Unix timestamp (seconds since epoch)
     ///     source: Optional source/provenance tracking dictionary
+    ///     namespace: Optional namespace string for multi-user/multi-context isolation
     ///
     /// Returns:
     ///     Memory ID as a string
@@ -154,7 +155,8 @@ impl PyMemory {
     ///     >>> memory_id = memory.add("Meeting notes", embedding, metadata={"project": "Alpha"})
     ///     >>> source = {"type": "conversation", "id": "conv_123", "confidence": 0.95}
     ///     >>> memory_id = memory.add("Meeting notes", embedding, source=source)
-    #[pyo3(signature = (content, embedding, metadata=None, timestamp=None, source=None))]
+    ///     >>> memory_id = memory.add("Meeting notes", embedding, namespace="user_123")
+    #[pyo3(signature = (content, embedding, metadata=None, timestamp=None, source=None, namespace=None))]
     fn add(
         &self,
         content: String,
@@ -162,6 +164,7 @@ impl PyMemory {
         metadata: Option<HashMap<String, String>>,
         timestamp: Option<f64>,
         source: Option<&PyDict>,
+        namespace: Option<&str>,
     ) -> PyResult<String> {
         let engine = self.get_engine()?;
         let ts = timestamp.map(|t| Timestamp::from_unix_secs(t));
@@ -174,7 +177,7 @@ impl PyMemory {
         };
 
         let id = engine
-            .add(content, embedding, metadata, ts, rust_source)
+            .add(content, embedding, metadata, ts, rust_source, namespace)
             .map_err(|e| PyValueError::new_err(format!("Failed to add memory: {}", e)))?;
 
         Ok(id.to_string())
@@ -186,12 +189,13 @@ impl PyMemory {
     ///     memory_id: Memory ID string
     ///
     /// Returns:
-    ///     Dictionary with memory data, or None if not found
+    ///     Dictionary with memory data (including 'namespace' field), or None if not found
     ///
     /// Example:
     ///     >>> result = memory.get(memory_id)
     ///     >>> if result:
     ///     >>>     print(result["content"])
+    ///     >>>     print(result["namespace"])  # Empty string if default namespace
     fn get(&self, memory_id: &str) -> PyResult<Option<PyObject>> {
         let engine = self.get_engine()?;
         let id = MemoryId::parse(memory_id)
@@ -209,6 +213,7 @@ impl PyMemory {
                 dict.set_item("embedding", memory.embedding.clone())?;
                 dict.set_item("metadata", memory.metadata.clone())?;
                 dict.set_item("created_at", memory.created_at.as_unix_secs())?;
+                dict.set_item("namespace", memory.get_namespace())?;
 
                 // Add source if present
                 if let Ok(Some(source)) = memory.get_source() {
@@ -229,16 +234,25 @@ impl PyMemory {
     ///
     /// Args:
     ///     memory_id: Memory ID string
+    ///     namespace: Optional namespace filter. If provided, verifies memory is in this namespace before deleting
     ///
     /// Returns:
     ///     True if deleted, False if not found
-    fn delete(&self, memory_id: &str) -> PyResult<bool> {
+    ///
+    /// Raises:
+    ///     ValueError: If namespace is provided and doesn't match memory's namespace
+    ///
+    /// Example:
+    ///     >>> memory.delete(memory_id)  # Delete from any namespace
+    ///     >>> memory.delete(memory_id, namespace="user_123")  # Verify namespace first
+    #[pyo3(signature = (memory_id, namespace=None))]
+    fn delete(&self, memory_id: &str, namespace: Option<&str>) -> PyResult<bool> {
         let engine = self.get_engine()?;
         let id = MemoryId::parse(memory_id)
             .map_err(|e| PyValueError::new_err(format!("Invalid memory ID: {}", e)))?;
 
         engine
-            .delete(&id)
+            .delete(&id, namespace)
             .map_err(|e| PyIOError::new_err(format!("Failed to delete memory: {}", e)))
     }
 
@@ -251,6 +265,8 @@ impl PyMemory {
     ///         - metadata: Optional metadata dict
     ///         - timestamp: Optional Unix timestamp
     ///         - source: Optional source tracking dict
+    ///         - namespace: Optional namespace string
+    ///     namespace: Optional namespace to apply to all memories (overridden by per-memory namespace)
     ///
     /// Returns:
     ///     Dictionary with results:
@@ -262,11 +278,12 @@ impl PyMemory {
     /// Example:
     ///     >>> memories = [
     ///     >>>     {"content": "mem 1", "embedding": [0.1] * 384},
-    ///     >>>     {"content": "mem 2", "embedding": [0.2] * 384},
+    ///     >>>     {"content": "mem 2", "embedding": [0.2] * 384, "namespace": "user_456"},
     ///     >>> ]
-    ///     >>> result = memory.add_batch(memories)
+    ///     >>> result = memory.add_batch(memories, namespace="user_123")
     ///     >>> print(f"Created {result['created_count']} memories")
-    fn add_batch(&self, memories: Vec<&PyDict>) -> PyResult<PyObject> {
+    #[pyo3(signature = (memories, namespace=None))]
+    fn add_batch(&self, memories: Vec<&PyDict>, namespace: Option<&str>) -> PyResult<PyObject> {
         let engine = self.get_engine()?;
 
         // Convert Python dicts to MemoryInput
@@ -303,12 +320,18 @@ impl PyMemory {
                 input = input.with_source(source);
             }
 
+            // Handle namespace: per-memory namespace takes precedence
+            if let Some(ns_item) = mem_dict.get_item("namespace")? {
+                let ns: String = ns_item.extract()?;
+                input = input.with_namespace(ns);
+            }
+
             inputs.push(input);
         }
 
-        // Call batch add
+        // Call batch add with namespace parameter
         let result: BatchResult = engine
-            .add_batch(inputs)
+            .add_batch(inputs, namespace)
             .map_err(|e| PyIOError::new_err(format!("Batch add failed: {}", e)))?;
 
         // Convert result to Python dict
@@ -347,6 +370,7 @@ impl PyMemory {
     ///
     /// Args:
     ///     memory_ids: List of memory ID strings to delete
+    ///     namespace: Optional namespace filter. Only deletes memories in this namespace
     ///
     /// Returns:
     ///     Number of memories actually deleted
@@ -354,8 +378,9 @@ impl PyMemory {
     /// Example:
     ///     >>> ids = [id1, id2, id3]
     ///     >>> deleted = memory.delete_batch(ids)
-    ///     >>> print(f"Deleted {deleted} memories")
-    fn delete_batch(&self, memory_ids: Vec<String>) -> PyResult<usize> {
+    ///     >>> deleted = memory.delete_batch(ids, namespace="user_123")  # Only delete from user_123
+    #[pyo3(signature = (memory_ids, namespace=None))]
+    fn delete_batch(&self, memory_ids: Vec<String>, namespace: Option<&str>) -> PyResult<usize> {
         let engine = self.get_engine()?;
 
         // Parse all IDs
@@ -367,9 +392,9 @@ impl PyMemory {
         let ids =
             ids.map_err(|e| PyValueError::new_err(format!("Invalid memory ID: {}", e)))?;
 
-        // Call batch delete
+        // Call batch delete with namespace parameter
         engine
-            .delete_batch(ids)
+            .delete_batch(ids, namespace)
             .map_err(|e| PyIOError::new_err(format!("Batch delete failed: {}", e)))
     }
 
@@ -384,6 +409,7 @@ impl PyMemory {
     ///     metadata: Optional metadata dictionary
     ///     timestamp: Optional Unix timestamp (seconds since epoch)
     ///     source: Optional source/provenance tracking dictionary
+    ///     namespace: Optional namespace string for multi-user/multi-context isolation
     ///
     /// Returns:
     ///     Dictionary with results:
@@ -397,7 +423,7 @@ impl PyMemory {
     ///     >>> print(f"Created: {result1['created']}")  # True
     ///     >>> result2 = memory.add_with_dedup("Meeting notes", embedding)
     ///     >>> print(f"Created: {result2['created']}")  # False (duplicate)
-    #[pyo3(signature = (content, embedding, metadata=None, timestamp=None, source=None))]
+    #[pyo3(signature = (content, embedding, metadata=None, timestamp=None, source=None, namespace=None))]
     fn add_with_dedup(
         &self,
         content: String,
@@ -405,6 +431,7 @@ impl PyMemory {
         metadata: Option<HashMap<String, String>>,
         timestamp: Option<f64>,
         source: Option<&PyDict>,
+        namespace: Option<&str>,
     ) -> PyResult<PyObject> {
         let engine = self.get_engine()?;
         let ts = timestamp.map(|t| Timestamp::from_unix_secs(t));
@@ -417,7 +444,7 @@ impl PyMemory {
         };
 
         let result = engine
-            .add_with_dedup(content, embedding, metadata, ts, rust_source)
+            .add_with_dedup(content, embedding, metadata, ts, rust_source, namespace)
             .map_err(|e| PyValueError::new_err(format!("Failed to add with dedup: {}", e)))?;
 
         // Convert result to Python dict
@@ -446,6 +473,7 @@ impl PyMemory {
     ///     metadata: Optional metadata dictionary
     ///     timestamp: Optional Unix timestamp (seconds since epoch)
     ///     source: Optional source/provenance tracking dictionary
+    ///     namespace: Optional namespace string for multi-user/multi-context isolation
     ///
     /// Returns:
     ///     Dictionary with results:
@@ -461,7 +489,7 @@ impl PyMemory {
     ///     >>> result2 = memory.upsert("user:123", "Alice likes hiking and photography", embedding)
     ///     >>> print(f"Updated: {result2['updated']}")  # True
     ///     >>> print(f"Previous: {result2['previous_content']}")  # "Alice likes hiking"
-    #[pyo3(signature = (key, content, embedding, metadata=None, timestamp=None, source=None))]
+    #[pyo3(signature = (key, content, embedding, metadata=None, timestamp=None, source=None, namespace=None))]
     fn upsert(
         &self,
         key: String,
@@ -470,6 +498,7 @@ impl PyMemory {
         metadata: Option<HashMap<String, String>>,
         timestamp: Option<f64>,
         source: Option<&PyDict>,
+        namespace: Option<&str>,
     ) -> PyResult<PyObject> {
         let engine = self.get_engine()?;
         let ts = timestamp.map(|t| Timestamp::from_unix_secs(t));
@@ -482,7 +511,7 @@ impl PyMemory {
         };
 
         let result = engine
-            .upsert(&key, content, embedding, metadata, ts, rust_source)
+            .upsert(&key, content, embedding, metadata, ts, rust_source, namespace)
             .map_err(|e| PyValueError::new_err(format!("Failed to upsert: {}", e)))?;
 
         // Convert result to Python dict
@@ -505,6 +534,7 @@ impl PyMemory {
     /// Args:
     ///     query_embedding: Query vector (list of floats)
     ///     top_k: Number of results to return
+    ///     namespace: Optional namespace filter. Only returns memories from this namespace
     ///
     /// Returns:
     ///     List of (memory_dict, similarity_score) tuples
@@ -512,12 +542,14 @@ impl PyMemory {
     /// Example:
     ///     >>> query_embedding = [0.1] * 384
     ///     >>> results = memory.search(query_embedding, top_k=10)
+    ///     >>> results = memory.search(query_embedding, top_k=10, namespace="user_123")
     ///     >>> for mem, score in results:
     ///     >>>     print(f"{score:.3f}: {mem['content']}")
-    fn search(&self, query_embedding: Vec<f32>, top_k: usize) -> PyResult<Vec<PyObject>> {
+    #[pyo3(signature = (query_embedding, top_k, namespace=None))]
+    fn search(&self, query_embedding: Vec<f32>, top_k: usize, namespace: Option<&str>) -> PyResult<Vec<PyObject>> {
         let engine = self.get_engine()?;
         let results = engine
-            .search(&query_embedding, top_k)
+            .search(&query_embedding, top_k, namespace)
             .map_err(|e| PyIOError::new_err(format!("Search failed: {}", e)))?;
 
         Python::with_gil(|py| {
@@ -530,6 +562,7 @@ impl PyMemory {
                     dict.set_item("embedding", memory.embedding.clone())?;
                     dict.set_item("metadata", memory.metadata.clone())?;
                     dict.set_item("created_at", memory.created_at.as_unix_secs())?;
+                    dict.set_item("namespace", memory.get_namespace())?;
 
                     // Add source if present
                     if let Ok(Some(source)) = memory.get_source() {
@@ -552,6 +585,7 @@ impl PyMemory {
     ///     query_text: Natural language query
     ///     query_embedding: Query vector (list of floats)
     ///     limit: Maximum number of results
+    ///     namespace: Optional namespace filter. Only returns memories from this namespace
     ///
     /// Returns:
     ///     Tuple of (intent_dict, results_list)
@@ -560,19 +594,22 @@ impl PyMemory {
     ///
     /// Example:
     ///     >>> intent, results = memory.query("Why was the meeting cancelled?", embedding, 10)
+    ///     >>> intent, results = memory.query("Why?", embedding, 10, namespace="user_123")
     ///     >>> print(f"Intent: {intent['intent']} (confidence: {intent['confidence']:.2f})")
     ///     >>> for mem, scores in results:
     ///     >>>     print(f"Fused score: {scores['fused_score']:.3f}")
     ///     >>>     print(f"  Content: {mem['content']}")
+    #[pyo3(signature = (query_text, query_embedding, limit, namespace=None))]
     fn query(
         &self,
         query_text: &str,
         query_embedding: Vec<f32>,
         limit: usize,
+        namespace: Option<&str>,
     ) -> PyResult<PyObject> {
         let engine = self.get_engine()?;
         let (intent, results) = engine
-            .query(query_text, &query_embedding, limit)
+            .query(query_text, &query_embedding, limit, namespace)
             .map_err(|e| PyIOError::new_err(format!("Query failed: {}", e)))?;
 
         Python::with_gil(|py| {
@@ -591,6 +628,7 @@ impl PyMemory {
                     mem_dict.set_item("embedding", memory.embedding.clone())?;
                     mem_dict.set_item("metadata", memory.metadata.clone())?;
                     mem_dict.set_item("created_at", memory.created_at.as_unix_secs())?;
+                    mem_dict.set_item("namespace", memory.get_namespace())?;
 
                     // Add source if present
                     if let Ok(Some(source)) = memory.get_source() {
@@ -727,6 +765,62 @@ impl PyMemory {
                 })
                 .collect()
         })
+    }
+
+    /// List all namespaces in the database
+    ///
+    /// Returns:
+    ///     List of namespace strings (excludes default namespace "")
+    ///
+    /// Example:
+    ///     >>> namespaces = memory.list_namespaces()
+    ///     >>> print(f"Found {len(namespaces)} namespaces")
+    ///     >>> for ns in namespaces:
+    ///     >>>     print(f"  - {ns}")
+    fn list_namespaces(&self) -> PyResult<Vec<String>> {
+        let engine = self.get_engine()?;
+        engine
+            .list_namespaces()
+            .map_err(|e| PyIOError::new_err(format!("Failed to list namespaces: {}", e)))
+    }
+
+    /// Count memories in a specific namespace
+    ///
+    /// Args:
+    ///     namespace: Namespace to count (empty string "" for default namespace)
+    ///
+    /// Returns:
+    ///     Number of memories in the namespace
+    ///
+    /// Example:
+    ///     >>> count = memory.count_namespace("user_123")
+    ///     >>> print(f"User has {count} memories")
+    ///     >>> default_count = memory.count_namespace("")  # Default namespace
+    fn count_namespace(&self, namespace: &str) -> PyResult<usize> {
+        let engine = self.get_engine()?;
+        engine
+            .count_namespace(namespace)
+            .map_err(|e| PyIOError::new_err(format!("Failed to count namespace: {}", e)))
+    }
+
+    /// Delete all memories in a namespace
+    ///
+    /// Warning: This operation cannot be undone. Use with caution.
+    ///
+    /// Args:
+    ///     namespace: Namespace to delete (empty string "" for default namespace)
+    ///
+    /// Returns:
+    ///     Number of memories deleted
+    ///
+    /// Example:
+    ///     >>> deleted = memory.delete_namespace("old_user")
+    ///     >>> print(f"Deleted {deleted} memories from namespace")
+    fn delete_namespace(&self, namespace: &str) -> PyResult<usize> {
+        let engine = self.get_engine()?;
+        engine
+            .delete_namespace(namespace)
+            .map_err(|e| PyIOError::new_err(format!("Failed to delete namespace: {}", e)))
     }
 
     /// Close the database and save all indexes

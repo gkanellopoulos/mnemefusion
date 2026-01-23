@@ -89,6 +89,10 @@ pub enum Error {
     /// Database not found
     #[error("Database not found at path: {0}")]
     DatabaseNotFound(String),
+
+    /// Namespace mismatch
+    #[error("Namespace mismatch: expected '{expected}', found '{found}'")]
+    NamespaceMismatch { expected: String, found: String },
 }
 
 /// Result type alias for MnemeFusion operations

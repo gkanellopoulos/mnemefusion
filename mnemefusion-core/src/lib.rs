@@ -56,12 +56,12 @@ pub use error::{Error, Result};
 pub use graph::{CausalEdge, CausalPath, CausalTraversalResult, EntityQueryResult, GraphManager};
 pub use index::{TemporalIndex, TemporalResult, VectorIndex, VectorIndexConfig, VectorResult};
 pub use ingest::{EntityExtractor, SimpleEntityExtractor};
-pub use memory::MemoryEngine;
+pub use memory::{MemoryEngine, ScopedMemory};
 pub use query::{
     AdaptiveWeightConfig, FusedResult, FusionEngine, IntentClassification, IntentClassifier,
     IntentWeights, QueryIntent, QueryPlanner,
 };
 pub use types::{
-    AddResult, BatchError, BatchResult, Entity, EntityId, Memory, MemoryId, MemoryInput, Source,
-    SourceType, Timestamp, UpsertResult, SOURCE_METADATA_KEY,
+    AddResult, BatchError, BatchResult, Entity, EntityId, Memory, MemoryId, MemoryInput,
+    NAMESPACE_METADATA_KEY, Source, SourceType, Timestamp, UpsertResult, SOURCE_METADATA_KEY,
 };

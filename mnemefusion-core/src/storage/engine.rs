@@ -614,6 +614,105 @@ impl StorageEngine {
         // Just overwrite - same as store
         self.store_logical_key(key, new_memory_id)
     }
+
+    // Namespace operations
+
+    /// List all namespaces in the database
+    ///
+    /// Scans all memories and extracts unique namespace values.
+    /// Returns sorted list of namespace strings (excluding default namespace "").
+    ///
+    /// # Performance
+    ///
+    /// O(n) where n = total memories. Can be cached if needed.
+    pub fn list_namespaces(&self) -> Result<Vec<String>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(MEMORIES)?;
+
+        let mut namespaces = std::collections::HashSet::new();
+
+        // Scan all memories
+        for entry in table.iter()? {
+            let (_, value) = entry?;
+            let memory_data = value.value();
+
+            // Deserialize memory to get namespace
+            if let Ok(memory) = self.deserialize_memory(memory_data) {
+                let ns = memory.get_namespace();
+                if !ns.is_empty() {
+                    namespaces.insert(ns);
+                }
+            }
+        }
+
+        let mut result: Vec<String> = namespaces.into_iter().collect();
+        result.sort();
+        Ok(result)
+    }
+
+    /// Count memories in a specific namespace
+    ///
+    /// # Arguments
+    ///
+    /// * `namespace` - The namespace to count (empty string "" for default)
+    ///
+    /// # Returns
+    ///
+    /// Number of memories in the namespace
+    pub fn count_namespace(&self, namespace: &str) -> Result<usize> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(MEMORIES)?;
+
+        let mut count = 0;
+
+        // Scan all memories
+        for entry in table.iter()? {
+            let (_, value) = entry?;
+            let memory_data = value.value();
+
+            // Deserialize memory to check namespace
+            if let Ok(memory) = self.deserialize_memory(memory_data) {
+                if memory.get_namespace() == namespace {
+                    count += 1;
+                }
+            }
+        }
+
+        Ok(count)
+    }
+
+    /// List all memory IDs in a specific namespace
+    ///
+    /// # Arguments
+    ///
+    /// * `namespace` - The namespace to list (empty string "" for default)
+    ///
+    /// # Returns
+    ///
+    /// Vector of MemoryIds in the namespace
+    pub fn list_namespace_ids(&self, namespace: &str) -> Result<Vec<MemoryId>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(MEMORIES)?;
+
+        let mut ids = Vec::new();
+
+        // Scan all memories
+        for entry in table.iter()? {
+            let (key, value) = entry?;
+            let memory_data = value.value();
+
+            // Deserialize memory to check namespace
+            if let Ok(memory) = self.deserialize_memory(memory_data) {
+                if memory.get_namespace() == namespace {
+                    // Get memory ID from key
+                    let id = MemoryId::from_bytes(key.value())?;
+                    ids.push(id);
+                }
+            }
+        }
+
+        Ok(ids)
+    }
 }
 
 // Add serde_json for metadata serialization
@@ -742,5 +841,132 @@ mod tests {
             assert!(retrieved.is_some());
             assert_eq!(retrieved.unwrap().content, "persistent");
         }
+    }
+
+    #[test]
+    fn test_storage_list_namespaces_empty() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = StorageEngine::open(&path).unwrap();
+
+        // No namespaces initially
+        let namespaces = engine.list_namespaces().unwrap();
+        assert!(namespaces.is_empty());
+    }
+
+    #[test]
+    fn test_storage_list_namespaces() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = StorageEngine::open(&path).unwrap();
+
+        // Add memories to different namespaces
+        let mut mem1 = Memory::new("content 1".to_string(), vec![0.1; 384]);
+        mem1.set_namespace("user_123");
+        engine.store_memory(&mem1).unwrap();
+
+        let mut mem2 = Memory::new("content 2".to_string(), vec![0.2; 384]);
+        mem2.set_namespace("user_456");
+        engine.store_memory(&mem2).unwrap();
+
+        let mut mem3 = Memory::new("content 3".to_string(), vec![0.3; 384]);
+        mem3.set_namespace("user_123"); // Duplicate namespace
+        engine.store_memory(&mem3).unwrap();
+
+        // Default namespace (no set_namespace)
+        let mem4 = Memory::new("content 4".to_string(), vec![0.4; 384]);
+        engine.store_memory(&mem4).unwrap();
+
+        // Should return 2 unique non-default namespaces (sorted)
+        let namespaces = engine.list_namespaces().unwrap();
+        assert_eq!(namespaces.len(), 2);
+        assert_eq!(namespaces[0], "user_123");
+        assert_eq!(namespaces[1], "user_456");
+    }
+
+    #[test]
+    fn test_storage_count_namespace() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = StorageEngine::open(&path).unwrap();
+
+        // Add memories to different namespaces
+        let mut mem1 = Memory::new("content 1".to_string(), vec![0.1; 384]);
+        mem1.set_namespace("user_123");
+        engine.store_memory(&mem1).unwrap();
+
+        let mut mem2 = Memory::new("content 2".to_string(), vec![0.2; 384]);
+        mem2.set_namespace("user_123");
+        engine.store_memory(&mem2).unwrap();
+
+        let mut mem3 = Memory::new("content 3".to_string(), vec![0.3; 384]);
+        mem3.set_namespace("user_456");
+        engine.store_memory(&mem3).unwrap();
+
+        let mem4 = Memory::new("content 4".to_string(), vec![0.4; 384]);
+        engine.store_memory(&mem4).unwrap();
+
+        // Count by namespace
+        assert_eq!(engine.count_namespace("user_123").unwrap(), 2);
+        assert_eq!(engine.count_namespace("user_456").unwrap(), 1);
+        assert_eq!(engine.count_namespace("").unwrap(), 1); // Default namespace
+        assert_eq!(engine.count_namespace("nonexistent").unwrap(), 0);
+    }
+
+    #[test]
+    fn test_storage_list_namespace_ids() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = StorageEngine::open(&path).unwrap();
+
+        // Add memories to namespace
+        let mut mem1 = Memory::new("content 1".to_string(), vec![0.1; 384]);
+        mem1.set_namespace("user_123");
+        let id1 = mem1.id.clone();
+        engine.store_memory(&mem1).unwrap();
+
+        let mut mem2 = Memory::new("content 2".to_string(), vec![0.2; 384]);
+        mem2.set_namespace("user_123");
+        let id2 = mem2.id.clone();
+        engine.store_memory(&mem2).unwrap();
+
+        let mut mem3 = Memory::new("content 3".to_string(), vec![0.3; 384]);
+        mem3.set_namespace("user_456");
+        engine.store_memory(&mem3).unwrap();
+
+        // List IDs by namespace
+        let ids = engine.list_namespace_ids("user_123").unwrap();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&id1));
+        assert!(ids.contains(&id2));
+
+        let ids_456 = engine.list_namespace_ids("user_456").unwrap();
+        assert_eq!(ids_456.len(), 1);
+
+        let ids_empty = engine.list_namespace_ids("nonexistent").unwrap();
+        assert!(ids_empty.is_empty());
+    }
+
+    #[test]
+    fn test_storage_namespace_default() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = StorageEngine::open(&path).unwrap();
+
+        // Memory without explicit namespace
+        let mem = Memory::new("default content".to_string(), vec![0.1; 384]);
+        let id = mem.id.clone();
+        engine.store_memory(&mem).unwrap();
+
+        // Should be in default namespace ""
+        assert_eq!(engine.count_namespace("").unwrap(), 1);
+
+        let ids = engine.list_namespace_ids("").unwrap();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0], id);
+
+        // Should not appear in list_namespaces (only non-default)
+        let namespaces = engine.list_namespaces().unwrap();
+        assert!(namespaces.is_empty());
     }
 }

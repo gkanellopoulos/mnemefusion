@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         metadata.insert("example".to_string(), "basic_usage".to_string());
         metadata.insert("index".to_string(), idx.to_string());
 
-        let id = engine.add(content.to_string(), embedding, Some(metadata), None)?;
+        let id = engine.add(content.to_string(), embedding, Some(metadata), None, None, None)?;
         println!("  Added: {} (ID: {}...)", content, &id.to_string()[..8]);
         memory_ids.push(id);
     }
@@ -84,7 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // In a real application, you'd embed the query with the same model
     // For this example, we use a query vector similar to our second memory (team meeting)
     let query_embedding = vec![0.1; 384]; // Similar to idx=1 memory
-    let results = engine.search(&query_embedding, 3)?;
+    let results = engine.search(&query_embedding, 3, None)?;
 
     println!("  Found {} results:", results.len());
     for (idx, (memory, similarity)) in results.iter().enumerate() {
@@ -193,7 +193,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Delete a memory
     println!("\nDeleting the third memory...");
-    let deleted = engine.delete(&memory_ids[2])?;
+    let deleted = engine.delete(&memory_ids[2], None)?;
     if deleted {
         println!("  Successfully deleted");
         println!("  Remaining memories: {}", engine.count()?);

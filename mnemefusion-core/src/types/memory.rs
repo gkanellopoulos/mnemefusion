@@ -10,6 +10,9 @@ use uuid::Uuid;
 
 use super::Timestamp;
 
+/// Reserved metadata key for namespace
+pub const NAMESPACE_METADATA_KEY: &str = "__mf_namespace__";
+
 /// Unique identifier for a memory
 ///
 /// MemoryId is a UUID-based identifier that can be converted to/from u64
@@ -244,6 +247,76 @@ impl Memory {
     pub fn clear_source(&mut self) {
         self.metadata.remove(super::SOURCE_METADATA_KEY);
     }
+
+    /// Set the namespace for this memory
+    ///
+    /// Namespaces enable multi-user and multi-context isolation.
+    /// The namespace is stored as a reserved metadata key.
+    ///
+    /// # Arguments
+    ///
+    /// * `namespace` - The namespace string. Empty string `""` is the default namespace.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mnemefusion_core::types::memory::Memory;
+    ///
+    /// let mut memory = Memory::new("test content".into(), vec![0.1; 384]);
+    /// memory.set_namespace("user_123");
+    ///
+    /// assert_eq!(memory.get_namespace(), "user_123");
+    /// ```
+    pub fn set_namespace(&mut self, namespace: impl Into<String>) {
+        let ns = namespace.into();
+        if ns.is_empty() {
+            self.metadata.remove(NAMESPACE_METADATA_KEY);
+        } else {
+            self.metadata.insert(NAMESPACE_METADATA_KEY.to_string(), ns);
+        }
+    }
+
+    /// Get the namespace for this memory
+    ///
+    /// Returns the namespace string, or empty string `""` if no namespace is set
+    /// (which represents the default namespace).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mnemefusion_core::types::memory::Memory;
+    ///
+    /// let memory = Memory::new("test content".into(), vec![0.1; 384]);
+    /// assert_eq!(memory.get_namespace(), ""); // Default namespace
+    ///
+    /// let mut memory2 = Memory::new("test".into(), vec![0.1; 384]);
+    /// memory2.set_namespace("org_1/user_123");
+    /// assert_eq!(memory2.get_namespace(), "org_1/user_123");
+    /// ```
+    pub fn get_namespace(&self) -> String {
+        self.metadata
+            .get(NAMESPACE_METADATA_KEY)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Clear the namespace (revert to default namespace)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mnemefusion_core::types::memory::Memory;
+    ///
+    /// let mut memory = Memory::new("test content".into(), vec![0.1; 384]);
+    /// memory.set_namespace("user_123");
+    /// assert_eq!(memory.get_namespace(), "user_123");
+    ///
+    /// memory.clear_namespace();
+    /// assert_eq!(memory.get_namespace(), ""); // Back to default
+    /// ```
+    pub fn clear_namespace(&mut self) {
+        self.metadata.remove(NAMESPACE_METADATA_KEY);
+    }
 }
 
 #[cfg(test)]
@@ -394,5 +467,57 @@ mod tests {
         assert_eq!(retrieved.id, source.id);
         assert_eq!(retrieved.location, source.location);
         assert_eq!(retrieved.extractor, source.extractor);
+    }
+
+    #[test]
+    fn test_memory_namespace_default() {
+        let memory = Memory::new("test content".to_string(), vec![0.1; 384]);
+
+        // Default namespace is empty string
+        assert_eq!(memory.get_namespace(), "");
+    }
+
+    #[test]
+    fn test_memory_namespace_set_and_get() {
+        let mut memory = Memory::new("test content".to_string(), vec![0.1; 384]);
+
+        // Set namespace
+        memory.set_namespace("user_123");
+        assert_eq!(memory.get_namespace(), "user_123");
+
+        // Namespace should be in metadata
+        assert!(memory.metadata.contains_key(NAMESPACE_METADATA_KEY));
+
+        // Change namespace
+        memory.set_namespace("org_1/user_456");
+        assert_eq!(memory.get_namespace(), "org_1/user_456");
+    }
+
+    #[test]
+    fn test_memory_namespace_clear() {
+        let mut memory = Memory::new("test content".to_string(), vec![0.1; 384]);
+
+        // Set namespace
+        memory.set_namespace("user_123");
+        assert_eq!(memory.get_namespace(), "user_123");
+
+        // Clear namespace
+        memory.clear_namespace();
+        assert_eq!(memory.get_namespace(), "");
+
+        // Metadata key should be removed
+        assert!(!memory.metadata.contains_key(NAMESPACE_METADATA_KEY));
+    }
+
+    #[test]
+    fn test_memory_namespace_empty_string() {
+        let mut memory = Memory::new("test content".to_string(), vec![0.1; 384]);
+
+        // Setting empty string should be same as clearing
+        memory.set_namespace("user_123");
+        memory.set_namespace("");
+
+        assert_eq!(memory.get_namespace(), "");
+        assert!(!memory.metadata.contains_key(NAMESPACE_METADATA_KEY));
     }
 }

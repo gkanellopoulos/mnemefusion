@@ -55,6 +55,7 @@ impl QueryPlanner {
     /// * `query_text` - The natural language query
     /// * `query_embedding` - Vector embedding of the query
     /// * `limit` - Maximum number of results to return
+    /// * `namespace` - Optional namespace filter. If provided, only returns memories in this namespace
     ///
     /// # Returns
     ///
@@ -64,15 +65,24 @@ impl QueryPlanner {
         query_text: &str,
         query_embedding: &[f32],
         limit: usize,
+        namespace: Option<&str>,
     ) -> Result<(IntentClassification, Vec<FusedResult>)> {
         // Step 1: Classify intent
         let intent = self.intent_classifier.classify(query_text);
 
-        // Step 2: Retrieve from all dimensions
-        let semantic_scores = self.semantic_search(query_embedding, limit * 3)?;
-        let temporal_scores = self.temporal_search(limit * 3)?;
+        // Step 2: Retrieve from all dimensions (fetch more to account for filtering)
+        let fetch_multiplier = if namespace.is_some() { 5 } else { 3 };
+        let mut semantic_scores = self.semantic_search(query_embedding, limit * fetch_multiplier)?;
+        let mut temporal_scores = self.temporal_search(limit * fetch_multiplier)?;
         let causal_scores = HashMap::new(); // TODO: Implement causal search
-        let entity_scores = self.entity_search(query_text, limit * 3)?;
+        let mut entity_scores = self.entity_search(query_text, limit * fetch_multiplier)?;
+
+        // Step 2.5: Filter by namespace if provided
+        if let Some(ns) = namespace {
+            self.filter_by_namespace(&mut semantic_scores, ns)?;
+            self.filter_by_namespace(&mut temporal_scores, ns)?;
+            self.filter_by_namespace(&mut entity_scores, ns)?;
+        }
 
         // Step 3: Fuse results with adaptive weights
         let mut fused_results = self.fusion_engine.fuse(
@@ -171,38 +181,93 @@ impl QueryPlanner {
     /// Perform temporal range search
     ///
     /// Search memories within a specific time range
+    ///
+    /// # Arguments
+    ///
+    /// * `start` - Start of time range
+    /// * `end` - End of time range
+    /// * `limit` - Maximum number of results
+    /// * `namespace` - Optional namespace filter
     pub fn temporal_range_query(
         &self,
         start: Timestamp,
         end: Timestamp,
         limit: usize,
+        namespace: Option<&str>,
     ) -> Result<Vec<FusedResult>> {
-        let results = self.temporal_index.range_query(start, end, limit)?;
+        // Fetch more results if filtering by namespace
+        let fetch_limit = if namespace.is_some() { limit * 3 } else { limit };
+        let results = self.temporal_index.range_query(start, end, fetch_limit)?;
 
         // Convert to fused results with temporal scores
-        let fused: Vec<FusedResult> = results
-            .into_iter()
-            .enumerate()
-            .map(|(i, result)| {
-                // Calculate temporal score based on position
-                let temporal_score = if limit > 1 {
-                    1.0 - (i as f32 / (limit - 1) as f32)
-                } else {
-                    1.0
-                };
+        let mut fused: Vec<FusedResult> = Vec::new();
+        let mut position = 0;
 
-                FusedResult {
-                    id: result.id,
-                    semantic_score: 0.0,
-                    temporal_score,
-                    causal_score: 0.0,
-                    entity_score: 0.0,
-                    fused_score: temporal_score,
+        for result in results {
+            // Filter by namespace if provided
+            if let Some(ns) = namespace {
+                if let Ok(Some(memory)) = self.storage.get_memory(&result.id) {
+                    if memory.get_namespace() != ns {
+                        continue; // Skip memories not in this namespace
+                    }
+                } else {
+                    continue; // Skip if memory not found
                 }
-            })
-            .collect();
+            }
+
+            // Calculate temporal score based on position
+            let temporal_score = if fetch_limit > 1 {
+                1.0 - (position as f32 / (fetch_limit - 1) as f32)
+            } else {
+                1.0
+            };
+
+            fused.push(FusedResult {
+                id: result.id,
+                semantic_score: 0.0,
+                temporal_score,
+                causal_score: 0.0,
+                entity_score: 0.0,
+                fused_score: temporal_score,
+            });
+
+            position += 1;
+            if fused.len() >= limit {
+                break;
+            }
+        }
 
         Ok(fused)
+    }
+
+    /// Filter a score map by namespace
+    ///
+    /// Removes entries whose memories are not in the specified namespace
+    fn filter_by_namespace(
+        &self,
+        scores: &mut HashMap<MemoryId, f32>,
+        namespace: &str,
+    ) -> Result<()> {
+        // Collect IDs to remove (can't remove during iteration)
+        let mut to_remove = Vec::new();
+
+        for memory_id in scores.keys() {
+            if let Some(memory) = self.storage.get_memory(memory_id)? {
+                if memory.get_namespace() != namespace {
+                    to_remove.push(memory_id.clone());
+                }
+            } else {
+                // Memory doesn't exist, remove it
+                to_remove.push(memory_id.clone());
+            }
+        }
+
+        // Remove filtered-out IDs
+        for id in to_remove {
+            scores.remove(&id);
+        }
+
+        Ok(())
     }
 }
 
@@ -324,7 +389,7 @@ mod tests {
 
         // Execute query
         let (intent, results) = planner
-            .query("test query", &vec![0.1; 384], 10)
+            .query("test query", &vec![0.1; 384], 10, None)
             .unwrap();
 
         // Should classify as factual
@@ -352,10 +417,153 @@ mod tests {
         planner.temporal_index.add(&mem1.id, mem1.created_at).unwrap();
 
         let results = planner
-            .temporal_range_query(now.subtract_days(2), now, 10)
+            .temporal_range_query(now.subtract_days(2), now, 10, None)
             .unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, mem1.id);
+    }
+
+    #[test]
+    fn test_query_with_namespace_filtering() {
+        let (planner, _dir) = create_test_planner();
+
+        // Create memories in different namespaces
+        let mut mem1 = Memory::new("NS1 memory".to_string(), vec![0.1; 384]);
+        mem1.set_namespace("ns1");
+        let mem1_id = mem1.id.clone();
+
+        let mut mem2 = Memory::new("NS2 memory".to_string(), vec![0.15; 384]);
+        mem2.set_namespace("ns2");
+        let mem2_id = mem2.id.clone();
+
+        let mem3 = Memory::new("Default memory".to_string(), vec![0.2; 384]);
+        let mem3_id = mem3.id.clone();
+
+        // Store all memories
+        planner.storage.store_memory(&mem1).unwrap();
+        planner.storage.store_memory(&mem2).unwrap();
+        planner.storage.store_memory(&mem3).unwrap();
+
+        // Add to indexes
+        {
+            let mut index = planner.vector_index.write().unwrap();
+            index.add(mem1_id.clone(), &mem1.embedding).unwrap();
+            index.add(mem2_id.clone(), &mem2.embedding).unwrap();
+            index.add(mem3_id.clone(), &mem3.embedding).unwrap();
+        }
+        planner.temporal_index.add(&mem1_id, mem1.created_at).unwrap();
+        planner.temporal_index.add(&mem2_id, mem2.created_at).unwrap();
+        planner.temporal_index.add(&mem3_id, mem3.created_at).unwrap();
+
+        // Query with ns1 filter
+        let (_, results) = planner
+            .query("test", &vec![0.1; 384], 10, Some("ns1"))
+            .unwrap();
+
+        // Should only contain mem1
+        assert!(!results.is_empty());
+        assert!(results.iter().all(|r| r.id == mem1_id));
+
+        // Query with ns2 filter
+        let (_, results) = planner
+            .query("test", &vec![0.1; 384], 10, Some("ns2"))
+            .unwrap();
+
+        // Should only contain mem2
+        assert!(!results.is_empty());
+        assert!(results.iter().all(|r| r.id == mem2_id));
+
+        // Query with default namespace filter
+        let (_, results) = planner
+            .query("test", &vec![0.1; 384], 10, Some(""))
+            .unwrap();
+
+        // Should only contain mem3
+        assert!(!results.is_empty());
+        assert!(results.iter().all(|r| r.id == mem3_id));
+    }
+
+    #[test]
+    fn test_temporal_range_query_with_namespace() {
+        let (planner, _dir) = create_test_planner();
+
+        let now = Timestamp::now();
+        let ts1 = now.subtract_days(1);
+        // Use slightly different timestamp for mem2 to avoid any potential uniqueness issues
+        let ts2 = Timestamp::from_unix_secs(ts1.as_unix_secs() + 60.0); // 1 minute later
+
+        // Create memories in different namespaces
+        let mut mem1 = Memory::new_with_timestamp(
+            "NS1 memory".to_string(),
+            vec![0.1; 384],
+            ts1,
+        );
+        mem1.set_namespace("ns1");
+        let mem1_id = mem1.id.clone();
+
+        let mut mem2 = Memory::new_with_timestamp(
+            "NS2 memory".to_string(),
+            vec![0.2; 384],
+            ts2,
+        );
+        mem2.set_namespace("ns2");
+        let mem2_id = mem2.id.clone();
+
+        // Store and index
+        planner.storage.store_memory(&mem1).unwrap();
+        planner.storage.store_memory(&mem2).unwrap();
+        planner.temporal_index.add(&mem1_id, mem1.created_at).unwrap();
+        planner.temporal_index.add(&mem2_id, mem2.created_at).unwrap();
+
+        // First verify memories are stored correctly
+        let retrieved_mem1 = planner.storage.get_memory(&mem1_id).unwrap().unwrap();
+        assert_eq!(retrieved_mem1.get_namespace(), "ns1");
+
+        // Query without namespace filter first
+        let all_results = planner
+            .temporal_range_query(now.subtract_days(2), now, 10, None)
+            .unwrap();
+        assert_eq!(all_results.len(), 2, "Should find both memories without filter");
+
+        // Query with namespace filter
+        let results = planner
+            .temporal_range_query(now.subtract_days(2), now, 10, Some("ns1"))
+            .unwrap();
+
+        // Should only return mem1
+        assert_eq!(results.len(), 1, "Should find exactly one memory in ns1");
+        assert_eq!(results[0].id, mem1_id);
+    }
+
+    #[test]
+    fn test_filter_by_namespace() {
+        let (planner, _dir) = create_test_planner();
+
+        // Create memories in different namespaces
+        let mut mem1 = Memory::new("NS1 memory".to_string(), vec![0.1; 384]);
+        mem1.set_namespace("ns1");
+        let mem1_id = mem1.id.clone();
+
+        let mut mem2 = Memory::new("NS2 memory".to_string(), vec![0.2; 384]);
+        mem2.set_namespace("ns2");
+        let mem2_id = mem2.id.clone();
+
+        // Store memories
+        planner.storage.store_memory(&mem1).unwrap();
+        planner.storage.store_memory(&mem2).unwrap();
+
+        // Create score map
+        let mut scores = HashMap::new();
+        scores.insert(mem1_id.clone(), 0.9);
+        scores.insert(mem2_id.clone(), 0.8);
+
+        // Filter by ns1
+        planner.filter_by_namespace(&mut scores, "ns1").unwrap();
+
+        // Should only contain mem1
+        assert_eq!(scores.len(), 1);
+        assert!(scores.contains_key(&mem1_id));
+        assert!(!scores.contains_key(&mem2_id));
     }
 }

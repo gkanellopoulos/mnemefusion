@@ -20,7 +20,7 @@ fn test_create_add_retrieve_close_reopen() {
         let content = "The quick brown fox jumps over the lazy dog".to_string();
         let embedding = vec![0.5; 384]; // 384 dimensions
 
-        let id = engine.add(content.clone(), embedding.clone(), None, None).unwrap();
+        let id = engine.add(content.clone(), embedding.clone(), None, None, None, None).unwrap();
 
         // Verify it was added
         assert_eq!(engine.count().unwrap(), 1);
@@ -77,7 +77,7 @@ fn test_multiple_memories_with_metadata() {
 
         let embedding = vec![0.5; 384];
         let id = engine
-            .add(content.to_string(), embedding, Some(metadata), None)
+            .add(content.to_string(), embedding, Some(metadata), None, None, None)
             .unwrap();
         ids.push(id);
     }
@@ -109,14 +109,14 @@ fn test_delete_operations() {
     for i in 0..5 {
         let content = format!("Memory number {}", i);
         let embedding = vec![i as f32 * 0.1; 384];
-        let id = engine.add(content, embedding, None, None).unwrap();
+        let id = engine.add(content, embedding, None, None, None, None).unwrap();
         ids.push(id);
     }
 
     assert_eq!(engine.count().unwrap(), 5);
 
     // Delete the middle one
-    let deleted = engine.delete(&ids[2]).unwrap();
+    let deleted = engine.delete(&ids[2], None).unwrap();
     assert!(deleted);
     assert_eq!(engine.count().unwrap(), 4);
 
@@ -131,7 +131,7 @@ fn test_delete_operations() {
     assert!(engine.get(&ids[4]).unwrap().is_some());
 
     // Try to delete non-existent
-    let deleted = engine.delete(&ids[2]).unwrap();
+    let deleted = engine.delete(&ids[2], None).unwrap();
     assert!(!deleted);
 
     engine.close().unwrap();
@@ -154,12 +154,12 @@ fn test_custom_configuration() {
     assert_eq!(engine.config().causal_max_hops, 5);
 
     // Try adding with wrong dimension
-    let result = engine.add("test".to_string(), vec![0.1; 384], None, None);
+    let result = engine.add("test".to_string(), vec![0.1; 384], None, None, None, None);
     assert!(result.is_err());
 
     // Add with correct dimension
     let id = engine
-        .add("test".to_string(), vec![0.1; 512], None, None)
+        .add("test".to_string(), vec![0.1; 512], None, None, None, None)
         .unwrap();
 
     let memory = engine.get(&id).unwrap().unwrap();
@@ -179,7 +179,7 @@ fn test_large_number_of_memories() {
     for i in 0..count {
         let content = format!("Memory {}", i);
         let embedding = vec![(i % 100) as f32 / 100.0; 384];
-        engine.add(content, embedding, None, None).unwrap();
+        engine.add(content, embedding, None, None, None, None).unwrap();
     }
 
     assert_eq!(engine.count().unwrap(), count);
@@ -204,13 +204,13 @@ fn test_custom_timestamps() {
     let ts3 = Timestamp::from_unix_secs(1672531200.0); // 2023-01-01
 
     let id1 = engine
-        .add("2021 memory".to_string(), vec![0.1; 384], None, Some(ts1))
+        .add("2021 memory".to_string(), vec![0.1; 384], None, Some(ts1), None, None)
         .unwrap();
     let id2 = engine
-        .add("2022 memory".to_string(), vec![0.2; 384], None, Some(ts2))
+        .add("2022 memory".to_string(), vec![0.2; 384], None, Some(ts2), None, None)
         .unwrap();
     let id3 = engine
-        .add("2023 memory".to_string(), vec![0.3; 384], None, Some(ts3))
+        .add("2023 memory".to_string(), vec![0.3; 384], None, Some(ts3), None, None)
         .unwrap();
 
     // Verify timestamps
@@ -242,6 +242,8 @@ fn test_temporal_range_query() {
             vec![0.1; 384],
             None,
             Some(now.subtract_days(10)),
+            None,
+            None,
         )
         .unwrap();
 
@@ -251,6 +253,8 @@ fn test_temporal_range_query() {
             vec![0.2; 384],
             None,
             Some(now.subtract_days(5)),
+            None,
+            None,
         )
         .unwrap();
 
@@ -260,6 +264,8 @@ fn test_temporal_range_query() {
             vec![0.3; 384],
             None,
             Some(now.subtract_days(1)),
+            None,
+            None,
         )
         .unwrap();
 
@@ -269,6 +275,8 @@ fn test_temporal_range_query() {
             vec![0.4; 384],
             None,
             Some(now),
+            None,
+            None,
         )
         .unwrap();
 
@@ -327,6 +335,8 @@ fn test_get_recent_memories() {
                 vec![i as f32 * 0.1; 384],
                 None,
                 Some(now.subtract_days(i as u64)),
+                None,
+                None,
             )
             .unwrap();
         ids.push(id);
@@ -376,6 +386,8 @@ fn test_temporal_with_search() {
             vec![0.8; 384],
             None,
             Some(now.subtract_days(7)),
+            None,
+            None,
         )
         .unwrap();
 
@@ -385,6 +397,8 @@ fn test_temporal_with_search() {
             vec![0.7; 384],
             None,
             Some(now.subtract_days(3)),
+            None,
+            None,
         )
         .unwrap();
 
@@ -394,12 +408,14 @@ fn test_temporal_with_search() {
             vec![0.1; 384],
             None,
             Some(now.subtract_days(1)),
+            None,
+            None,
         )
         .unwrap();
 
     // Semantic search
     let query_embedding = vec![0.75; 384];
-    let search_results = engine.search(&query_embedding, 10).unwrap();
+    let search_results = engine.search(&query_embedding, 10, None).unwrap();
 
     // All should be found
     assert_eq!(search_results.len(), 3);
@@ -437,6 +453,8 @@ fn test_causal_simple_chain() {
             vec![0.1; 384],
             None,
             None,
+            None,
+            None,
         )
         .unwrap();
 
@@ -446,6 +464,8 @@ fn test_causal_simple_chain() {
             vec![0.2; 384],
             None,
             None,
+            None,
+            None,
         )
         .unwrap();
 
@@ -453,6 +473,8 @@ fn test_causal_simple_chain() {
         .add(
             "Meeting was successful".to_string(),
             vec![0.3; 384],
+            None,
+            None,
             None,
             None,
         )
@@ -504,23 +526,23 @@ fn test_causal_multi_hop_traversal() {
     //      ↓
     //     m3 → m5
     let id1 = engine
-        .add("Root cause".to_string(), vec![0.1; 384], None, None)
+        .add("Root cause".to_string(), vec![0.1; 384], None, None, None, None)
         .unwrap();
 
     let id2 = engine
-        .add("Effect A".to_string(), vec![0.2; 384], None, None)
+        .add("Effect A".to_string(), vec![0.2; 384], None, None, None, None)
         .unwrap();
 
     let id3 = engine
-        .add("Effect B".to_string(), vec![0.3; 384], None, None)
+        .add("Effect B".to_string(), vec![0.3; 384], None, None, None, None)
         .unwrap();
 
     let id4 = engine
-        .add("Second-order effect A".to_string(), vec![0.4; 384], None, None)
+        .add("Second-order effect A".to_string(), vec![0.4; 384], None, None, None, None)
         .unwrap();
 
     let id5 = engine
-        .add("Second-order effect B".to_string(), vec![0.5; 384], None, None)
+        .add("Second-order effect B".to_string(), vec![0.5; 384], None, None, None, None)
         .unwrap();
 
     // Add causal links
@@ -571,15 +593,15 @@ fn test_causal_graph_persistence() {
         let engine = MemoryEngine::open(&path, Config::default()).unwrap();
 
         id1 = engine
-            .add("Cause A".to_string(), vec![0.1; 384], None, None)
+            .add("Cause A".to_string(), vec![0.1; 384], None, None, None, None)
             .unwrap();
 
         id2 = engine
-            .add("Effect A".to_string(), vec![0.2; 384], None, None)
+            .add("Effect A".to_string(), vec![0.2; 384], None, None, None, None)
             .unwrap();
 
         id3 = engine
-            .add("Effect B".to_string(), vec![0.3; 384], None, None)
+            .add("Effect B".to_string(), vec![0.3; 384], None, None, None, None)
             .unwrap();
 
         // Add causal links

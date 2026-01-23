@@ -12,6 +12,6 @@ pub mod timestamp;
 pub use batch::{BatchError, BatchResult, MemoryInput};
 pub use dedup::{AddResult, UpsertResult};
 pub use entity::{Entity, EntityId};
-pub use memory::{Memory, MemoryId};
+pub use memory::{Memory, MemoryId, NAMESPACE_METADATA_KEY};
 pub use source::{Source, SourceType, SOURCE_METADATA_KEY};
 pub use timestamp::Timestamp;

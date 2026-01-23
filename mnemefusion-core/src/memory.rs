@@ -158,6 +158,7 @@ impl MemoryEngine {
     ///     None,
     ///     None,
     ///     Some(source),
+    ///     None,
     /// ).unwrap();
     /// ```
     pub fn add(
@@ -167,6 +168,7 @@ impl MemoryEngine {
         metadata: Option<HashMap<String, String>>,
         timestamp: Option<Timestamp>,
         source: Option<Source>,
+        namespace: Option<&str>,
     ) -> Result<MemoryId> {
         // Validate embedding dimension
         if embedding.len() != self.config.embedding_dim {
@@ -195,6 +197,9 @@ impl MemoryEngine {
         if let Some(src) = source {
             memory.set_source(src)?;
         }
+
+        // Set namespace if provided (defaults to empty string)
+        memory.set_namespace(namespace.unwrap_or(""));
 
         // Delegate to ingestion pipeline for atomic indexing
         self.pipeline.add(memory)
@@ -232,21 +237,42 @@ impl MemoryEngine {
     /// # Arguments
     ///
     /// * `id` - The memory ID to delete
+    /// * `namespace` - Optional namespace. If provided, verifies the memory is in this namespace before deleting
     ///
     /// # Returns
     ///
     /// true if the memory was deleted, false if it didn't exist
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::NamespaceMismatch` if namespace is provided and doesn't match
     ///
     /// # Example
     ///
     /// ```no_run
     /// # use mnemefusion_core::{MemoryEngine, Config};
     /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
-    /// # let id = engine.add("test".to_string(), vec![0.1; 384], None, None, None).unwrap();
-    /// let deleted = engine.delete(&id).unwrap();
+    /// # let id = engine.add("test".to_string(), vec![0.1; 384], None, None, None, None).unwrap();
+    /// let deleted = engine.delete(&id, None).unwrap();
     /// assert!(deleted);
     /// ```
-    pub fn delete(&self, id: &MemoryId) -> Result<bool> {
+    pub fn delete(&self, id: &MemoryId, namespace: Option<&str>) -> Result<bool> {
+        // If namespace is provided, verify it matches before deleting
+        if let Some(expected_ns) = namespace {
+            if let Some(memory) = self.storage.get_memory(id)? {
+                let found_ns = memory.get_namespace();
+                if found_ns != expected_ns {
+                    return Err(Error::NamespaceMismatch {
+                        expected: expected_ns.to_string(),
+                        found: found_ns,
+                    });
+                }
+            } else {
+                // Memory doesn't exist
+                return Ok(false);
+            }
+        }
+
         // Delegate to ingestion pipeline for atomic cleanup
         self.pipeline.delete(id)
     }
@@ -283,13 +309,13 @@ impl MemoryEngine {
     ///     MemoryInput::new("content 2".to_string(), vec![0.2; 384]),
     /// ];
     ///
-    /// let result = engine.add_batch(inputs).unwrap();
+    /// let result = engine.add_batch(inputs, None).unwrap();
     /// println!("Created {} memories", result.created_count);
     /// if result.has_errors() {
     ///     println!("Encountered {} errors", result.errors.len());
     /// }
     /// ```
-    pub fn add_batch(&self, inputs: Vec<MemoryInput>) -> Result<BatchResult> {
+    pub fn add_batch(&self, inputs: Vec<MemoryInput>, namespace: Option<&str>) -> Result<BatchResult> {
         // Validate all embeddings upfront
         for (index, input) in inputs.iter().enumerate() {
             if input.embedding.len() != self.config.embedding_dim {
@@ -306,8 +332,16 @@ impl MemoryEngine {
             }
         }
 
+        // Set namespace on all inputs if provided
+        let mut inputs_with_ns = inputs;
+        if let Some(ns) = namespace {
+            for input in &mut inputs_with_ns {
+                input.namespace = Some(ns.to_string());
+            }
+        }
+
         // Delegate to ingestion pipeline
-        self.pipeline.add_batch(inputs, None)
+        self.pipeline.add_batch(inputs_with_ns, None)
     }
 
     /// Delete multiple memories in a batch operation
@@ -319,10 +353,11 @@ impl MemoryEngine {
     /// # Arguments
     ///
     /// * `ids` - Vector of MemoryIds to delete
+    /// * `namespace` - Optional namespace. If provided, only deletes memories in this namespace
     ///
     /// # Returns
     ///
-    /// Number of memories actually deleted (may be less than input if some don't exist)
+    /// Number of memories actually deleted (may be less than input if some don't exist or are in wrong namespace)
     ///
     /// # Example
     ///
@@ -330,15 +365,30 @@ impl MemoryEngine {
     /// use mnemefusion_core::{MemoryEngine, Config};
     ///
     /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
-    /// # let id1 = engine.add("test1".to_string(), vec![0.1; 384], None, None, None).unwrap();
-    /// # let id2 = engine.add("test2".to_string(), vec![0.2; 384], None, None, None).unwrap();
+    /// # let id1 = engine.add("test1".to_string(), vec![0.1; 384], None, None, None, None).unwrap();
+    /// # let id2 = engine.add("test2".to_string(), vec![0.2; 384], None, None, None, None).unwrap();
     /// let ids = vec![id1, id2];
-    /// let deleted_count = engine.delete_batch(ids).unwrap();
+    /// let deleted_count = engine.delete_batch(ids, None).unwrap();
     /// println!("Deleted {} memories", deleted_count);
     /// ```
-    pub fn delete_batch(&self, ids: Vec<MemoryId>) -> Result<usize> {
+    pub fn delete_batch(&self, ids: Vec<MemoryId>, namespace: Option<&str>) -> Result<usize> {
+        // If namespace is provided, filter IDs to only those in the namespace
+        let ids_to_delete = if let Some(expected_ns) = namespace {
+            let mut filtered_ids = Vec::new();
+            for id in ids {
+                if let Some(memory) = self.storage.get_memory(&id)? {
+                    if memory.get_namespace() == expected_ns {
+                        filtered_ids.push(id);
+                    }
+                }
+            }
+            filtered_ids
+        } else {
+            ids
+        };
+
         // Delegate to ingestion pipeline
-        self.pipeline.delete_batch(ids)
+        self.pipeline.delete_batch(ids_to_delete)
     }
 
     /// Add a memory with automatic deduplication
@@ -373,6 +423,7 @@ impl MemoryEngine {
     ///     None,
     ///     None,
     ///     None,
+    ///     None,
     /// ).unwrap();
     /// assert!(result1.created);
     ///
@@ -380,6 +431,7 @@ impl MemoryEngine {
     /// let result2 = engine.add_with_dedup(
     ///     "Meeting notes".to_string(),
     ///     embedding.clone(),
+    ///     None,
     ///     None,
     ///     None,
     ///     None,
@@ -394,6 +446,7 @@ impl MemoryEngine {
         metadata: Option<HashMap<String, String>>,
         timestamp: Option<Timestamp>,
         source: Option<Source>,
+        namespace: Option<&str>,
     ) -> Result<AddResult> {
         // Validate embedding dimension
         if embedding.len() != self.config.embedding_dim {
@@ -421,6 +474,9 @@ impl MemoryEngine {
         if let Some(src) = source {
             memory.set_source(src)?;
         }
+
+        // Set namespace if provided
+        memory.set_namespace(namespace.unwrap_or(""));
 
         // Delegate to pipeline with deduplication
         self.pipeline.add_with_dedup(memory)
@@ -462,6 +518,7 @@ impl MemoryEngine {
     ///     None,
     ///     None,
     ///     None,
+    ///     None,
     /// ).unwrap();
     /// assert!(result1.created);
     ///
@@ -470,6 +527,7 @@ impl MemoryEngine {
     ///     "user:profile",
     ///     "Alice likes hiking and photography".to_string(),
     ///     vec![0.2; 384],
+    ///     None,
     ///     None,
     ///     None,
     ///     None,
@@ -485,6 +543,7 @@ impl MemoryEngine {
         metadata: Option<HashMap<String, String>>,
         timestamp: Option<Timestamp>,
         source: Option<Source>,
+        namespace: Option<&str>,
     ) -> Result<UpsertResult> {
         // Validate embedding dimension
         if embedding.len() != self.config.embedding_dim {
@@ -512,6 +571,9 @@ impl MemoryEngine {
         if let Some(src) = source {
             memory.set_source(src)?;
         }
+
+        // Set namespace if provided
+        memory.set_namespace(namespace.unwrap_or(""));
 
         // Delegate to pipeline
         self.pipeline.upsert(key, memory)
@@ -551,6 +613,7 @@ impl MemoryEngine {
     ///
     /// * `query_embedding` - The query vector to search for
     /// * `top_k` - Maximum number of results to return
+    /// * `namespace` - Optional namespace filter. If provided, only returns memories in this namespace
     ///
     /// # Returns
     ///
@@ -562,16 +625,19 @@ impl MemoryEngine {
     /// # use mnemefusion_core::{MemoryEngine, Config};
     /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
     /// # let query_embedding = vec![0.1; 384];
-    /// let results = engine.search(&query_embedding, 10).unwrap();
+    /// let results = engine.search(&query_embedding, 10, None).unwrap();
     /// for (memory, score) in results {
     ///     println!("Similarity: {:.3} - {}", score, memory.content);
     /// }
     /// ```
-    pub fn search(&self, query_embedding: &[f32], top_k: usize) -> Result<Vec<(Memory, f32)>> {
+    pub fn search(&self, query_embedding: &[f32], top_k: usize, namespace: Option<&str>) -> Result<Vec<(Memory, f32)>> {
+        // If namespace filtering is needed, fetch more results (3x) and filter
+        let fetch_k = if namespace.is_some() { top_k * 3 } else { top_k };
+
         // Search vector index
         let vector_results = {
             let index = self.vector_index.read().unwrap();
-            index.search(query_embedding, top_k)?
+            index.search(query_embedding, fetch_k)?
         };
 
         // Retrieve full memory records using u64 lookup
@@ -581,7 +647,18 @@ impl MemoryEngine {
             // Look up memory using the u64 key from vector index
             let key = vector_result.id.to_u64();
             if let Some(memory) = self.storage.get_memory_by_u64(key)? {
+                // Filter by namespace if provided
+                if let Some(ns) = namespace {
+                    if memory.get_namespace() != ns {
+                        continue;
+                    }
+                }
                 results.push((memory, vector_result.similarity));
+
+                // Stop if we have enough results after filtering
+                if results.len() >= top_k {
+                    break;
+                }
             }
         }
 
@@ -600,6 +677,7 @@ impl MemoryEngine {
     /// * `query_text` - Natural language query text
     /// * `query_embedding` - Vector embedding of the query
     /// * `limit` - Maximum number of results to return
+    /// * `namespace` - Optional namespace filter. If provided, only returns memories in this namespace
     ///
     /// # Returns
     ///
@@ -614,7 +692,8 @@ impl MemoryEngine {
     /// let (intent, results) = engine.query(
     ///     "Why was the meeting cancelled?",
     ///     &query_embedding,
-    ///     10
+    ///     10,
+    ///     None
     /// ).unwrap();
     ///
     /// println!("Query intent: {:?}", intent.intent);
@@ -627,9 +706,10 @@ impl MemoryEngine {
         query_text: &str,
         query_embedding: &[f32],
         limit: usize,
+        namespace: Option<&str>,
     ) -> Result<(IntentClassification, Vec<(Memory, FusedResult)>)> {
         // Execute query using query planner
-        let (intent, fused_results) = self.query_planner.query(query_text, query_embedding, limit)?;
+        let (intent, fused_results) = self.query_planner.query(query_text, query_embedding, limit, namespace)?;
 
         // Retrieve full memory records
         let mut results = Vec::with_capacity(fused_results.len());
@@ -652,6 +732,7 @@ impl MemoryEngine {
     /// * `start` - Start of the time range (inclusive)
     /// * `end` - End of the time range (inclusive)
     /// * `limit` - Maximum number of results to return
+    /// * `namespace` - Optional namespace filter. If provided, only returns memories in this namespace
     ///
     /// # Returns
     ///
@@ -665,7 +746,7 @@ impl MemoryEngine {
     /// let now = Timestamp::now();
     /// let week_ago = now.subtract_days(7);
     ///
-    /// let results = engine.get_range(week_ago, now, 100).unwrap();
+    /// let results = engine.get_range(week_ago, now, 100, None).unwrap();
     /// for (memory, timestamp) in results {
     ///     println!("{}: {}", timestamp.as_unix_secs(), memory.content);
     /// }
@@ -675,16 +756,29 @@ impl MemoryEngine {
         start: Timestamp,
         end: Timestamp,
         limit: usize,
+        namespace: Option<&str>,
     ) -> Result<Vec<(Memory, Timestamp)>> {
-        // Query temporal index
-        let temporal_results = self.temporal_index.range_query(start, end, limit)?;
+        // Fetch more results if filtering by namespace
+        let fetch_limit = if namespace.is_some() { limit * 3 } else { limit };
+        let temporal_results = self.temporal_index.range_query(start, end, fetch_limit)?;
 
-        // Retrieve full memory records
+        // Retrieve and filter full memory records
         let mut results = Vec::with_capacity(temporal_results.len());
 
         for temp_result in temporal_results {
             if let Some(memory) = self.storage.get_memory(&temp_result.id)? {
+                // Filter by namespace if provided
+                if let Some(ns) = namespace {
+                    if memory.get_namespace() != ns {
+                        continue;
+                    }
+                }
                 results.push((memory, temp_result.timestamp));
+
+                // Stop if we have enough results after filtering
+                if results.len() >= limit {
+                    break;
+                }
             }
         }
 
@@ -698,6 +792,7 @@ impl MemoryEngine {
     /// # Arguments
     ///
     /// * `n` - Number of recent memories to retrieve
+    /// * `namespace` - Optional namespace filter. If provided, only returns memories in this namespace
     ///
     /// # Returns
     ///
@@ -708,22 +803,34 @@ impl MemoryEngine {
     /// ```no_run
     /// # use mnemefusion_core::{MemoryEngine, Config};
     /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
-    /// let recent = engine.get_recent(10).unwrap();
+    /// let recent = engine.get_recent(10, None).unwrap();
     /// println!("10 most recent memories:");
     /// for (memory, timestamp) in recent {
     ///     println!("  {} - {}", timestamp.as_unix_secs(), memory.content);
     /// }
     /// ```
-    pub fn get_recent(&self, n: usize) -> Result<Vec<(Memory, Timestamp)>> {
-        // Query temporal index
-        let temporal_results = self.temporal_index.recent(n)?;
+    pub fn get_recent(&self, n: usize, namespace: Option<&str>) -> Result<Vec<(Memory, Timestamp)>> {
+        // Fetch more results if filtering by namespace
+        let fetch_n = if namespace.is_some() { n * 3 } else { n };
+        let temporal_results = self.temporal_index.recent(fetch_n)?;
 
-        // Retrieve full memory records
+        // Retrieve and filter full memory records
         let mut results = Vec::with_capacity(temporal_results.len());
 
         for temp_result in temporal_results {
             if let Some(memory) = self.storage.get_memory(&temp_result.id)? {
+                // Filter by namespace if provided
+                if let Some(ns) = namespace {
+                    if memory.get_namespace() != ns {
+                        continue;
+                    }
+                }
                 results.push((memory, temp_result.timestamp));
+
+                // Stop if we have enough results after filtering
+                if results.len() >= n {
+                    break;
+                }
             }
         }
 
@@ -823,6 +930,85 @@ impl MemoryEngine {
     pub fn get_effects(&self, memory_id: &MemoryId, max_hops: usize) -> Result<CausalTraversalResult> {
         let graph = self.graph_manager.read().unwrap();
         graph.get_effects(memory_id, max_hops)
+    }
+
+    // ========== Namespace Operations ==========
+
+    /// List all namespaces in the database
+    ///
+    /// Returns a sorted list of all unique namespace strings, excluding the default namespace ("").
+    ///
+    /// # Performance
+    ///
+    /// O(n) where n = total memories. This scans all memories to extract namespaces.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mnemefusion_core::{MemoryEngine, Config};
+    /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
+    /// let namespaces = engine.list_namespaces().unwrap();
+    /// for ns in namespaces {
+    ///     println!("Namespace: {}", ns);
+    /// }
+    /// ```
+    pub fn list_namespaces(&self) -> Result<Vec<String>> {
+        self.storage.list_namespaces()
+    }
+
+    /// Count memories in a specific namespace
+    ///
+    /// # Arguments
+    ///
+    /// * `namespace` - The namespace to count (empty string "" for default namespace)
+    ///
+    /// # Returns
+    ///
+    /// Number of memories in the namespace
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mnemefusion_core::{MemoryEngine, Config};
+    /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
+    /// let count = engine.count_namespace("user_123").unwrap();
+    /// println!("User has {} memories", count);
+    /// ```
+    pub fn count_namespace(&self, namespace: &str) -> Result<usize> {
+        self.storage.count_namespace(namespace)
+    }
+
+    /// Delete all memories in a namespace
+    ///
+    /// This is a convenience method that lists all memory IDs in the namespace
+    /// and deletes them via the ingestion pipeline (ensuring proper cleanup of indexes).
+    ///
+    /// # Arguments
+    ///
+    /// * `namespace` - The namespace to delete (empty string "" for default namespace)
+    ///
+    /// # Returns
+    ///
+    /// Number of memories deleted
+    ///
+    /// # Warning
+    ///
+    /// This operation cannot be undone. Use with caution.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mnemefusion_core::{MemoryEngine, Config};
+    /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
+    /// let deleted = engine.delete_namespace("old_user").unwrap();
+    /// println!("Deleted {} memories from namespace", deleted);
+    /// ```
+    pub fn delete_namespace(&self, namespace: &str) -> Result<usize> {
+        // Get all memory IDs in this namespace
+        let ids = self.storage.list_namespace_ids(namespace)?;
+
+        // Delete via pipeline for proper cleanup
+        self.pipeline.delete_batch(ids)
     }
 
     // ========== Entity Operations ==========
@@ -928,6 +1114,40 @@ impl MemoryEngine {
         self.storage.list_entities()
     }
 
+    /// Create a scoped view for namespace-specific operations
+    ///
+    /// Returns a ScopedMemory that automatically applies the namespace to all operations.
+    /// This provides a more ergonomic API when working with a single namespace.
+    ///
+    /// # Arguments
+    ///
+    /// * `namespace` - The namespace to scope to (empty string "" for default namespace)
+    ///
+    /// # Returns
+    ///
+    /// A ScopedMemory view bound to this namespace
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mnemefusion_core::{MemoryEngine, Config};
+    /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
+    /// // Create scoped view for a user
+    /// let user_memory = engine.scope("user_123");
+    ///
+    /// // All operations automatically use the namespace
+    /// let id = user_memory.add("User note".to_string(), vec![0.1; 384], None, None, None).unwrap();
+    /// let results = user_memory.search(&vec![0.1; 384], 10).unwrap();
+    /// let count = user_memory.count().unwrap();
+    /// user_memory.delete_all().unwrap();
+    /// ```
+    pub fn scope<S: Into<String>>(&self, namespace: S) -> ScopedMemory {
+        ScopedMemory {
+            engine: self,
+            namespace: namespace.into(),
+        }
+    }
+
     /// Close the database
     ///
     /// This saves all indexes and ensures all data is flushed to disk.
@@ -957,6 +1177,240 @@ impl MemoryEngine {
 
         // Storage (redb) handles persistence automatically
         Ok(())
+    }
+}
+
+/// Scoped memory view for namespace-specific operations
+///
+/// This wrapper provides an ergonomic API for working with a single namespace.
+/// All operations automatically apply the namespace, eliminating the need to pass
+/// it to every method call.
+///
+/// Created via `MemoryEngine::scope()`.
+///
+/// # Example
+///
+/// ```no_run
+/// use mnemefusion_core::{MemoryEngine, Config};
+///
+/// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
+/// // Create scoped view for a specific user
+/// let user_memory = engine.scope("user_123");
+///
+/// // Add memory (automatically in user_123 namespace)
+/// let id = user_memory.add(
+///     "User note".to_string(),
+///     vec![0.1; 384],
+///     None,
+///     None,
+///     None,
+/// ).unwrap();
+///
+/// // Search within namespace
+/// let results = user_memory.search(&vec![0.1; 384], 10).unwrap();
+///
+/// // Count memories in namespace
+/// println!("User has {} memories", user_memory.count().unwrap());
+///
+/// // Delete all memories in namespace
+/// user_memory.delete_all().unwrap();
+/// ```
+pub struct ScopedMemory<'a> {
+    engine: &'a MemoryEngine,
+    namespace: String,
+}
+
+impl<'a> ScopedMemory<'a> {
+    /// Add a memory to this namespace
+    ///
+    /// Equivalent to calling `engine.add(..., Some(namespace))`
+    ///
+    /// # Arguments
+    ///
+    /// * `content` - Text content
+    /// * `embedding` - Vector embedding
+    /// * `metadata` - Optional metadata
+    /// * `timestamp` - Optional custom timestamp
+    /// * `source` - Optional source/provenance
+    ///
+    /// # Returns
+    ///
+    /// The ID of the created memory
+    pub fn add(
+        &self,
+        content: String,
+        embedding: Vec<f32>,
+        metadata: Option<HashMap<String, String>>,
+        timestamp: Option<Timestamp>,
+        source: Option<Source>,
+    ) -> Result<MemoryId> {
+        self.engine.add(content, embedding, metadata, timestamp, source, Some(&self.namespace))
+    }
+
+    /// Search for memories in this namespace
+    ///
+    /// Equivalent to calling `engine.search(..., Some(namespace))`
+    ///
+    /// # Arguments
+    ///
+    /// * `query_embedding` - Query vector
+    /// * `top_k` - Maximum number of results
+    ///
+    /// # Returns
+    ///
+    /// Vector of (Memory, similarity_score) tuples
+    pub fn search(&self, query_embedding: &[f32], top_k: usize) -> Result<Vec<(Memory, f32)>> {
+        self.engine.search(query_embedding, top_k, Some(&self.namespace))
+    }
+
+    /// Delete a memory from this namespace
+    ///
+    /// Equivalent to calling `engine.delete(..., Some(namespace))`
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The memory ID to delete
+    ///
+    /// # Returns
+    ///
+    /// true if deleted, false if not found
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::NamespaceMismatch` if the memory exists but is in a different namespace
+    pub fn delete(&self, id: &MemoryId) -> Result<bool> {
+        self.engine.delete(id, Some(&self.namespace))
+    }
+
+    /// Add multiple memories to this namespace in a batch
+    ///
+    /// Equivalent to calling `engine.add_batch(..., Some(namespace))`
+    ///
+    /// # Arguments
+    ///
+    /// * `inputs` - Vector of MemoryInput
+    ///
+    /// # Returns
+    ///
+    /// BatchResult with IDs and error information
+    pub fn add_batch(&self, inputs: Vec<MemoryInput>) -> Result<BatchResult> {
+        self.engine.add_batch(inputs, Some(&self.namespace))
+    }
+
+    /// Delete multiple memories from this namespace
+    ///
+    /// Equivalent to calling `engine.delete_batch(..., Some(namespace))`
+    ///
+    /// # Arguments
+    ///
+    /// * `ids` - Vector of memory IDs
+    ///
+    /// # Returns
+    ///
+    /// Number of memories deleted
+    pub fn delete_batch(&self, ids: Vec<MemoryId>) -> Result<usize> {
+        self.engine.delete_batch(ids, Some(&self.namespace))
+    }
+
+    /// Add a memory with deduplication in this namespace
+    ///
+    /// Equivalent to calling `engine.add_with_dedup(..., Some(namespace))`
+    pub fn add_with_dedup(
+        &self,
+        content: String,
+        embedding: Vec<f32>,
+        metadata: Option<HashMap<String, String>>,
+        timestamp: Option<Timestamp>,
+        source: Option<Source>,
+    ) -> Result<AddResult> {
+        self.engine.add_with_dedup(content, embedding, metadata, timestamp, source, Some(&self.namespace))
+    }
+
+    /// Upsert a memory in this namespace
+    ///
+    /// Equivalent to calling `engine.upsert(..., Some(namespace))`
+    pub fn upsert(
+        &self,
+        key: &str,
+        content: String,
+        embedding: Vec<f32>,
+        metadata: Option<HashMap<String, String>>,
+        timestamp: Option<Timestamp>,
+        source: Option<Source>,
+    ) -> Result<UpsertResult> {
+        self.engine.upsert(key, content, embedding, metadata, timestamp, source, Some(&self.namespace))
+    }
+
+    /// Count memories in this namespace
+    ///
+    /// Equivalent to calling `engine.count_namespace(namespace)`
+    ///
+    /// # Returns
+    ///
+    /// Number of memories in the namespace
+    pub fn count(&self) -> Result<usize> {
+        self.engine.count_namespace(&self.namespace)
+    }
+
+    /// Delete all memories in this namespace
+    ///
+    /// Equivalent to calling `engine.delete_namespace(namespace)`
+    ///
+    /// # Returns
+    ///
+    /// Number of memories deleted
+    ///
+    /// # Warning
+    ///
+    /// This operation cannot be undone. Use with caution.
+    pub fn delete_all(&self) -> Result<usize> {
+        self.engine.delete_namespace(&self.namespace)
+    }
+
+    /// Multi-dimensional query within this namespace
+    ///
+    /// Equivalent to calling `engine.query(..., Some(namespace))`
+    ///
+    /// # Arguments
+    ///
+    /// * `query_text` - Natural language query
+    /// * `query_embedding` - Query vector
+    /// * `limit` - Maximum number of results
+    ///
+    /// # Returns
+    ///
+    /// Tuple of (intent classification, results)
+    pub fn query(
+        &self,
+        query_text: &str,
+        query_embedding: &[f32],
+        limit: usize,
+    ) -> Result<(IntentClassification, Vec<(Memory, FusedResult)>)> {
+        self.engine.query(query_text, query_embedding, limit, Some(&self.namespace))
+    }
+
+    /// Get memories in time range within this namespace
+    ///
+    /// Equivalent to calling `engine.get_range(..., Some(namespace))`
+    pub fn get_range(
+        &self,
+        start: Timestamp,
+        end: Timestamp,
+        limit: usize,
+    ) -> Result<Vec<(Memory, Timestamp)>> {
+        self.engine.get_range(start, end, limit, Some(&self.namespace))
+    }
+
+    /// Get recent memories within this namespace
+    ///
+    /// Equivalent to calling `engine.get_recent(..., Some(namespace))`
+    pub fn get_recent(&self, n: usize) -> Result<Vec<(Memory, Timestamp)>> {
+        self.engine.get_recent(n, Some(&self.namespace))
+    }
+
+    /// Get the namespace this view is scoped to
+    pub fn namespace(&self) -> &str {
+        &self.namespace
     }
 }
 
@@ -995,7 +1449,7 @@ mod tests {
         let content = "Test memory content".to_string();
         let embedding = vec![0.1; 384];
 
-        let id = engine.add(content.clone(), embedding.clone(), None, None, None).unwrap();
+        let id = engine.add(content.clone(), embedding.clone(), None, None, None, None).unwrap();
 
         let memory = engine.get(&id).unwrap();
         assert!(memory.is_some());
@@ -1014,6 +1468,7 @@ mod tests {
         let result = engine.add(
             "test".to_string(),
             vec![0.1; 512], // Wrong dimension
+            None,
             None,
             None,
             None,
@@ -1037,6 +1492,7 @@ mod tests {
                 Some(metadata),
                 None,
                 None,
+                None,
             )
             .unwrap();
 
@@ -1058,6 +1514,7 @@ mod tests {
                 None,
                 Some(ts),
                 None,
+                None,
             )
             .unwrap();
 
@@ -1071,9 +1528,9 @@ mod tests {
         let path = dir.path().join("test.mfdb");
         let engine = MemoryEngine::open(&path, Config::default()).unwrap();
 
-        let id = engine.add("test".to_string(), vec![0.1; 384], None, None, None).unwrap();
+        let id = engine.add("test".to_string(), vec![0.1; 384], None, None, None, None).unwrap();
 
-        let deleted = engine.delete(&id).unwrap();
+        let deleted = engine.delete(&id, None).unwrap();
         assert!(deleted);
 
         let memory = engine.get(&id).unwrap();
@@ -1088,10 +1545,10 @@ mod tests {
 
         assert_eq!(engine.count().unwrap(), 0);
 
-        engine.add("test1".to_string(), vec![0.1; 384], None, None, None).unwrap();
+        engine.add("test1".to_string(), vec![0.1; 384], None, None, None, None).unwrap();
         assert_eq!(engine.count().unwrap(), 1);
 
-        engine.add("test2".to_string(), vec![0.2; 384], None, None, None).unwrap();
+        engine.add("test2".to_string(), vec![0.2; 384], None, None, None, None).unwrap();
         assert_eq!(engine.count().unwrap(), 2);
     }
 
@@ -1101,8 +1558,8 @@ mod tests {
         let path = dir.path().join("test.mfdb");
         let engine = MemoryEngine::open(&path, Config::default()).unwrap();
 
-        let id1 = engine.add("test1".to_string(), vec![0.1; 384], None, None, None).unwrap();
-        let id2 = engine.add("test2".to_string(), vec![0.2; 384], None, None, None).unwrap();
+        let id1 = engine.add("test1".to_string(), vec![0.1; 384], None, None, None, None).unwrap();
+        let id2 = engine.add("test2".to_string(), vec![0.2; 384], None, None, None, None).unwrap();
 
         let ids = engine.list_ids().unwrap();
         assert_eq!(ids.len(), 2);
@@ -1117,7 +1574,7 @@ mod tests {
 
         let id = {
             let engine = MemoryEngine::open(&path, Config::default()).unwrap();
-            let id = engine.add("persistent".to_string(), vec![0.5; 384], None, None, None).unwrap();
+            let id = engine.add("persistent".to_string(), vec![0.5; 384], None, None, None, None).unwrap();
             engine.close().unwrap();
             id
         };
@@ -1129,5 +1586,325 @@ mod tests {
             assert!(memory.is_some());
             assert_eq!(memory.unwrap().content, "persistent");
         }
+    }
+
+    #[test]
+    fn test_namespace_add_and_filter() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+
+        // Add memories to different namespaces
+        let id1 = engine.add(
+            "User 1 memory".to_string(),
+            vec![0.1; 384],
+            None,
+            None,
+            None,
+            Some("user_1"),
+        ).unwrap();
+
+        let id2 = engine.add(
+            "User 2 memory".to_string(),
+            vec![0.2; 384],
+            None,
+            None,
+            None,
+            Some("user_2"),
+        ).unwrap();
+
+        let id3 = engine.add(
+            "Default memory".to_string(),
+            vec![0.3; 384],
+            None,
+            None,
+            None,
+            None,
+        ).unwrap();
+
+        // Verify memories are in correct namespaces
+        let mem1 = engine.get(&id1).unwrap().unwrap();
+        assert_eq!(mem1.get_namespace(), "user_1");
+
+        let mem2 = engine.get(&id2).unwrap().unwrap();
+        assert_eq!(mem2.get_namespace(), "user_2");
+
+        let mem3 = engine.get(&id3).unwrap().unwrap();
+        assert_eq!(mem3.get_namespace(), "");
+
+        // Test search with namespace filtering
+        let query_embedding = vec![0.15; 384];
+
+        // Search in user_1 namespace
+        let results = engine.search(&query_embedding, 10, Some("user_1")).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.id, id1);
+
+        // Search in user_2 namespace
+        let results = engine.search(&query_embedding, 10, Some("user_2")).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.id, id2);
+
+        // Search in default namespace
+        let results = engine.search(&query_embedding, 10, Some("")).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.id, id3);
+
+        // Search without namespace filter (should get all)
+        let results = engine.search(&query_embedding, 10, None).unwrap();
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn test_namespace_delete_with_verification() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+
+        // Add memory to namespace
+        let id = engine.add(
+            "User memory".to_string(),
+            vec![0.1; 384],
+            None,
+            None,
+            None,
+            Some("user_1"),
+        ).unwrap();
+
+        // Try to delete with wrong namespace - should fail
+        let result = engine.delete(&id, Some("user_2"));
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), crate::Error::NamespaceMismatch { .. }));
+
+        // Verify memory still exists
+        assert!(engine.get(&id).unwrap().is_some());
+
+        // Delete with correct namespace - should succeed
+        let deleted = engine.delete(&id, Some("user_1")).unwrap();
+        assert!(deleted);
+
+        // Verify memory is gone
+        assert!(engine.get(&id).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_namespace_management_methods() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+
+        // Add memories to different namespaces
+        engine.add("Memory 1".to_string(), vec![0.1; 384], None, None, None, Some("ns1")).unwrap();
+        engine.add("Memory 2".to_string(), vec![0.2; 384], None, None, None, Some("ns1")).unwrap();
+        engine.add("Memory 3".to_string(), vec![0.3; 384], None, None, None, Some("ns2")).unwrap();
+        engine.add("Memory 4".to_string(), vec![0.4; 384], None, None, None, None).unwrap();
+
+        // List namespaces
+        let namespaces = engine.list_namespaces().unwrap();
+        assert_eq!(namespaces.len(), 2);
+        assert!(namespaces.contains(&"ns1".to_string()));
+        assert!(namespaces.contains(&"ns2".to_string()));
+
+        // Count in namespace
+        assert_eq!(engine.count_namespace("ns1").unwrap(), 2);
+        assert_eq!(engine.count_namespace("ns2").unwrap(), 1);
+        assert_eq!(engine.count_namespace("").unwrap(), 1); // Default namespace
+
+        // Delete entire namespace
+        let deleted = engine.delete_namespace("ns1").unwrap();
+        assert_eq!(deleted, 2);
+
+        // Verify namespace is gone
+        assert_eq!(engine.count_namespace("ns1").unwrap(), 0);
+        let namespaces = engine.list_namespaces().unwrap();
+        assert_eq!(namespaces.len(), 1);
+        assert!(namespaces.contains(&"ns2".to_string()));
+
+        // Total count should be 2 now
+        assert_eq!(engine.count().unwrap(), 2);
+    }
+
+    #[test]
+    fn test_namespace_batch_operations() {
+        use crate::types::MemoryInput;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+
+        // Create batch inputs
+        let inputs = vec![
+            MemoryInput::new("Memory 1".to_string(), vec![0.1; 384]),
+            MemoryInput::new("Memory 2".to_string(), vec![0.2; 384]),
+            MemoryInput::new("Memory 3".to_string(), vec![0.3; 384]),
+        ];
+
+        // Add batch with namespace
+        let result = engine.add_batch(inputs, Some("batch_ns")).unwrap();
+        assert_eq!(result.created_count, 3);
+        assert!(result.is_success());
+
+        // Verify all are in the namespace
+        assert_eq!(engine.count_namespace("batch_ns").unwrap(), 3);
+
+        // Batch delete with namespace filter
+        let deleted = engine.delete_batch(result.ids.clone(), Some("batch_ns")).unwrap();
+        assert_eq!(deleted, 3);
+
+        // Verify namespace is empty
+        assert_eq!(engine.count_namespace("batch_ns").unwrap(), 0);
+    }
+
+    // ========== ScopedMemory Tests ==========
+
+    #[test]
+    fn test_scoped_memory_add_and_search() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+
+        // Create scoped view
+        let scoped = engine.scope("user_123");
+
+        // Add memory via scoped view
+        let id = scoped.add(
+            "Scoped memory".to_string(),
+            vec![0.5; 384],
+            None,
+            None,
+            None,
+        ).unwrap();
+
+        // Verify memory is in the namespace
+        let memory = engine.get(&id).unwrap().unwrap();
+        assert_eq!(memory.get_namespace(), "user_123");
+        assert_eq!(memory.content, "Scoped memory");
+
+        // Search via scoped view
+        let results = scoped.search(&vec![0.5; 384], 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.id, id);
+
+        // Verify namespace isolation
+        assert_eq!(scoped.namespace(), "user_123");
+    }
+
+    #[test]
+    fn test_scoped_memory_count_and_delete_all() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+
+        let scoped = engine.scope("user_456");
+
+        // Add multiple memories
+        scoped.add("Memory 1".to_string(), vec![0.1; 384], None, None, None).unwrap();
+        scoped.add("Memory 2".to_string(), vec![0.2; 384], None, None, None).unwrap();
+        scoped.add("Memory 3".to_string(), vec![0.3; 384], None, None, None).unwrap();
+
+        // Count via scoped view
+        assert_eq!(scoped.count().unwrap(), 3);
+
+        // Total engine count should also be 3
+        assert_eq!(engine.count().unwrap(), 3);
+
+        // Delete all via scoped view
+        let deleted = scoped.delete_all().unwrap();
+        assert_eq!(deleted, 3);
+
+        // Verify namespace is empty
+        assert_eq!(scoped.count().unwrap(), 0);
+        assert_eq!(engine.count().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_scoped_memory_isolation() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+
+        // Create two scoped views
+        let scope1 = engine.scope("ns1");
+        let scope2 = engine.scope("ns2");
+
+        // Add memories to each namespace
+        let id1 = scope1.add("NS1 memory".to_string(), vec![0.1; 384], None, None, None).unwrap();
+        let id2 = scope2.add("NS2 memory".to_string(), vec![0.2; 384], None, None, None).unwrap();
+
+        // Each scope should only see its own memories
+        assert_eq!(scope1.count().unwrap(), 1);
+        assert_eq!(scope2.count().unwrap(), 1);
+
+        // Search should be isolated
+        let results1 = scope1.search(&vec![0.1; 384], 10).unwrap();
+        assert_eq!(results1.len(), 1);
+        assert_eq!(results1[0].0.id, id1);
+
+        let results2 = scope2.search(&vec![0.2; 384], 10).unwrap();
+        assert_eq!(results2.len(), 1);
+        assert_eq!(results2[0].0.id, id2);
+
+        // Delete from scope1 shouldn't affect scope2
+        scope1.delete_all().unwrap();
+        assert_eq!(scope1.count().unwrap(), 0);
+        assert_eq!(scope2.count().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_scoped_memory_delete_with_verification() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+
+        let scope1 = engine.scope("ns1");
+        let scope2 = engine.scope("ns2");
+
+        // Add memory to ns1
+        let id = scope1.add("NS1 memory".to_string(), vec![0.1; 384], None, None, None).unwrap();
+
+        // Try to delete from wrong namespace - should fail
+        let result = scope2.delete(&id);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), crate::Error::NamespaceMismatch { .. }));
+
+        // Verify memory still exists
+        assert_eq!(scope1.count().unwrap(), 1);
+
+        // Delete from correct namespace - should succeed
+        let deleted = scope1.delete(&id).unwrap();
+        assert!(deleted);
+        assert_eq!(scope1.count().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_scoped_memory_batch_operations() {
+        use crate::types::MemoryInput;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+
+        let scoped = engine.scope("batch_scope");
+
+        // Add batch via scoped view
+        let inputs = vec![
+            MemoryInput::new("Batch 1".to_string(), vec![0.1; 384]),
+            MemoryInput::new("Batch 2".to_string(), vec![0.2; 384]),
+            MemoryInput::new("Batch 3".to_string(), vec![0.3; 384]),
+        ];
+
+        let result = scoped.add_batch(inputs).unwrap();
+        assert_eq!(result.created_count, 3);
+        assert!(result.is_success());
+
+        // Verify count
+        assert_eq!(scoped.count().unwrap(), 3);
+
+        // Delete batch via scoped view
+        let deleted = scoped.delete_batch(result.ids).unwrap();
+        assert_eq!(deleted, 3);
+
+        // Verify empty
+        assert_eq!(scoped.count().unwrap(), 0);
     }
 }
