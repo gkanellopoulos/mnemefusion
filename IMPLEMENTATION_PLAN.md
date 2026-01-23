@@ -970,13 +970,13 @@ Each sprint is 2 weeks with:
 
 #### Tasks
 
-**Content-Hash Deduplication**
-- [ ] Add content hash index: `content_hash -> memory_id`
-- [ ] Implement hash function (SHA-256 or blake3)
-- [ ] Modify `add()` to check hash before inserting:
-  - If hash exists and dedup=True, return existing ID
-  - If dedup=False, allow duplicate (escape hatch)
-- [ ] Return AddResult struct:
+**Content-Hash Deduplication** ✅ COMPLETE (January 23, 2026)
+- [x] Add content hash index: `content_hash -> memory_id`
+- [x] Implement hash function (SHA-256)
+- [x] Implement add_with_dedup() to check hash before inserting
+  - Returns existing ID if duplicate found
+  - Full content comparison for hash collision handling
+- [x] Return AddResult struct:
   ```rust
   pub struct AddResult {
       pub id: MemoryId,
@@ -984,19 +984,19 @@ Each sprint is 2 weeks with:
       pub existing_id: Option<MemoryId>,
   }
   ```
-- [ ] Handle hash collisions with full content comparison
-- [ ] Add storage table: CONTENT_HASH_INDEX
-- [ ] Update IngestionPipeline for deduplication
-- [ ] Write deduplication tests
+- [x] Handle hash collisions with full content comparison
+- [x] Add storage table: CONTENT_HASH_INDEX
+- [x] Update IngestionPipeline for deduplication
+- [x] Write deduplication tests (4 tests)
 
-**Key-Based Upsert**
-- [ ] Add logical key index: `key -> memory_id`
-- [ ] Implement `upsert()` method:
+**Key-Based Upsert** ✅ COMPLETE (January 23, 2026)
+- [x] Add logical key index: `key -> memory_id`
+- [x] Implement `upsert()` method:
   - Lookup by key
-  - If exists: replace content, embedding, metadata
-  - If not exists: create new
-  - Atomic operation
-- [ ] Return UpsertResult struct:
+  - If exists: delete old, create new, update key mapping
+  - If not exists: create new, store key mapping
+  - Atomic operation with rollback
+- [x] Return UpsertResult struct:
   ```rust
   pub struct UpsertResult {
       pub id: MemoryId,
@@ -1005,32 +1005,35 @@ Each sprint is 2 weeks with:
       pub previous_content: Option<String>,
   }
   ```
-- [ ] Add storage table: LOGICAL_KEY_INDEX
-- [ ] Handle cascade updates (vector index, temporal index, etc.)
-- [ ] Write upsert tests
+- [x] Add storage table: LOGICAL_KEY_INDEX
+- [x] Handle cascade updates (vector index, temporal index, entity cleanup)
+- [x] Write upsert tests (6 tests)
 
-**API Integration**
-- [ ] Update Memory::add() signature with dedup parameter
-- [ ] Add Memory::upsert() method
-- [ ] Add Python bindings for both operations
-- [ ] Update batch operations to support dedup
+**API Integration** ✅ COMPLETE (January 23, 2026)
+- [x] Add Memory::add_with_dedup() method (separate from add())
+- [x] Add Memory::upsert() method
+- [x] Add Python bindings for both operations
+- [ ] Update batch operations to support dedup (deferred to future sprint)
 
-**Edge Cases**
-- [ ] Handle: Same content, different embedding → treat as duplicate
-- [ ] Handle: Same key, different content → replace
-- [ ] Handle: Hash collision → full content comparison
-- [ ] Document escape hatch: dedup=False
+**Edge Cases** ✅ HANDLED
+- [x] Handle: Same content, different embedding → treated as duplicate (content is key)
+- [x] Handle: Same key, different content → replace (upsert semantics)
+- [x] Handle: Hash collision → full content comparison fallback
+- [x] Kept add() unchanged for escape hatch
 
-**Documentation**
-- [ ] Document deduplication strategy
-- [ ] Document upsert semantics
-- [ ] Add examples for both patterns
-- [ ] Add migration guide for existing databases
+**Documentation** ⏳ PARTIAL
+- [x] Document deduplication strategy in code
+- [x] Document upsert semantics in code
+- [x] Add API examples in docstrings
+- [ ] Add migration guide for existing databases (not needed - backward compatible)
 
-**Sprint 10 Review**
-- ✅ Deduplication working
-- ✅ Upsert functional
+**Sprint 10 Review** ✅ COMPLETE (January 23, 2026)
+- ✅ Deduplication working (SHA-256, collision handling)
+- ✅ Upsert functional (atomic, cleanup)
 - ✅ No duplicate pollution
+- ✅ 21 new tests passing (183 total)
+- ✅ Python bindings complete
+- ✅ Commit 9d6c9cd
 
 ---
 
