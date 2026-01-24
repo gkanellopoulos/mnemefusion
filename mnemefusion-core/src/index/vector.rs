@@ -258,7 +258,13 @@ impl VectorIndex {
             }
         }
 
-        Err(Error::VectorIndex("Failed to serialize index after multiple attempts".to_string()))
+        Err(Error::VectorIndex(
+            format!(
+                "Failed to serialize index after multiple attempts. Index size: {} vectors. \
+                 This may indicate the index is too large or corrupted.",
+                self.count
+            )
+        ))
     }
 
     /// Load the index from storage
@@ -270,6 +276,21 @@ impl VectorIndex {
         // Check if index exists in storage
         match self.storage.load_vector_index()? {
             Some(buffer) => {
+                // Validate buffer is not empty
+                if buffer.is_empty() {
+                    return Err(Error::DatabaseCorruption(
+                        "Vector index buffer is empty".to_string()
+                    ));
+                }
+
+                // Validate minimum buffer size (usearch has minimum overhead)
+                const MIN_INDEX_SIZE: usize = 100; // Conservative minimum for usearch metadata
+                if buffer.len() < MIN_INDEX_SIZE {
+                    return Err(Error::DatabaseCorruption(
+                        format!("Vector index buffer too small: {} bytes", buffer.len())
+                    ));
+                }
+
                 // Load from buffer
                 self.index
                     .load_from_buffer(&buffer)
@@ -278,6 +299,9 @@ impl VectorIndex {
                 // Update count
                 self.count = self.index.size();
 
+                // Validate loaded index
+                self.validate()?;
+
                 Ok(())
             }
             None => {
@@ -285,6 +309,44 @@ impl VectorIndex {
                 Ok(())
             }
         }
+    }
+
+    /// Validate vector index integrity
+    ///
+    /// Checks that the index is in a valid state:
+    /// - Size is consistent
+    /// - Configuration matches expectations
+    /// - Index can perform basic operations
+    pub fn validate(&self) -> Result<()> {
+        // Check that usearch size matches our count
+        let usearch_size = self.index.size();
+        if usearch_size != self.count {
+            return Err(Error::DatabaseCorruption(
+                format!("Vector index size mismatch: internal count = {}, usearch size = {}",
+                    self.count, usearch_size)
+            ));
+        }
+
+        // Validate configuration consistency
+        let index_dimensions = self.index.dimensions();
+        if index_dimensions != self.config.dimension {
+            return Err(Error::DatabaseCorruption(
+                format!("Vector index dimension mismatch: config = {}, index = {}",
+                    self.config.dimension, index_dimensions)
+            ));
+        }
+
+        // Additional validation: check that the index can perform a basic operation
+        // Try a search with a zero vector (should not crash even if no results)
+        if self.count > 0 {
+            let zero_vector = vec![0.0f32; self.config.dimension];
+            let _ = self.index.search(&zero_vector, 1)
+                .map_err(|e| Error::DatabaseCorruption(
+                    format!("Vector index failed basic search test: {}", e)
+                ))?;
+        }
+
+        Ok(())
     }
 
     /// Get the index configuration
@@ -455,5 +517,128 @@ mod tests {
         // Search should return results
         let results = index.search(&[0.5, 0.5, 0.5], 10).unwrap();
         assert_eq!(results.len(), 10);
+    }
+
+    // Validation tests for Task 5: Vector index integrity validation
+
+    #[test]
+    fn test_vector_index_validate_empty() {
+        let (index, _dir) = create_test_index();
+
+        // Empty index should validate successfully
+        assert!(index.validate().is_ok());
+    }
+
+    #[test]
+    fn test_vector_index_validate_with_data() {
+        let (mut index, _dir) = create_test_index();
+
+        // Add some vectors
+        let id1 = MemoryId::new();
+        let id2 = MemoryId::new();
+        index.add(id1, &[1.0, 0.0, 0.0]).unwrap();
+        index.add(id2, &[0.0, 1.0, 0.0]).unwrap();
+
+        // Should validate successfully
+        assert!(index.validate().is_ok());
+    }
+
+    #[test]
+    fn test_vector_index_validate_after_persistence() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+
+        let id1 = MemoryId::new();
+        let id2 = MemoryId::new();
+
+        // Create index, add vectors, save
+        {
+            let storage = Arc::new(StorageEngine::open(&path).unwrap());
+            let config = VectorIndexConfig {
+                dimension: 3,
+                ..Default::default()
+            };
+            let mut index = VectorIndex::new(config, storage).unwrap();
+
+            index.add(id1, &[1.0, 0.0, 0.0]).unwrap();
+            index.add(id2, &[0.0, 1.0, 0.0]).unwrap();
+
+            index.save().unwrap();
+        }
+
+        // Reopen and load index
+        {
+            let storage = Arc::new(StorageEngine::open(&path).unwrap());
+            let config = VectorIndexConfig {
+                dimension: 3,
+                ..Default::default()
+            };
+            let mut index = VectorIndex::new(config, storage).unwrap();
+
+            index.load().unwrap();
+
+            // Validation should pass
+            assert!(index.validate().is_ok());
+            assert_eq!(index.len(), 2);
+        }
+    }
+
+    #[test]
+    fn test_vector_index_corrupted_buffer_empty() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+
+        // Create database and store empty buffer (corrupted)
+        {
+            let storage = Arc::new(StorageEngine::open(&path).unwrap());
+            storage.store_vector_index(&[]).unwrap();
+        }
+
+        // Try to load - should fail
+        {
+            let storage = Arc::new(StorageEngine::open(&path).unwrap());
+            let config = VectorIndexConfig {
+                dimension: 3,
+                ..Default::default()
+            };
+            let mut index = VectorIndex::new(config, storage).unwrap();
+
+            let result = index.load();
+            assert!(result.is_err());
+
+            if let Err(err) = result {
+                assert!(matches!(err, Error::DatabaseCorruption(_)));
+            }
+        }
+    }
+
+    #[test]
+    fn test_vector_index_corrupted_buffer_too_small() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+
+        // Create database and store tiny corrupted buffer
+        {
+            let storage = Arc::new(StorageEngine::open(&path).unwrap());
+            let tiny_buffer = vec![0u8; 50]; // Too small
+            storage.store_vector_index(&tiny_buffer).unwrap();
+        }
+
+        // Try to load - should fail
+        {
+            let storage = Arc::new(StorageEngine::open(&path).unwrap());
+            let config = VectorIndexConfig {
+                dimension: 3,
+                ..Default::default()
+            };
+            let mut index = VectorIndex::new(config, storage).unwrap();
+
+            let result = index.load();
+            assert!(result.is_err());
+
+            if let Err(err) = result {
+                assert!(matches!(err, Error::DatabaseCorruption(_)));
+            }
+        }
     }
 }

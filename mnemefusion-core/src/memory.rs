@@ -895,8 +895,20 @@ impl MemoryEngine {
         confidence: f32,
         evidence: String,
     ) -> Result<()> {
-        let mut graph = self.graph_manager.write().unwrap();
-        graph.add_causal_link(cause, effect, confidence, evidence)
+        // Add the causal link to the graph
+        {
+            let mut graph = self.graph_manager.write().unwrap();
+            graph.add_causal_link(cause, effect, confidence, evidence)?;
+        }
+
+        // Persist graph immediately for crash recovery
+        // This ensures causal links are durable
+        {
+            let graph = self.graph_manager.read().unwrap();
+            crate::graph::persist::save_graph(&graph, &self.storage)?;
+        }
+
+        Ok(())
     }
 
     /// Get causes of a memory (backward traversal)

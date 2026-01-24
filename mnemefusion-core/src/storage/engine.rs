@@ -36,6 +36,23 @@ impl StorageEngine {
     /// Open or create a database at the specified path
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
+
+        // Check if file exists and validate minimum size
+        if path.exists() {
+            let metadata = std::fs::metadata(path)?;
+            let file_size = metadata.len();
+
+            // Minimum valid file size (redb has minimum overhead + 64 byte header)
+            // redb files are typically at least a few KB even when empty
+            const MIN_FILE_SIZE: u64 = 512; // Conservative minimum
+
+            if file_size < MIN_FILE_SIZE {
+                return Err(Error::FileTruncated(
+                    format!("File size ({} bytes) is too small to be a valid database", file_size)
+                ));
+            }
+        }
+
         let db = Database::create(path)?;
 
         let mut engine = Self {
@@ -48,6 +65,11 @@ impl StorageEngine {
 
         // Store or validate header
         engine.init_header()?;
+
+        // Validate database integrity (for existing databases)
+        if path.exists() {
+            engine.validate_database()?;
+        }
 
         Ok(engine)
     }
@@ -93,6 +115,94 @@ impl StorageEngine {
             }
         }
         write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Validate database integrity
+    ///
+    /// Verifies that all required tables exist and are accessible.
+    /// This helps detect corrupted or incomplete database files.
+    fn validate_database(&self) -> Result<()> {
+        let read_txn = self.db.begin_read()?;
+
+        // Check that all required tables exist and are accessible
+        // We open each table individually since they have different type parameters
+
+        if let Err(e) = read_txn.open_table(MEMORIES) {
+            return Err(Error::DatabaseCorruption(
+                format!("Required table 'memories' is missing or corrupt: {}", e)
+            ));
+        }
+
+        if let Err(e) = read_txn.open_table(TEMPORAL_INDEX) {
+            return Err(Error::DatabaseCorruption(
+                format!("Required table 'temporal_index' is missing or corrupt: {}", e)
+            ));
+        }
+
+        if let Err(e) = read_txn.open_table(METADATA_TABLE) {
+            return Err(Error::DatabaseCorruption(
+                format!("Required table 'metadata' is missing or corrupt: {}", e)
+            ));
+        }
+
+        if let Err(e) = read_txn.open_table(MEMORY_ID_INDEX) {
+            return Err(Error::DatabaseCorruption(
+                format!("Required table 'memory_id_index' is missing or corrupt: {}", e)
+            ));
+        }
+
+        if let Err(e) = read_txn.open_table(CAUSAL_GRAPH) {
+            return Err(Error::DatabaseCorruption(
+                format!("Required table 'causal_graph' is missing or corrupt: {}", e)
+            ));
+        }
+
+        if let Err(e) = read_txn.open_table(ENTITIES) {
+            return Err(Error::DatabaseCorruption(
+                format!("Required table 'entities' is missing or corrupt: {}", e)
+            ));
+        }
+
+        if let Err(e) = read_txn.open_table(ENTITY_NAMES) {
+            return Err(Error::DatabaseCorruption(
+                format!("Required table 'entity_names' is missing or corrupt: {}", e)
+            ));
+        }
+
+        if let Err(e) = read_txn.open_table(CONTENT_HASH_INDEX) {
+            return Err(Error::DatabaseCorruption(
+                format!("Required table 'content_hash_index' is missing or corrupt: {}", e)
+            ));
+        }
+
+        if let Err(e) = read_txn.open_table(LOGICAL_KEY_INDEX) {
+            return Err(Error::DatabaseCorruption(
+                format!("Required table 'logical_key_index' is missing or corrupt: {}", e)
+            ));
+        }
+
+        if let Err(e) = read_txn.open_table(METADATA_INDEX) {
+            return Err(Error::DatabaseCorruption(
+                format!("Required table 'metadata_index' is missing or corrupt: {}", e)
+            ));
+        }
+
+        // Validate header exists
+        let metadata = read_txn.open_table(METADATA_TABLE)?;
+        match metadata.get("file_header")? {
+            Some(header_bytes) => {
+                // Validate header format
+                let header = FileHeader::from_bytes(header_bytes.value())?;
+                header.validate()?;
+            }
+            None => {
+                return Err(Error::DatabaseCorruption(
+                    "File header is missing".to_string()
+                ));
+            }
+        }
+
         Ok(())
     }
 
@@ -1315,5 +1425,74 @@ mod tests {
         assert!(engine.find_by_metadata("type", "event", "").unwrap().is_empty());
         assert!(engine.find_by_metadata("priority", "high", "").unwrap().is_empty());
         assert!(engine.find_by_metadata("category", "work", "").unwrap().is_empty());
+    }
+
+    // Validation tests for Task 4: File header validation on open
+
+    #[test]
+    fn test_truncated_file_detection() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("truncated.mfdb");
+
+        // Create a tiny truncated file
+        std::fs::write(&path, b"MF").unwrap();
+
+        // Should fail with FileTruncated error
+        let result = StorageEngine::open(&path);
+        assert!(result.is_err());
+
+        if let Err(err) = result {
+            assert!(matches!(err, Error::FileTruncated(_)));
+        }
+    }
+
+    #[test]
+    fn test_validate_database_integrity() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+
+        // Create a valid database
+        let engine = StorageEngine::open(&path).unwrap();
+
+        // Validation should pass
+        assert!(engine.validate_database().is_ok());
+    }
+
+    #[test]
+    fn test_validate_database_with_data() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+
+        // Create database with some data
+        let engine = StorageEngine::open(&path).unwrap();
+        let mem = Memory::new("test content".to_string(), vec![0.1; 384]);
+        engine.store_memory(&mem).unwrap();
+
+        // Validation should still pass
+        assert!(engine.validate_database().is_ok());
+
+        // Close and reopen
+        drop(engine);
+        let engine = StorageEngine::open(&path).unwrap();
+
+        // Validation should pass on reopen
+        assert!(engine.validate_database().is_ok());
+    }
+
+    #[test]
+    fn test_open_validates_existing_database() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+
+        // Create a valid database
+        {
+            let _engine = StorageEngine::open(&path).unwrap();
+        }
+
+        // Reopening should validate the database
+        let engine = StorageEngine::open(&path).unwrap();
+
+        // Verify header is valid
+        assert!(engine.validate_database().is_ok());
     }
 }

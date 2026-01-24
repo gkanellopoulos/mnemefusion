@@ -106,34 +106,68 @@ impl Config {
     }
 
     /// Validate the configuration
+    ///
+    /// Returns detailed errors if the configuration is invalid.
     pub fn validate(&self) -> Result<(), crate::Error> {
         if self.embedding_dim == 0 {
             return Err(crate::Error::Configuration(
-                "embedding_dim must be greater than 0".to_string(),
+                "embedding_dim must be greater than 0. Common values: 384 (MiniLM), 768 (BERT), 1536 (OpenAI)".to_string(),
+            ));
+        }
+
+        // Warn if dimension is unusually large
+        if self.embedding_dim > 4096 {
+            return Err(crate::Error::Configuration(
+                format!("embedding_dim of {} is unusually large. This will consume significant memory. Typical values are 384-1536.", self.embedding_dim)
             ));
         }
 
         if self.temporal_decay_hours <= 0.0 {
             return Err(crate::Error::Configuration(
-                "temporal_decay_hours must be positive".to_string(),
+                "temporal_decay_hours must be positive. Recommended: 168.0 (1 week)".to_string(),
             ));
         }
 
         if self.causal_max_hops == 0 {
             return Err(crate::Error::Configuration(
-                "causal_max_hops must be greater than 0".to_string(),
+                "causal_max_hops must be greater than 0. Recommended: 2-5".to_string(),
+            ));
+        }
+
+        // Warn if hops is very large
+        if self.causal_max_hops > 10 {
+            return Err(crate::Error::Configuration(
+                format!("causal_max_hops of {} may be too large and cause slow queries. Recommended: 2-5", self.causal_max_hops)
             ));
         }
 
         if self.causal_min_confidence < 0.0 || self.causal_min_confidence > 1.0 {
             return Err(crate::Error::Configuration(
-                "causal_min_confidence must be between 0.0 and 1.0".to_string(),
+                format!("causal_min_confidence must be between 0.0 and 1.0, got {}", self.causal_min_confidence)
             ));
         }
 
         if self.hnsw_m == 0 {
             return Err(crate::Error::Configuration(
-                "hnsw_m must be greater than 0".to_string(),
+                "hnsw_m must be greater than 0. Recommended: 12-48 (default: 16)".to_string(),
+            ));
+        }
+
+        if self.hnsw_m > 100 {
+            return Err(crate::Error::Configuration(
+                format!("hnsw_m of {} is very large and will consume excessive memory. Recommended: 12-48", self.hnsw_m)
+            ));
+        }
+
+        if self.hnsw_ef_construction < 10 {
+            return Err(crate::Error::Configuration(
+                "hnsw_ef_construction should be at least 10 for reasonable index quality. Recommended: 100-500".to_string(),
+            ));
+        }
+
+        if self.hnsw_ef_search == 0 {
+            return Err(crate::Error::Configuration(
+                "hnsw_ef_search must be greater than 0. Recommended: 64-200".to_string(),
             ));
         }
 
@@ -204,5 +238,63 @@ mod tests {
         assert_eq!(config.indexed_metadata.len(), 2);
         assert!(config.indexed_metadata.contains(&"type".to_string()));
         assert!(config.indexed_metadata.contains(&"priority".to_string()));
+    }
+
+    #[test]
+    fn test_config_validation_dimension_too_large() {
+        let mut config = Config::default();
+        config.embedding_dim = 5000;
+        let err = config.validate().unwrap_err();
+        assert!(matches!(err, crate::Error::Configuration(_)));
+        assert!(err.to_string().contains("unusually large"));
+    }
+
+    #[test]
+    fn test_config_validation_causal_hops_too_large() {
+        let mut config = Config::default();
+        config.causal_max_hops = 20;
+        let err = config.validate().unwrap_err();
+        assert!(matches!(err, crate::Error::Configuration(_)));
+        assert!(err.to_string().contains("too large"));
+    }
+
+    #[test]
+    fn test_config_validation_hnsw_m_too_large() {
+        let mut config = Config::default();
+        config.hnsw_m = 150;
+        let err = config.validate().unwrap_err();
+        assert!(matches!(err, crate::Error::Configuration(_)));
+        assert!(err.to_string().contains("very large"));
+    }
+
+    #[test]
+    fn test_config_validation_ef_construction_too_small() {
+        let mut config = Config::default();
+        config.hnsw_ef_construction = 5;
+        let err = config.validate().unwrap_err();
+        assert!(matches!(err, crate::Error::Configuration(_)));
+        assert!(err.to_string().contains("at least 10"));
+    }
+
+    #[test]
+    fn test_config_validation_ef_search_zero() {
+        let mut config = Config::default();
+        config.hnsw_ef_search = 0;
+        let err = config.validate().unwrap_err();
+        assert!(matches!(err, crate::Error::Configuration(_)));
+    }
+
+    #[test]
+    fn test_config_validation_provides_recommendations() {
+        // Test that error messages include recommendations
+        let mut config = Config::default();
+        config.embedding_dim = 0;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("Common values"));
+
+        let mut config = Config::default();
+        config.temporal_decay_hours = 0.0;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("Recommended"));
     }
 }

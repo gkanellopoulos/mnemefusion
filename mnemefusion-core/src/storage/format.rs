@@ -55,16 +55,44 @@ impl FileHeader {
 
     /// Validate the file header
     ///
-    /// Checks magic number and version compatibility.
+    /// Checks magic number, version compatibility, and basic sanity checks.
     pub fn validate(&self) -> Result<()> {
         // Check magic number
         if &self.magic != MAGIC {
-            return Err(Error::InvalidFormat("Invalid magic number"));
+            return Err(Error::InvalidFormat("Invalid magic number - file may be corrupted or not a MnemeFusion database"));
         }
 
         // Check version
+        if self.version == 0 {
+            return Err(Error::DatabaseCorruption("Invalid version 0".to_string()));
+        }
+
         if self.version > VERSION {
             return Err(Error::UnsupportedVersion(self.version, VERSION));
+        }
+
+        // Check timestamps are reasonable (after 2020-01-01 and before 2100-01-01)
+        const YEAR_2020: u64 = 1577836800; // 2020-01-01 in Unix seconds
+        const YEAR_2100: u64 = 4102444800; // 2100-01-01 in Unix seconds
+
+        if self.created_at < YEAR_2020 || self.created_at > YEAR_2100 {
+            return Err(Error::DatabaseCorruption(
+                format!("Invalid creation timestamp: {}", self.created_at)
+            ));
+        }
+
+        if self.modified_at < YEAR_2020 || self.modified_at > YEAR_2100 {
+            return Err(Error::DatabaseCorruption(
+                format!("Invalid modification timestamp: {}", self.modified_at)
+            ));
+        }
+
+        // modified_at should be >= created_at
+        if self.modified_at < self.created_at {
+            return Err(Error::DatabaseCorruption(
+                format!("Modified timestamp ({}) before created timestamp ({})",
+                    self.modified_at, self.created_at)
+            ));
         }
 
         Ok(())
@@ -220,5 +248,67 @@ mod tests {
     #[test]
     fn test_version_constant() {
         assert_eq!(VERSION, 1);
+    }
+
+    #[test]
+    fn test_header_validation_corrupted_version() {
+        let mut header = FileHeader::new();
+        header.version = 0;
+        let err = header.validate().unwrap_err();
+        assert!(matches!(err, Error::DatabaseCorruption(_)));
+    }
+
+    #[test]
+    fn test_header_validation_timestamp_out_of_range() {
+        // Test created_at too old
+        let mut header = FileHeader::new();
+        header.created_at = 100; // Too old (before 2020)
+        let err = header.validate().unwrap_err();
+        assert!(matches!(err, Error::DatabaseCorruption(_)));
+
+        // Test created_at too far in future
+        let mut header = FileHeader::new();
+        header.created_at = 5000000000; // After 2100
+        let err = header.validate().unwrap_err();
+        assert!(matches!(err, Error::DatabaseCorruption(_)));
+
+        // Test modified_at too old
+        let mut header = FileHeader::new();
+        header.modified_at = 100;
+        let err = header.validate().unwrap_err();
+        assert!(matches!(err, Error::DatabaseCorruption(_)));
+    }
+
+    #[test]
+    fn test_header_validation_modified_before_created() {
+        let mut header = FileHeader::new();
+        header.created_at = 1700000000;
+        header.modified_at = 1600000000; // Before created_at
+        let err = header.validate().unwrap_err();
+        assert!(matches!(err, Error::DatabaseCorruption(_)));
+    }
+
+    #[test]
+    fn test_header_validation_unsupported_future_version() {
+        let mut header = FileHeader::new();
+        header.version = VERSION + 10;
+        let err = header.validate().unwrap_err();
+        assert!(matches!(err, Error::UnsupportedVersion(_, _)));
+    }
+
+    #[test]
+    fn test_header_from_bytes_truncated() {
+        // Test with truncated bytes
+        let short_bytes = [0u8; 32]; // Less than 64 bytes
+        let err = FileHeader::from_bytes(&short_bytes).unwrap_err();
+        assert!(matches!(err, Error::InvalidFormat(_)));
+    }
+
+    #[test]
+    fn test_header_from_bytes_bad_magic() {
+        let mut bytes = FileHeader::new().to_bytes();
+        bytes[0..4].copy_from_slice(b"XXXX"); // Corrupt magic number
+        let err = FileHeader::from_bytes(&bytes).unwrap_err();
+        assert!(matches!(err, Error::InvalidFormat(_)));
     }
 }
