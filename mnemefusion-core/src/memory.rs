@@ -11,7 +11,7 @@ use crate::{
     ingest::IngestionPipeline,
     query::{FusedResult, IntentClassification, QueryPlanner},
     storage::StorageEngine,
-    types::{AddResult, BatchResult, Entity, Memory, MemoryId, MemoryInput, Source, Timestamp, UpsertResult},
+    types::{AddResult, BatchResult, Entity, Memory, MemoryId, MemoryInput, MetadataFilter, Source, Timestamp, UpsertResult},
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -630,9 +630,16 @@ impl MemoryEngine {
     ///     println!("Similarity: {:.3} - {}", score, memory.content);
     /// }
     /// ```
-    pub fn search(&self, query_embedding: &[f32], top_k: usize, namespace: Option<&str>) -> Result<Vec<(Memory, f32)>> {
-        // If namespace filtering is needed, fetch more results (3x) and filter
-        let fetch_k = if namespace.is_some() { top_k * 3 } else { top_k };
+    pub fn search(
+        &self,
+        query_embedding: &[f32],
+        top_k: usize,
+        namespace: Option<&str>,
+        filters: Option<&[MetadataFilter]>,
+    ) -> Result<Vec<(Memory, f32)>> {
+        // If filtering is needed, fetch more results (5x) and filter
+        let needs_filtering = namespace.is_some() || (filters.is_some() && !filters.unwrap().is_empty());
+        let fetch_k = if needs_filtering { top_k * 5 } else { top_k };
 
         // Search vector index
         let vector_results = {
@@ -653,6 +660,14 @@ impl MemoryEngine {
                         continue;
                     }
                 }
+
+                // Filter by metadata if provided
+                if let Some(filter_list) = filters {
+                    if !Self::memory_matches_filters(&memory, filter_list) {
+                        continue;
+                    }
+                }
+
                 results.push((memory, vector_result.similarity));
 
                 // Stop if we have enough results after filtering
@@ -663,6 +678,17 @@ impl MemoryEngine {
         }
 
         Ok(results)
+    }
+
+    /// Check if a memory matches all metadata filters
+    fn memory_matches_filters(memory: &Memory, filters: &[MetadataFilter]) -> bool {
+        for filter in filters {
+            let value = memory.metadata.get(&filter.field).map(|s| s.as_str());
+            if !filter.matches(value) {
+                return false;
+            }
+        }
+        true
     }
 
     /// Intelligent multi-dimensional query with intent classification
@@ -707,9 +733,10 @@ impl MemoryEngine {
         query_embedding: &[f32],
         limit: usize,
         namespace: Option<&str>,
+        filters: Option<&[MetadataFilter]>,
     ) -> Result<(IntentClassification, Vec<(Memory, FusedResult)>)> {
         // Execute query using query planner
-        let (intent, fused_results) = self.query_planner.query(query_text, query_embedding, limit, namespace)?;
+        let (intent, fused_results) = self.query_planner.query(query_text, query_embedding, limit, namespace, filters)?;
 
         // Retrieve full memory records
         let mut results = Vec::with_capacity(fused_results.len());
@@ -1249,18 +1276,24 @@ impl<'a> ScopedMemory<'a> {
 
     /// Search for memories in this namespace
     ///
-    /// Equivalent to calling `engine.search(..., Some(namespace))`
+    /// Equivalent to calling `engine.search(..., Some(namespace), filters)`
     ///
     /// # Arguments
     ///
     /// * `query_embedding` - Query vector
     /// * `top_k` - Maximum number of results
+    /// * `filters` - Optional metadata filters
     ///
     /// # Returns
     ///
     /// Vector of (Memory, similarity_score) tuples
-    pub fn search(&self, query_embedding: &[f32], top_k: usize) -> Result<Vec<(Memory, f32)>> {
-        self.engine.search(query_embedding, top_k, Some(&self.namespace))
+    pub fn search(
+        &self,
+        query_embedding: &[f32],
+        top_k: usize,
+        filters: Option<&[MetadataFilter]>,
+    ) -> Result<Vec<(Memory, f32)>> {
+        self.engine.search(query_embedding, top_k, Some(&self.namespace), filters)
     }
 
     /// Delete a memory from this namespace
@@ -1369,13 +1402,14 @@ impl<'a> ScopedMemory<'a> {
 
     /// Multi-dimensional query within this namespace
     ///
-    /// Equivalent to calling `engine.query(..., Some(namespace))`
+    /// Equivalent to calling `engine.query(..., Some(namespace), filters)`
     ///
     /// # Arguments
     ///
     /// * `query_text` - Natural language query
     /// * `query_embedding` - Query vector
     /// * `limit` - Maximum number of results
+    /// * `filters` - Optional metadata filters
     ///
     /// # Returns
     ///
@@ -1385,8 +1419,9 @@ impl<'a> ScopedMemory<'a> {
         query_text: &str,
         query_embedding: &[f32],
         limit: usize,
+        filters: Option<&[MetadataFilter]>,
     ) -> Result<(IntentClassification, Vec<(Memory, FusedResult)>)> {
-        self.engine.query(query_text, query_embedding, limit, Some(&self.namespace))
+        self.engine.query(query_text, query_embedding, limit, Some(&self.namespace), filters)
     }
 
     /// Get memories in time range within this namespace
@@ -1636,22 +1671,22 @@ mod tests {
         let query_embedding = vec![0.15; 384];
 
         // Search in user_1 namespace
-        let results = engine.search(&query_embedding, 10, Some("user_1")).unwrap();
+        let results = engine.search(&query_embedding, 10, Some("user_1"), None).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.id, id1);
 
         // Search in user_2 namespace
-        let results = engine.search(&query_embedding, 10, Some("user_2")).unwrap();
+        let results = engine.search(&query_embedding, 10, Some("user_2"), None).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.id, id2);
 
         // Search in default namespace
-        let results = engine.search(&query_embedding, 10, Some("")).unwrap();
+        let results = engine.search(&query_embedding, 10, Some(""), None).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.id, id3);
 
         // Search without namespace filter (should get all)
-        let results = engine.search(&query_embedding, 10, None).unwrap();
+        let results = engine.search(&query_embedding, 10, None, None).unwrap();
         assert_eq!(results.len(), 3);
     }
 
@@ -1781,7 +1816,7 @@ mod tests {
         assert_eq!(memory.content, "Scoped memory");
 
         // Search via scoped view
-        let results = scoped.search(&vec![0.5; 384], 10).unwrap();
+        let results = scoped.search(&vec![0.5; 384], 10, None).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.id, id);
 
@@ -1836,11 +1871,11 @@ mod tests {
         assert_eq!(scope2.count().unwrap(), 1);
 
         // Search should be isolated
-        let results1 = scope1.search(&vec![0.1; 384], 10).unwrap();
+        let results1 = scope1.search(&vec![0.1; 384], 10, None).unwrap();
         assert_eq!(results1.len(), 1);
         assert_eq!(results1[0].0.id, id1);
 
-        let results2 = scope2.search(&vec![0.2; 384], 10).unwrap();
+        let results2 = scope2.search(&vec![0.2; 384], 10, None).unwrap();
         assert_eq!(results2.len(), 1);
         assert_eq!(results2[0].0.id, id2);
 
@@ -1906,5 +1941,99 @@ mod tests {
 
         // Verify empty
         assert_eq!(scoped.count().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_search_with_metadata_filters() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+
+        // Add memories with different metadata
+        let mut mem1 = Memory::new("Event 1".to_string(), vec![0.1; 384]);
+        mem1.metadata.insert("type".to_string(), "event".to_string());
+        mem1.metadata.insert("priority".to_string(), "high".to_string());
+        engine.add(mem1.content.clone(), mem1.embedding.clone(), Some(mem1.metadata.clone()), None, None, None).unwrap();
+
+        let mut mem2 = Memory::new("Event 2".to_string(), vec![0.11; 384]);
+        mem2.metadata.insert("type".to_string(), "event".to_string());
+        mem2.metadata.insert("priority".to_string(), "low".to_string());
+        engine.add(mem2.content.clone(), mem2.embedding.clone(), Some(mem2.metadata.clone()), None, None, None).unwrap();
+
+        let mut mem3 = Memory::new("Task 1".to_string(), vec![0.12; 384]);
+        mem3.metadata.insert("type".to_string(), "task".to_string());
+        mem3.metadata.insert("priority".to_string(), "high".to_string());
+        engine.add(mem3.content.clone(), mem3.embedding.clone(), Some(mem3.metadata.clone()), None, None, None).unwrap();
+
+        // Search with filter: type=event
+        let filters = vec![MetadataFilter::eq("type", "event")];
+        let results = engine.search(&vec![0.1; 384], 10, None, Some(&filters)).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|(m, _)| m.metadata.get("type").unwrap() == "event"));
+
+        // Search with filter: priority=high
+        let filters = vec![MetadataFilter::eq("priority", "high")];
+        let results = engine.search(&vec![0.1; 384], 10, None, Some(&filters)).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|(m, _)| m.metadata.get("priority").unwrap() == "high"));
+
+        // Search with multiple filters: type=event AND priority=high
+        let filters = vec![
+            MetadataFilter::eq("type", "event"),
+            MetadataFilter::eq("priority", "high"),
+        ];
+        let results = engine.search(&vec![0.1; 384], 10, None, Some(&filters)).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.content, "Event 1");
+    }
+
+    #[test]
+    fn test_query_with_metadata_filters() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+
+        // Add memories with different metadata
+        let mut mem1 = Memory::new("Important meeting".to_string(), vec![0.1; 384]);
+        mem1.metadata.insert("type".to_string(), "event".to_string());
+        mem1.metadata.insert("priority".to_string(), "high".to_string());
+        engine.add(mem1.content.clone(), mem1.embedding.clone(), Some(mem1.metadata.clone()), None, None, None).unwrap();
+
+        let mut mem2 = Memory::new("Casual meeting".to_string(), vec![0.11; 384]);
+        mem2.metadata.insert("type".to_string(), "event".to_string());
+        mem2.metadata.insert("priority".to_string(), "low".to_string());
+        engine.add(mem2.content.clone(), mem2.embedding.clone(), Some(mem2.metadata.clone()), None, None, None).unwrap();
+
+        // Query with filter
+        let filters = vec![MetadataFilter::eq("priority", "high")];
+        let (_intent, results) = engine.query("meeting", &vec![0.1; 384], 10, None, Some(&filters)).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.content, "Important meeting");
+    }
+
+    #[test]
+    fn test_scoped_memory_with_filters() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+
+        let scoped = engine.scope("user_123");
+
+        // Add memories with different metadata to the namespace
+        let mut mem1 = Memory::new("Event 1".to_string(), vec![0.1; 384]);
+        mem1.metadata.insert("type".to_string(), "event".to_string());
+        scoped.add(mem1.content.clone(), mem1.embedding.clone(), Some(mem1.metadata.clone()), None, None).unwrap();
+
+        let mut mem2 = Memory::new("Task 1".to_string(), vec![0.11; 384]);
+        mem2.metadata.insert("type".to_string(), "task".to_string());
+        scoped.add(mem2.content.clone(), mem2.embedding.clone(), Some(mem2.metadata.clone()), None, None).unwrap();
+
+        // Search with filter in scoped view
+        let filters = vec![MetadataFilter::eq("type", "event")];
+        let results = scoped.search(&vec![0.1; 384], 10, Some(&filters)).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.content, "Event 1");
     }
 }

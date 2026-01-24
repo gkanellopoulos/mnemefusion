@@ -22,6 +22,7 @@ const ENTITIES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("entities")
 const ENTITY_NAMES: TableDefinition<&str, &[u8]> = TableDefinition::new("entity_names");
 const CONTENT_HASH_INDEX: TableDefinition<&str, &[u8]> = TableDefinition::new("content_hash_index");
 const LOGICAL_KEY_INDEX: TableDefinition<&str, &[u8]> = TableDefinition::new("logical_key_index");
+const METADATA_INDEX: TableDefinition<&str, &[u8]> = TableDefinition::new("metadata_index");
 
 /// Storage engine wrapper around redb
 ///
@@ -64,6 +65,7 @@ impl StorageEngine {
             let _ = write_txn.open_table(ENTITY_NAMES)?;
             let _ = write_txn.open_table(CONTENT_HASH_INDEX)?;
             let _ = write_txn.open_table(LOGICAL_KEY_INDEX)?;
+            let _ = write_txn.open_table(METADATA_INDEX)?;
         }
         write_txn.commit()?;
         Ok(())
@@ -713,6 +715,157 @@ impl StorageEngine {
 
         Ok(ids)
     }
+
+    // Metadata index operations
+
+    /// Build a metadata index key
+    ///
+    /// Format: "{field}:{value}:{namespace}"
+    fn metadata_index_key(field: &str, value: &str, namespace: &str) -> String {
+        format!("{}:{}:{}", field, value, namespace)
+    }
+
+    /// Store a metadata field value in the index
+    ///
+    /// Associates a memory with a specific metadata field value in a namespace.
+    ///
+    /// # Arguments
+    ///
+    /// * `field` - The metadata field name
+    /// * `value` - The field value
+    /// * `namespace` - The namespace the memory belongs to
+    /// * `memory_id` - The memory ID to associate with this field value
+    pub fn add_to_metadata_index(
+        &self,
+        field: &str,
+        value: &str,
+        namespace: &str,
+        memory_id: &MemoryId,
+    ) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(METADATA_INDEX)?;
+
+            let key = Self::metadata_index_key(field, value, namespace);
+
+            // Get existing memory IDs for this key
+            let mut ids: Vec<MemoryId> = match table.get(key.as_str())? {
+                Some(data) => serde_json::from_slice(data.value())?,
+                None => Vec::new(),
+            };
+
+            // Add new ID if not already present
+            if !ids.contains(memory_id) {
+                ids.push(memory_id.clone());
+
+                // Serialize and store
+                let data = serde_json::to_vec(&ids)?;
+                table.insert(key.as_str(), data.as_slice())?;
+            }
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Remove a memory from a metadata index entry
+    ///
+    /// # Arguments
+    ///
+    /// * `field` - The metadata field name
+    /// * `value` - The field value
+    /// * `namespace` - The namespace
+    /// * `memory_id` - The memory ID to remove
+    pub fn remove_from_metadata_index(
+        &self,
+        field: &str,
+        value: &str,
+        namespace: &str,
+        memory_id: &MemoryId,
+    ) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(METADATA_INDEX)?;
+
+            let key = Self::metadata_index_key(field, value, namespace);
+
+            // Get existing memory IDs for this key and clone the data
+            let ids_data = table.get(key.as_str())?.map(|data| data.value().to_vec());
+
+            if let Some(data_vec) = ids_data {
+                let mut ids: Vec<MemoryId> = serde_json::from_slice(&data_vec)?;
+
+                // Remove the memory ID
+                ids.retain(|id| id != memory_id);
+
+                if ids.is_empty() {
+                    // Remove the index entry if no more memories
+                    table.remove(key.as_str())?;
+                } else {
+                    // Update with remaining IDs
+                    let data = serde_json::to_vec(&ids)?;
+                    table.insert(key.as_str(), data.as_slice())?;
+                }
+            }
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Find all memory IDs matching a metadata field value
+    ///
+    /// # Arguments
+    ///
+    /// * `field` - The metadata field name
+    /// * `value` - The field value to match
+    /// * `namespace` - The namespace to search in
+    ///
+    /// # Returns
+    ///
+    /// Vector of memory IDs that have the specified metadata field value
+    pub fn find_by_metadata(
+        &self,
+        field: &str,
+        value: &str,
+        namespace: &str,
+    ) -> Result<Vec<MemoryId>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(METADATA_INDEX)?;
+
+        let key = Self::metadata_index_key(field, value, namespace);
+
+        match table.get(key.as_str())? {
+            Some(data) => {
+                let ids: Vec<MemoryId> = serde_json::from_slice(data.value())?;
+                Ok(ids)
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// Remove all metadata index entries for a memory
+    ///
+    /// Used when deleting a memory to clean up all its metadata indexes.
+    ///
+    /// # Arguments
+    ///
+    /// * `memory` - The memory being deleted
+    /// * `indexed_fields` - List of fields that are indexed
+    pub fn remove_metadata_indexes_for_memory(
+        &self,
+        memory: &Memory,
+        indexed_fields: &[String],
+    ) -> Result<()> {
+        let namespace = memory.get_namespace();
+
+        // For each indexed field, remove this memory from the index
+        for field in indexed_fields {
+            if let Some(value) = memory.metadata.get(field) {
+                self.remove_from_metadata_index(field, value, &namespace, &memory.id)?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 // Add serde_json for metadata serialization
@@ -968,5 +1121,199 @@ mod tests {
         // Should not appear in list_namespaces (only non-default)
         let namespaces = engine.list_namespaces().unwrap();
         assert!(namespaces.is_empty());
+    }
+
+    #[test]
+    fn test_metadata_index_add_and_find() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = StorageEngine::open(&path).unwrap();
+
+        let mut mem = Memory::new("test content".to_string(), vec![0.1; 384]);
+        mem.metadata.insert("type".to_string(), "event".to_string());
+        mem.metadata.insert("priority".to_string(), "high".to_string());
+        let id = mem.id.clone();
+
+        // Add to metadata index
+        engine
+            .add_to_metadata_index("type", "event", "", &id)
+            .unwrap();
+        engine
+            .add_to_metadata_index("priority", "high", "", &id)
+            .unwrap();
+
+        // Find by metadata
+        let ids = engine.find_by_metadata("type", "event", "").unwrap();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0], id);
+
+        let ids = engine.find_by_metadata("priority", "high", "").unwrap();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0], id);
+
+        // Non-existent value
+        let ids = engine.find_by_metadata("type", "task", "").unwrap();
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn test_metadata_index_multiple_memories() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = StorageEngine::open(&path).unwrap();
+
+        let mut mem1 = Memory::new("content 1".to_string(), vec![0.1; 384]);
+        mem1.metadata.insert("type".to_string(), "event".to_string());
+        let id1 = mem1.id.clone();
+
+        let mut mem2 = Memory::new("content 2".to_string(), vec![0.2; 384]);
+        mem2.metadata.insert("type".to_string(), "event".to_string());
+        let id2 = mem2.id.clone();
+
+        let mut mem3 = Memory::new("content 3".to_string(), vec![0.3; 384]);
+        mem3.metadata.insert("type".to_string(), "task".to_string());
+        let id3 = mem3.id.clone();
+
+        // Add to index
+        engine.add_to_metadata_index("type", "event", "", &id1).unwrap();
+        engine.add_to_metadata_index("type", "event", "", &id2).unwrap();
+        engine.add_to_metadata_index("type", "task", "", &id3).unwrap();
+
+        // Find all events
+        let ids = engine.find_by_metadata("type", "event", "").unwrap();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&id1));
+        assert!(ids.contains(&id2));
+
+        // Find all tasks
+        let ids = engine.find_by_metadata("type", "task", "").unwrap();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0], id3);
+    }
+
+    #[test]
+    fn test_metadata_index_with_namespace() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = StorageEngine::open(&path).unwrap();
+
+        let mut mem1 = Memory::new("content 1".to_string(), vec![0.1; 384]);
+        mem1.set_namespace("user_123");
+        mem1.metadata.insert("type".to_string(), "event".to_string());
+        let id1 = mem1.id.clone();
+
+        let mut mem2 = Memory::new("content 2".to_string(), vec![0.2; 384]);
+        mem2.set_namespace("user_456");
+        mem2.metadata.insert("type".to_string(), "event".to_string());
+        let id2 = mem2.id.clone();
+
+        // Add to index
+        engine
+            .add_to_metadata_index("type", "event", "user_123", &id1)
+            .unwrap();
+        engine
+            .add_to_metadata_index("type", "event", "user_456", &id2)
+            .unwrap();
+
+        // Find in each namespace
+        let ids = engine.find_by_metadata("type", "event", "user_123").unwrap();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0], id1);
+
+        let ids = engine.find_by_metadata("type", "event", "user_456").unwrap();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0], id2);
+
+        // Not found in wrong namespace
+        let ids = engine.find_by_metadata("type", "event", "").unwrap();
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn test_metadata_index_remove() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = StorageEngine::open(&path).unwrap();
+
+        let mut mem = Memory::new("test content".to_string(), vec![0.1; 384]);
+        mem.metadata.insert("type".to_string(), "event".to_string());
+        let id = mem.id.clone();
+
+        // Add to index
+        engine.add_to_metadata_index("type", "event", "", &id).unwrap();
+
+        // Verify it's there
+        let ids = engine.find_by_metadata("type", "event", "").unwrap();
+        assert_eq!(ids.len(), 1);
+
+        // Remove from index
+        engine.remove_from_metadata_index("type", "event", "", &id).unwrap();
+
+        // Verify it's gone
+        let ids = engine.find_by_metadata("type", "event", "").unwrap();
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn test_metadata_index_remove_one_of_many() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = StorageEngine::open(&path).unwrap();
+
+        let mut mem1 = Memory::new("content 1".to_string(), vec![0.1; 384]);
+        mem1.metadata.insert("type".to_string(), "event".to_string());
+        let id1 = mem1.id.clone();
+
+        let mut mem2 = Memory::new("content 2".to_string(), vec![0.2; 384]);
+        mem2.metadata.insert("type".to_string(), "event".to_string());
+        let id2 = mem2.id.clone();
+
+        // Add both to index
+        engine.add_to_metadata_index("type", "event", "", &id1).unwrap();
+        engine.add_to_metadata_index("type", "event", "", &id2).unwrap();
+
+        // Verify both are there
+        let ids = engine.find_by_metadata("type", "event", "").unwrap();
+        assert_eq!(ids.len(), 2);
+
+        // Remove one
+        engine.remove_from_metadata_index("type", "event", "", &id1).unwrap();
+
+        // Verify only one remains
+        let ids = engine.find_by_metadata("type", "event", "").unwrap();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0], id2);
+    }
+
+    #[test]
+    fn test_metadata_index_remove_all_for_memory() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = StorageEngine::open(&path).unwrap();
+
+        let mut mem = Memory::new("test content".to_string(), vec![0.1; 384]);
+        mem.metadata.insert("type".to_string(), "event".to_string());
+        mem.metadata.insert("priority".to_string(), "high".to_string());
+        mem.metadata.insert("category".to_string(), "work".to_string());
+        let id = mem.id.clone();
+
+        // Add to indexes
+        engine.add_to_metadata_index("type", "event", "", &id).unwrap();
+        engine.add_to_metadata_index("priority", "high", "", &id).unwrap();
+        engine.add_to_metadata_index("category", "work", "", &id).unwrap();
+
+        // Verify all are indexed
+        assert!(!engine.find_by_metadata("type", "event", "").unwrap().is_empty());
+        assert!(!engine.find_by_metadata("priority", "high", "").unwrap().is_empty());
+        assert!(!engine.find_by_metadata("category", "work", "").unwrap().is_empty());
+
+        // Remove all indexes for this memory
+        let indexed_fields = vec!["type".to_string(), "priority".to_string(), "category".to_string()];
+        engine.remove_metadata_indexes_for_memory(&mem, &indexed_fields).unwrap();
+
+        // Verify all are removed
+        assert!(engine.find_by_metadata("type", "event", "").unwrap().is_empty());
+        assert!(engine.find_by_metadata("priority", "high", "").unwrap().is_empty());
+        assert!(engine.find_by_metadata("category", "work", "").unwrap().is_empty());
     }
 }

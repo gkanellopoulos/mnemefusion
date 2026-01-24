@@ -129,6 +129,16 @@ impl From<redb::StorageError> for Error {
     }
 }
 
+impl From<serde_json::Error> for Error {
+    fn from(err: serde_json::Error) -> Self {
+        if err.is_data() {
+            Error::Deserialization(err.to_string())
+        } else {
+            Error::Serialization(err.to_string())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

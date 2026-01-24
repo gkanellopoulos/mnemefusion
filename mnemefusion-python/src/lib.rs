@@ -3,12 +3,12 @@
 //! This module provides a Pythonic interface to the MnemeFusion memory engine.
 
 use mnemefusion_core::{
-    types::{BatchResult, MemoryInput, Source, SourceType},
+    types::{BatchResult, FilterOp, MemoryInput, MetadataFilter, Source, SourceType},
     Config, MemoryEngine, MemoryId, Timestamp,
 };
 use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyList};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -81,6 +81,91 @@ fn source_to_pydict(py: Python, source: &Source) -> PyResult<PyObject> {
     Ok(dict.into())
 }
 
+/// Helper function to parse metadata filters from Python dict
+/// Format: {"field": "type", "op": "eq", "value": "event"}
+/// or {"field": "priority", "op": "in", "values": ["high", "medium"]}
+fn parse_filter_from_dict(dict: &PyDict) -> PyResult<MetadataFilter> {
+    let field: String = dict
+        .get_item("field")?
+        .ok_or_else(|| PyValueError::new_err("Filter 'field' is required"))?
+        .extract()?;
+
+    let op_str: String = dict
+        .get_item("op")?
+        .ok_or_else(|| PyValueError::new_err("Filter 'op' is required"))?
+        .extract()?;
+
+    let op = match op_str.as_str() {
+        "eq" => {
+            let value: String = dict
+                .get_item("value")?
+                .ok_or_else(|| PyValueError::new_err("Filter 'value' is required for 'eq' operator"))?
+                .extract()?;
+            FilterOp::Eq(value)
+        }
+        "ne" => {
+            let value: String = dict
+                .get_item("value")?
+                .ok_or_else(|| PyValueError::new_err("Filter 'value' is required for 'ne' operator"))?
+                .extract()?;
+            FilterOp::Ne(value)
+        }
+        "gt" => {
+            let value: String = dict
+                .get_item("value")?
+                .ok_or_else(|| PyValueError::new_err("Filter 'value' is required for 'gt' operator"))?
+                .extract()?;
+            FilterOp::Gt(value)
+        }
+        "gte" => {
+            let value: String = dict
+                .get_item("value")?
+                .ok_or_else(|| PyValueError::new_err("Filter 'value' is required for 'gte' operator"))?
+                .extract()?;
+            FilterOp::Gte(value)
+        }
+        "lt" => {
+            let value: String = dict
+                .get_item("value")?
+                .ok_or_else(|| PyValueError::new_err("Filter 'value' is required for 'lt' operator"))?
+                .extract()?;
+            FilterOp::Lt(value)
+        }
+        "lte" => {
+            let value: String = dict
+                .get_item("value")?
+                .ok_or_else(|| PyValueError::new_err("Filter 'value' is required for 'lte' operator"))?
+                .extract()?;
+            FilterOp::Lte(value)
+        }
+        "in" => {
+            let values: Vec<String> = dict
+                .get_item("values")?
+                .ok_or_else(|| PyValueError::new_err("Filter 'values' (list) is required for 'in' operator"))?
+                .extract()?;
+            FilterOp::In(values)
+        }
+        _ => return Err(PyValueError::new_err(format!("Unknown filter operator: {}", op_str))),
+    };
+
+    Ok(MetadataFilter::new(field, op))
+}
+
+/// Helper function to parse metadata filters from Python list
+fn parse_filters_from_list(filters: Option<&PyList>) -> PyResult<Option<Vec<MetadataFilter>>> {
+    if let Some(filter_list) = filters {
+        let mut parsed_filters = Vec::new();
+        for item in filter_list.iter() {
+            let dict = item.downcast::<PyDict>()
+                .map_err(|_| PyValueError::new_err("Filter must be a dict"))?;
+            parsed_filters.push(parse_filter_from_dict(dict)?);
+        }
+        Ok(Some(parsed_filters))
+    } else {
+        Ok(None)
+    }
+}
+
 /// Python wrapper for MemoryEngine
 #[pyclass(name = "Memory")]
 pub struct PyMemory {
@@ -125,6 +210,9 @@ impl PyMemory {
             }
             if let Some(entity_extraction) = cfg.get_item("entity_extraction_enabled")? {
                 rust_config.entity_extraction_enabled = entity_extraction.extract()?;
+            }
+            if let Some(indexed_metadata) = cfg.get_item("indexed_metadata")? {
+                rust_config.indexed_metadata = indexed_metadata.extract()?;
             }
         }
 
@@ -543,13 +631,25 @@ impl PyMemory {
     ///     >>> query_embedding = [0.1] * 384
     ///     >>> results = memory.search(query_embedding, top_k=10)
     ///     >>> results = memory.search(query_embedding, top_k=10, namespace="user_123")
+    ///     >>> # With filters
+    ///     >>> filters = [{"field": "type", "op": "eq", "value": "event"}]
+    ///     >>> results = memory.search(query_embedding, top_k=10, filters=filters)
     ///     >>> for mem, score in results:
     ///     >>>     print(f"{score:.3f}: {mem['content']}")
-    #[pyo3(signature = (query_embedding, top_k, namespace=None))]
-    fn search(&self, query_embedding: Vec<f32>, top_k: usize, namespace: Option<&str>) -> PyResult<Vec<PyObject>> {
+    #[pyo3(signature = (query_embedding, top_k, namespace=None, filters=None))]
+    fn search(&self, query_embedding: Vec<f32>, top_k: usize, namespace: Option<&str>, filters: Option<&PyList>) -> PyResult<Vec<PyObject>> {
         let engine = self.get_engine()?;
+
+        // Parse filters
+        let parsed_filters = parse_filters_from_list(filters)?;
+
         let results = engine
-            .search(&query_embedding, top_k, namespace)
+            .search(
+                &query_embedding,
+                top_k,
+                namespace,
+                parsed_filters.as_ref().map(|v| v.as_slice()),
+            )
             .map_err(|e| PyIOError::new_err(format!("Search failed: {}", e)))?;
 
         Python::with_gil(|py| {
@@ -595,21 +695,35 @@ impl PyMemory {
     /// Example:
     ///     >>> intent, results = memory.query("Why was the meeting cancelled?", embedding, 10)
     ///     >>> intent, results = memory.query("Why?", embedding, 10, namespace="user_123")
+    ///     >>> # With filters
+    ///     >>> filters = [{"field": "priority", "op": "eq", "value": "high"}]
+    ///     >>> intent, results = memory.query("meetings", embedding, 10, filters=filters)
     ///     >>> print(f"Intent: {intent['intent']} (confidence: {intent['confidence']:.2f})")
     ///     >>> for mem, scores in results:
     ///     >>>     print(f"Fused score: {scores['fused_score']:.3f}")
     ///     >>>     print(f"  Content: {mem['content']}")
-    #[pyo3(signature = (query_text, query_embedding, limit, namespace=None))]
+    #[pyo3(signature = (query_text, query_embedding, limit, namespace=None, filters=None))]
     fn query(
         &self,
         query_text: &str,
         query_embedding: Vec<f32>,
         limit: usize,
         namespace: Option<&str>,
+        filters: Option<&PyList>,
     ) -> PyResult<PyObject> {
         let engine = self.get_engine()?;
+
+        // Parse filters
+        let parsed_filters = parse_filters_from_list(filters)?;
+
         let (intent, results) = engine
-            .query(query_text, &query_embedding, limit, namespace)
+            .query(
+                query_text,
+                &query_embedding,
+                limit,
+                namespace,
+                parsed_filters.as_ref().map(|v| v.as_slice()),
+            )
             .map_err(|e| PyIOError::new_err(format!("Query failed: {}", e)))?;
 
         Python::with_gil(|py| {

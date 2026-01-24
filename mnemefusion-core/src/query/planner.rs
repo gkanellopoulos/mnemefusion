@@ -12,7 +12,7 @@ use crate::{
         intent::{IntentClassification, IntentClassifier},
     },
     storage::StorageEngine,
-    types::{MemoryId, Timestamp},
+    types::{Memory, MemoryId, MetadataFilter, Timestamp},
 };
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -56,6 +56,7 @@ impl QueryPlanner {
     /// * `query_embedding` - Vector embedding of the query
     /// * `limit` - Maximum number of results to return
     /// * `namespace` - Optional namespace filter. If provided, only returns memories in this namespace
+    /// * `filters` - Optional metadata filters. All filters must match (AND logic)
     ///
     /// # Returns
     ///
@@ -66,12 +67,14 @@ impl QueryPlanner {
         query_embedding: &[f32],
         limit: usize,
         namespace: Option<&str>,
+        filters: Option<&[MetadataFilter]>,
     ) -> Result<(IntentClassification, Vec<FusedResult>)> {
         // Step 1: Classify intent
         let intent = self.intent_classifier.classify(query_text);
 
         // Step 2: Retrieve from all dimensions (fetch more to account for filtering)
-        let fetch_multiplier = if namespace.is_some() { 5 } else { 3 };
+        let needs_filtering = namespace.is_some() || (filters.is_some() && !filters.unwrap().is_empty());
+        let fetch_multiplier = if needs_filtering { 5 } else { 3 };
         let mut semantic_scores = self.semantic_search(query_embedding, limit * fetch_multiplier)?;
         let mut temporal_scores = self.temporal_search(limit * fetch_multiplier)?;
         let causal_scores = HashMap::new(); // TODO: Implement causal search
@@ -82,6 +85,15 @@ impl QueryPlanner {
             self.filter_by_namespace(&mut semantic_scores, ns)?;
             self.filter_by_namespace(&mut temporal_scores, ns)?;
             self.filter_by_namespace(&mut entity_scores, ns)?;
+        }
+
+        // Step 2.6: Filter by metadata if provided
+        if let Some(filter_list) = filters {
+            if !filter_list.is_empty() {
+                self.filter_by_metadata(&mut semantic_scores, filter_list)?;
+                self.filter_by_metadata(&mut temporal_scores, filter_list)?;
+                self.filter_by_metadata(&mut entity_scores, filter_list)?;
+            }
         }
 
         // Step 3: Fuse results with adaptive weights
@@ -269,6 +281,52 @@ impl QueryPlanner {
 
         Ok(())
     }
+
+    /// Filter a score map by metadata filters
+    ///
+    /// Removes entries whose memories don't match ALL provided filters
+    fn filter_by_metadata(
+        &self,
+        scores: &mut HashMap<MemoryId, f32>,
+        filters: &[MetadataFilter],
+    ) -> Result<()> {
+        if filters.is_empty() {
+            return Ok(());
+        }
+
+        // Collect IDs to remove (can't remove during iteration)
+        let mut to_remove = Vec::new();
+
+        for memory_id in scores.keys() {
+            if let Some(memory) = self.storage.get_memory(memory_id)? {
+                // Check if memory matches ALL filters
+                if !Self::memory_matches_filters(&memory, filters) {
+                    to_remove.push(memory_id.clone());
+                }
+            } else {
+                // Memory doesn't exist, remove it
+                to_remove.push(memory_id.clone());
+            }
+        }
+
+        // Remove filtered-out IDs
+        for id in to_remove {
+            scores.remove(&id);
+        }
+
+        Ok(())
+    }
+
+    /// Check if a memory matches all metadata filters
+    fn memory_matches_filters(memory: &Memory, filters: &[MetadataFilter]) -> bool {
+        for filter in filters {
+            let value = memory.metadata.get(&filter.field).map(|s| s.as_str());
+            if !filter.matches(value) {
+                return false; // Any filter fails = memory doesn't match
+            }
+        }
+        true // All filters passed
+    }
 }
 
 #[cfg(test)]
@@ -389,7 +447,7 @@ mod tests {
 
         // Execute query
         let (intent, results) = planner
-            .query("test query", &vec![0.1; 384], 10, None)
+            .query("test query", &vec![0.1; 384], 10, None, None)
             .unwrap();
 
         // Should classify as factual
@@ -458,7 +516,7 @@ mod tests {
 
         // Query with ns1 filter
         let (_, results) = planner
-            .query("test", &vec![0.1; 384], 10, Some("ns1"))
+            .query("test", &vec![0.1; 384], 10, Some("ns1"), None)
             .unwrap();
 
         // Should only contain mem1
@@ -467,7 +525,7 @@ mod tests {
 
         // Query with ns2 filter
         let (_, results) = planner
-            .query("test", &vec![0.1; 384], 10, Some("ns2"))
+            .query("test", &vec![0.1; 384], 10, Some("ns2"), None)
             .unwrap();
 
         // Should only contain mem2
@@ -476,7 +534,7 @@ mod tests {
 
         // Query with default namespace filter
         let (_, results) = planner
-            .query("test", &vec![0.1; 384], 10, Some(""))
+            .query("test", &vec![0.1; 384], 10, Some(""), None)
             .unwrap();
 
         // Should only contain mem3
@@ -565,5 +623,194 @@ mod tests {
         assert_eq!(scores.len(), 1);
         assert!(scores.contains_key(&mem1_id));
         assert!(!scores.contains_key(&mem2_id));
+    }
+
+    #[test]
+    fn test_filter_by_metadata_exact_match() {
+        let (planner, _dir) = create_test_planner();
+
+        // Create memories with different metadata
+        let mut mem1 = Memory::new("Event memory".to_string(), vec![0.1; 384]);
+        mem1.metadata.insert("type".to_string(), "event".to_string());
+        mem1.metadata.insert("priority".to_string(), "high".to_string());
+        let mem1_id = mem1.id.clone();
+
+        let mut mem2 = Memory::new("Task memory".to_string(), vec![0.2; 384]);
+        mem2.metadata.insert("type".to_string(), "task".to_string());
+        mem2.metadata.insert("priority".to_string(), "low".to_string());
+        let mem2_id = mem2.id.clone();
+
+        // Store memories
+        planner.storage.store_memory(&mem1).unwrap();
+        planner.storage.store_memory(&mem2).unwrap();
+
+        // Create score map
+        let mut scores = HashMap::new();
+        scores.insert(mem1_id.clone(), 0.9);
+        scores.insert(mem2_id.clone(), 0.8);
+
+        // Filter by type=event
+        let filters = vec![MetadataFilter::eq("type", "event")];
+        planner.filter_by_metadata(&mut scores, &filters).unwrap();
+
+        // Should only contain mem1
+        assert_eq!(scores.len(), 1);
+        assert!(scores.contains_key(&mem1_id));
+        assert!(!scores.contains_key(&mem2_id));
+    }
+
+    #[test]
+    fn test_filter_by_metadata_multiple_filters() {
+        let (planner, _dir) = create_test_planner();
+
+        // Create memories with different metadata
+        let mut mem1 = Memory::new("High priority event".to_string(), vec![0.1; 384]);
+        mem1.metadata.insert("type".to_string(), "event".to_string());
+        mem1.metadata.insert("priority".to_string(), "high".to_string());
+        let mem1_id = mem1.id.clone();
+
+        let mut mem2 = Memory::new("Low priority event".to_string(), vec![0.2; 384]);
+        mem2.metadata.insert("type".to_string(), "event".to_string());
+        mem2.metadata.insert("priority".to_string(), "low".to_string());
+        let mem2_id = mem2.id.clone();
+
+        let mut mem3 = Memory::new("High priority task".to_string(), vec![0.3; 384]);
+        mem3.metadata.insert("type".to_string(), "task".to_string());
+        mem3.metadata.insert("priority".to_string(), "high".to_string());
+        let mem3_id = mem3.id.clone();
+
+        // Store memories
+        planner.storage.store_memory(&mem1).unwrap();
+        planner.storage.store_memory(&mem2).unwrap();
+        planner.storage.store_memory(&mem3).unwrap();
+
+        // Create score map
+        let mut scores = HashMap::new();
+        scores.insert(mem1_id.clone(), 0.9);
+        scores.insert(mem2_id.clone(), 0.8);
+        scores.insert(mem3_id.clone(), 0.7);
+
+        // Filter by type=event AND priority=high
+        let filters = vec![
+            MetadataFilter::eq("type", "event"),
+            MetadataFilter::eq("priority", "high"),
+        ];
+        planner.filter_by_metadata(&mut scores, &filters).unwrap();
+
+        // Should only contain mem1 (only event with high priority)
+        assert_eq!(scores.len(), 1);
+        assert!(scores.contains_key(&mem1_id));
+    }
+
+    #[test]
+    fn test_filter_by_metadata_comparison_operators() {
+        let (planner, _dir) = create_test_planner();
+
+        // Create memories with numeric priority values
+        let mut mem1 = Memory::new("Priority 8".to_string(), vec![0.1; 384]);
+        mem1.metadata.insert("priority".to_string(), "8".to_string());
+        let mem1_id = mem1.id.clone();
+
+        let mut mem2 = Memory::new("Priority 5".to_string(), vec![0.2; 384]);
+        mem2.metadata.insert("priority".to_string(), "5".to_string());
+        let mem2_id = mem2.id.clone();
+
+        let mut mem3 = Memory::new("Priority 3".to_string(), vec![0.3; 384]);
+        mem3.metadata.insert("priority".to_string(), "3".to_string());
+        let mem3_id = mem3.id.clone();
+
+        // Store memories
+        planner.storage.store_memory(&mem1).unwrap();
+        planner.storage.store_memory(&mem2).unwrap();
+        planner.storage.store_memory(&mem3).unwrap();
+
+        // Create score map
+        let mut scores = HashMap::new();
+        scores.insert(mem1_id.clone(), 0.9);
+        scores.insert(mem2_id.clone(), 0.8);
+        scores.insert(mem3_id.clone(), 0.7);
+
+        // Filter by priority >= "5"
+        let filters = vec![MetadataFilter::gte("priority", "5")];
+        planner.filter_by_metadata(&mut scores, &filters).unwrap();
+
+        // Should contain mem1 and mem2 (priority 8 and 5)
+        assert_eq!(scores.len(), 2);
+        assert!(scores.contains_key(&mem1_id));
+        assert!(scores.contains_key(&mem2_id));
+        assert!(!scores.contains_key(&mem3_id));
+    }
+
+    #[test]
+    fn test_filter_by_metadata_in_operator() {
+        let (planner, _dir) = create_test_planner();
+
+        // Create memories with different categories
+        let mut mem1 = Memory::new("Food memory".to_string(), vec![0.1; 384]);
+        mem1.metadata.insert("category".to_string(), "food".to_string());
+        let mem1_id = mem1.id.clone();
+
+        let mut mem2 = Memory::new("Travel memory".to_string(), vec![0.2; 384]);
+        mem2.metadata.insert("category".to_string(), "travel".to_string());
+        let mem2_id = mem2.id.clone();
+
+        let mut mem3 = Memory::new("Work memory".to_string(), vec![0.3; 384]);
+        mem3.metadata.insert("category".to_string(), "work".to_string());
+        let mem3_id = mem3.id.clone();
+
+        // Store memories
+        planner.storage.store_memory(&mem1).unwrap();
+        planner.storage.store_memory(&mem2).unwrap();
+        planner.storage.store_memory(&mem3).unwrap();
+
+        // Create score map
+        let mut scores = HashMap::new();
+        scores.insert(mem1_id.clone(), 0.9);
+        scores.insert(mem2_id.clone(), 0.8);
+        scores.insert(mem3_id.clone(), 0.7);
+
+        // Filter by category IN ["food", "travel"]
+        let filters = vec![MetadataFilter::in_list(
+            "category",
+            vec!["food".to_string(), "travel".to_string()],
+        )];
+        planner.filter_by_metadata(&mut scores, &filters).unwrap();
+
+        // Should contain mem1 and mem2
+        assert_eq!(scores.len(), 2);
+        assert!(scores.contains_key(&mem1_id));
+        assert!(scores.contains_key(&mem2_id));
+        assert!(!scores.contains_key(&mem3_id));
+    }
+
+    #[test]
+    fn test_memory_matches_filters() {
+        // Test exact match
+        let mut memory = Memory::new("Test".to_string(), vec![0.1; 384]);
+        memory.metadata.insert("type".to_string(), "event".to_string());
+
+        let filters = vec![MetadataFilter::eq("type", "event")];
+        assert!(QueryPlanner::memory_matches_filters(&memory, &filters));
+
+        let filters = vec![MetadataFilter::eq("type", "task")];
+        assert!(!QueryPlanner::memory_matches_filters(&memory, &filters));
+
+        // Test missing field
+        let filters = vec![MetadataFilter::eq("priority", "high")];
+        assert!(!QueryPlanner::memory_matches_filters(&memory, &filters));
+
+        // Test multiple filters (AND logic)
+        memory.metadata.insert("priority".to_string(), "high".to_string());
+        let filters = vec![
+            MetadataFilter::eq("type", "event"),
+            MetadataFilter::eq("priority", "high"),
+        ];
+        assert!(QueryPlanner::memory_matches_filters(&memory, &filters));
+
+        let filters = vec![
+            MetadataFilter::eq("type", "event"),
+            MetadataFilter::eq("priority", "low"),
+        ];
+        assert!(!QueryPlanner::memory_matches_filters(&memory, &filters));
     }
 }

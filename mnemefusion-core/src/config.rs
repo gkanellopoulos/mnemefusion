@@ -32,6 +32,11 @@ pub struct Config {
     /// HNSW ef_search parameter
     /// Higher values = better recall, slower search
     pub hnsw_ef_search: usize,
+
+    /// Metadata fields to index for efficient filtering
+    /// These fields will have dedicated indexes for fast lookup
+    /// Example: vec!["type".to_string(), "category".to_string(), "priority".to_string()]
+    pub indexed_metadata: Vec<String>,
 }
 
 impl Default for Config {
@@ -45,6 +50,7 @@ impl Default for Config {
             hnsw_m: 16,
             hnsw_ef_construction: 128,
             hnsw_ef_search: 64,
+            indexed_metadata: Vec::new(), // No indexed fields by default
         }
     }
 }
@@ -84,6 +90,18 @@ impl Config {
         self.hnsw_m = m;
         self.hnsw_ef_construction = ef_construction;
         self.hnsw_ef_search = ef_search;
+        self
+    }
+
+    /// Set metadata fields to index for efficient filtering
+    pub fn with_indexed_metadata(mut self, fields: Vec<String>) -> Self {
+        self.indexed_metadata = fields;
+        self
+    }
+
+    /// Add a metadata field to the indexed set
+    pub fn add_indexed_field(mut self, field: impl Into<String>) -> Self {
+        self.indexed_metadata.push(field.into());
         self
     }
 
@@ -164,5 +182,27 @@ mod tests {
         let mut bad_config = Config::default();
         bad_config.causal_min_confidence = 1.5;
         assert!(bad_config.validate().is_err());
+    }
+
+    #[test]
+    fn test_indexed_metadata_config() {
+        // Default should have no indexed fields
+        let config = Config::default();
+        assert!(config.indexed_metadata.is_empty());
+
+        // Test with_indexed_metadata
+        let config = Config::new()
+            .with_indexed_metadata(vec!["type".to_string(), "category".to_string()]);
+        assert_eq!(config.indexed_metadata.len(), 2);
+        assert!(config.indexed_metadata.contains(&"type".to_string()));
+        assert!(config.indexed_metadata.contains(&"category".to_string()));
+
+        // Test add_indexed_field
+        let config = Config::new()
+            .add_indexed_field("type")
+            .add_indexed_field("priority");
+        assert_eq!(config.indexed_metadata.len(), 2);
+        assert!(config.indexed_metadata.contains(&"type".to_string()));
+        assert!(config.indexed_metadata.contains(&"priority".to_string()));
     }
 }

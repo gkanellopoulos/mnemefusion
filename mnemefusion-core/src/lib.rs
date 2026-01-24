@@ -62,6 +62,7 @@ pub use query::{
     IntentWeights, QueryIntent, QueryPlanner,
 };
 pub use types::{
-    AddResult, BatchError, BatchResult, Entity, EntityId, Memory, MemoryId, MemoryInput,
-    NAMESPACE_METADATA_KEY, Source, SourceType, Timestamp, UpsertResult, SOURCE_METADATA_KEY,
+    AddResult, BatchError, BatchResult, Entity, EntityId, FilterOp, Memory, MemoryId,
+    MemoryInput, MetadataFilter, NAMESPACE_METADATA_KEY, Source, SourceType, Timestamp,
+    UpsertResult, SOURCE_METADATA_KEY,
 };
