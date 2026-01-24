@@ -26,7 +26,11 @@ hex = "0.4"
 tempfile = "3.10"
 criterion = "0.5"
 
-# Benchmarks will be added in Sprint 10
-# [[bench]]
-# name = "benchmarks"
-# harness = false
+# Sprint 14: Performance benchmarks
+[[bench]]
+name = "core_operations"
+harness = false
+
+[[bench]]
+name = "profiling"
+harness = false
