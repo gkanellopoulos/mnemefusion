@@ -4,10 +4,7 @@
 //! Entities are named concepts (people, organizations, projects) that
 //! appear across multiple memories.
 
-use crate::{
-    types::{Entity, EntityId, MemoryId},
-    Result,
-};
+use crate::types::{EntityId, MemoryId};
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use serde::{Deserialize, Serialize};

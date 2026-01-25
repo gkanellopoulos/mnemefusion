@@ -14,8 +14,6 @@
 mod test_utils;
 
 // Re-export test utilities for use in test modules
-#[cfg(test)]
-pub use test_utils::*;
 
 #[cfg(test)]
 mod temporal_tests;

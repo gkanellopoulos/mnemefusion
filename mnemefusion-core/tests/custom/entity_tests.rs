@@ -1420,7 +1420,7 @@ fn test_entity_mixed_010_real_world_scenario() {
 
 #[test]
 fn test_entity_edge_001_empty_entity_name() {
-    let mut ctx = TestContext::new(Config::default());
+    let ctx = TestContext::new(Config::default());
 
     // Query with empty entity name
     let memories = ctx.engine.get_entity_memories("").unwrap();

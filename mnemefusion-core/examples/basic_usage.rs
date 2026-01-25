@@ -91,7 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // In a real application, you'd embed the query with the same model
     // For this example, we use a query vector similar to our second memory (team meeting)
     let query_embedding = vec![0.1; 384]; // Similar to idx=1 memory
-    let results = engine.search(&query_embedding, 3, None)?;
+    let results = engine.search(&query_embedding, 3, None, None)?;
 
     println!("  Found {} results:", results.len());
     for (idx, (memory, similarity)) in results.iter().enumerate() {
@@ -105,7 +105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Temporal queries
     println!("\nQuerying most recent memories...");
-    let recent = engine.get_recent(3)?;
+    let recent = engine.get_recent(3, None)?;
     println!("  3 most recent memories:");
     for (idx, (memory, timestamp)) in recent.iter().enumerate() {
         println!(
@@ -121,7 +121,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let now = Timestamp::now();
     let one_hour_ago = now.subtract_days(0); // For demo, just use now as the range
     println!("\nQuerying memories from the last session...");
-    let range_results = engine.get_range(one_hour_ago.subtract_days(1), now, 10)?;
+    let range_results = engine.get_range(one_hour_ago.subtract_days(1), now, 10, None)?;
     println!("  Found {} memories in time range", range_results.len());
 
     // Causal relationships

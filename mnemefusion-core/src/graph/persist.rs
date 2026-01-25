@@ -165,7 +165,7 @@ mod tests {
         let path = dir.path().join("test.mfdb");
 
         let storage = Arc::new(StorageEngine::open(&path).unwrap());
-        let mut graph = GraphManager::new();
+        let graph = GraphManager::new();
 
         // Save empty graph
         save_graph(&graph, &storage).unwrap();

@@ -372,6 +372,7 @@ impl GraphManager {
     }
 
     /// Get a mutable reference to the entity graph (for persistence)
+    #[allow(dead_code)]
     pub(super) fn entity_graph_mut(&mut self) -> &mut EntityGraph {
         &mut self.entity_graph
     }

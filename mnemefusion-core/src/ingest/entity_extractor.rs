@@ -3,7 +3,7 @@
 //! Provides simple entity extraction based on capitalized words.
 //! More sophisticated NER can be added in Phase 2.
 
-use crate::{Entity, Result};
+use crate::Result;
 use std::collections::HashSet;
 
 /// Trait for entity extraction strategies

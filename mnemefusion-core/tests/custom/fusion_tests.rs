@@ -4,7 +4,7 @@
 //! Total: 10 test cases
 
 use super::test_utils::*;
-use mnemefusion_core::{Config, MemoryEngine, QueryIntent};
+use mnemefusion_core::{Config, QueryIntent};
 use std::collections::HashMap;
 
 // Helper to get timestamp N days ago
