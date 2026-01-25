@@ -52,19 +52,40 @@ impl IntentClassifier {
     pub fn new() -> Self {
         Self {
             temporal_patterns: vec![
-                // Time references
-                Regex::new(r"(?i)\b(yesterday|today|tomorrow|last\s+week|next\s+week)\b").unwrap(),
-                Regex::new(r"(?i)\b(recent|latest|newest|oldest|earlier)\b").unwrap(),
+                // Basic time references
+                Regex::new(r"(?i)\b(yesterday|today|tomorrow)\b").unwrap(),
+                Regex::new(r"(?i)\b(recent|recently|latest|newest|oldest|earlier)\b").unwrap(),
                 Regex::new(r"(?i)\b(when|since|until|before|after)\b").unwrap(),
-                Regex::new(r"(?i)\b(on\s+\w+\s+\d+|in\s+(january|february|march|april|may|june|july|august|september|october|november|december))\b").unwrap(),
-                Regex::new(r"(?i)\b(\d+\s+(days?|weeks?|months?|years?)\s+ago)\b").unwrap(),
+
+                // Week/month/year references
+                Regex::new(r"(?i)\b(last\s+week|next\s+week|this\s+week)\b").unwrap(),
+                Regex::new(r"(?i)\b(last\s+month|next\s+month|this\s+month)\b").unwrap(),
+                Regex::new(r"(?i)\b(last\s+year|next\s+year|this\s+year)\b").unwrap(),
+
+                // Month names
+                Regex::new(r"(?i)\b(january|february|march|april|may|june|july|august|september|october|november|december)\b").unwrap(),
+
+                // Weekday names
+                Regex::new(r"(?i)\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b").unwrap(),
+
+                // Time of day
+                Regex::new(r"(?i)\b(this\s+morning|this\s+afternoon|this\s+evening|tonight)\b").unwrap(),
+                Regex::new(r"(?i)\b(last\s+night|earlier\s+today)\b").unwrap(),
+
+                // Relative time (X units ago)
+                Regex::new(r"(?i)\b(\d+\s+(hours?|days?|weeks?|months?|years?)\s+ago)\b").unwrap(),
+
+                // Past/future ranges
+                Regex::new(r"(?i)\b(past\s+(few|couple|several))\b").unwrap(),
+
+                // Query patterns
                 Regex::new(r"(?i)^(show|list|get)\s+(recent|latest|newest)").unwrap(),
             ],
             causal_patterns: vec![
                 // Causal keywords
                 Regex::new(r"(?i)\b(why|because|cause[ds]?|reason|led\s+to|result\s+in)\b").unwrap(),
                 Regex::new(r"(?i)\b(what\s+caused|what\s+led\s+to|what.*resulted\s+in)\b").unwrap(),
-                Regex::new(r"(?i)\b(consequence|impact|effect|outcome)\b").unwrap(),
+                Regex::new(r"(?i)\b(consequences?|impacts?|effects?|outcomes?)\b").unwrap(),
                 Regex::new(r"(?i)^why\s+").unwrap(),
             ],
             entity_patterns: vec![

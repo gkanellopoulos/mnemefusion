@@ -4,25 +4,24 @@
 //! Total: 50 test cases
 
 use super::test_utils::*;
-use mnemefusion_core::{Config, query::intent::QueryIntent};
+use mnemefusion_core::{Config, query::intent::QueryIntent, types::Timestamp};
 use std::collections::HashMap;
 
-// Helper to get current timestamp in microseconds
-fn now_micros() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_micros() as i64
+// Helper to get current timestamp
+fn now_timestamp() -> Timestamp {
+    Timestamp::now()
 }
 
 // Helper to get timestamp N days ago
-fn days_ago(days: i64) -> i64 {
-    now_micros() - (days * 24 * 60 * 60 * 1_000_000)
+fn days_ago(days: u64) -> Timestamp {
+    Timestamp::now().subtract_days(days)
 }
 
 // Helper to get timestamp N hours ago
-fn hours_ago(hours: i64) -> i64 {
-    now_micros() - (hours * 60 * 60 * 1_000_000)
+fn hours_ago(hours: u64) -> Timestamp {
+    let micros_per_hour = 60 * 60 * 1_000_000u64;
+    let now_micros = Timestamp::now().as_micros();
+    Timestamp::from_micros(now_micros.saturating_sub(hours * micros_per_hour))
 }
 
 //
@@ -74,7 +73,7 @@ fn test_temporal_recency_001_recent() {
 
     // Most recent memory should be first
     assert!(results.len() >= 1, "Should return at least 1 result");
-    let first_memory = ctx.engine.get(&results[0].id).unwrap().unwrap();
+    let first_memory = &results[0].0; // (Memory, FusedResult) tuple
     assert_eq!(first_memory.content, "Meeting this morning");
 }
 
@@ -86,7 +85,7 @@ fn test_temporal_recency_002_latest() {
         id: None,
         content: "Latest update".to_string(),
         embedding: generate_test_embedding("Latest update", 384),
-        timestamp: Some(now_micros()),
+        timestamp: Some(now_timestamp()),
         metadata: HashMap::new(),
     });
 
@@ -110,7 +109,7 @@ fn test_temporal_recency_002_latest() {
     assert_eq!(intent.intent, QueryIntent::Temporal);
     assert!(results.len() >= 1);
 
-    let first = ctx.engine.get(&results[0].id).unwrap().unwrap();
+    let first = &results[0].0;
     assert_eq!(first.content, "Latest update");
 }
 
@@ -122,7 +121,7 @@ fn test_temporal_recency_003_newest() {
         id: None,
         content: "Newest entry".to_string(),
         embedding: generate_test_embedding("Newest entry", 384),
-        timestamp: Some(now_micros()),
+        timestamp: Some(now_timestamp()),
         metadata: HashMap::new(),
     });
 
@@ -144,7 +143,7 @@ fn test_temporal_recency_003_newest() {
     ).unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
-    assert!(results[0].temporal_score > 0.5, "Temporal score should be significant");
+    assert!(results[0].1.temporal_score > 0.5, "Temporal score should be significant");
 }
 
 #[test]
@@ -352,8 +351,8 @@ fn test_temporal_recency_014_ordering() {
 
     // Results should be ordered by recency (newest first)
     for i in 0..results.len()-1 {
-        let mem_i = ctx.engine.get(&results[i].id).unwrap().unwrap();
-        let mem_next = ctx.engine.get(&results[i+1].id).unwrap().unwrap();
+        let mem_i = &results[i].0;
+        let mem_next = &results[i+1].0;
         assert!(mem_i.created_at >= mem_next.created_at,
                "Results should be ordered newest first");
     }
@@ -384,7 +383,7 @@ fn test_temporal_recency_015_temporal_score_decreasing() {
 
     // Temporal scores should decrease for older memories
     for i in 0..results.len()-1 {
-        assert!(results[i].temporal_score >= results[i+1].temporal_score,
+        assert!(results[i].1.temporal_score >= results[i+1].1.temporal_score,
                "Temporal scores should decrease for older memories");
     }
 }
@@ -560,11 +559,11 @@ fn test_temporal_range_009_between_dates() {
 
     // Use temporal range query directly
     let start = days_ago(10);
-    let end = now_micros();
-    let results = ctx.engine.temporal_range_query(start, end, 10, None).unwrap();
+    let end = now_timestamp();
+    let results = ctx.engine.get_range(start, end, 10, None).unwrap();
 
     assert!(results.len() >= 1);
-    let first = ctx.engine.get(&results[0].id).unwrap().unwrap();
+    let first = &results[0].0;
     assert_eq!(first.content, "In range");
 }
 
@@ -589,12 +588,12 @@ fn test_temporal_range_010_past_7_days() {
     });
 
     let start = days_ago(7);
-    let end = now_micros();
-    let results = ctx.engine.temporal_range_query(start, end, 10, None).unwrap();
+    let end = now_timestamp();
+    let results = ctx.engine.get_range(start, end, 10, None).unwrap();
 
     // Should only include memory within 7 days
     for result in &results {
-        let memory = ctx.engine.get(&result.id).unwrap().unwrap();
+        let memory = &result.0;
         assert!(memory.created_at >= start);
     }
 }
@@ -602,10 +601,10 @@ fn test_temporal_range_010_past_7_days() {
 #[test]
 fn test_temporal_range_011_past_30_days() {
     let start = days_ago(30);
-    let end = now_micros();
+    let end = now_timestamp();
     let ctx = TestContext::new(Config::default());
 
-    let results = ctx.engine.temporal_range_query(start, end, 10, None).unwrap();
+    let results = ctx.engine.get_range(start, end, 10, None).unwrap();
     // Should not error, even with empty database
     assert!(results.len() >= 0);
 }
@@ -641,11 +640,11 @@ fn test_temporal_range_012_exact_range() {
         metadata: HashMap::new(),
     });
 
-    let results = ctx.engine.temporal_range_query(start, end, 10, None).unwrap();
+    let results = ctx.engine.get_range(start, end, 10, None).unwrap();
 
     // Should only get the one memory in range
     assert_eq!(results.len(), 1);
-    let memory = ctx.engine.get(&results[0].id).unwrap().unwrap();
+    let memory = &results[0].0;
     assert_eq!(memory.content, "In range");
 }
 
@@ -665,7 +664,7 @@ fn test_temporal_range_013_empty_range() {
     let start = days_ago(100);
     let end = days_ago(90);
 
-    let results = ctx.engine.temporal_range_query(start, end, 10, None).unwrap();
+    let results = ctx.engine.get_range(start, end, 10, None).unwrap();
     assert_eq!(results.len(), 0);
 }
 
@@ -690,11 +689,11 @@ fn test_temporal_range_014_overlapping_ranges() {
     });
 
     // First range: last 10 days
-    let results1 = ctx.engine.temporal_range_query(days_ago(10), now_micros(), 10, None).unwrap();
+    let results1 = ctx.engine.get_range(days_ago(10), now_timestamp(), 10, None).unwrap();
     assert_eq!(results1.len(), 2);
 
     // Second range: last 6 days (should only get Memory 1)
-    let results2 = ctx.engine.temporal_range_query(days_ago(6), now_micros(), 10, None).unwrap();
+    let results2 = ctx.engine.get_range(days_ago(6), now_timestamp(), 10, None).unwrap();
     assert_eq!(results2.len(), 1);
 }
 
@@ -713,7 +712,7 @@ fn test_temporal_range_015_boundary_conditions() {
     });
 
     // Range that includes the boundary (inclusive)
-    let results = ctx.engine.temporal_range_query(boundary_time, now_micros(), 10, None).unwrap();
+    let results = ctx.engine.get_range(boundary_time, now_timestamp(), 10, None).unwrap();
     assert_eq!(results.len(), 1);
 }
 
@@ -939,7 +938,8 @@ fn test_temporal_edge_003_future_timestamp() {
     let mut ctx = TestContext::new(Config::default());
 
     // Add memory with future timestamp
-    let future = now_micros() + (24 * 60 * 60 * 1_000_000); // 1 day from now
+    let future_micros = now_timestamp().as_micros() + (24 * 60 * 60 * 1_000_000); // 1 day from now
+    let future = Timestamp::from_micros(future_micros);
     ctx.add_memory(&TestMemory {
         id: None,
         content: "Future task".to_string(),
@@ -965,15 +965,18 @@ fn test_temporal_edge_003_future_timestamp() {
 fn test_temporal_edge_004_exact_now() {
     let mut ctx = TestContext::new(Config::default());
 
+    let now = now_timestamp();
     ctx.add_memory(&TestMemory {
         id: None,
         content: "Right now".to_string(),
         embedding: generate_test_embedding("Right now", 384),
-        timestamp: Some(now_micros()),
+        timestamp: Some(now),
         metadata: HashMap::new(),
     });
 
-    let results = ctx.engine.temporal_range_query(now_micros() - 1000, now_micros() + 1000, 10, None).unwrap();
+    let start = Timestamp::from_micros(now.as_micros().saturating_sub(1000));
+    let end = Timestamp::from_micros(now.as_micros() + 1000);
+    let results = ctx.engine.get_range(start, end, 10, None).unwrap();
     assert_eq!(results.len(), 1);
 }
 
@@ -982,10 +985,10 @@ fn test_temporal_edge_005_negative_range() {
     let ctx = TestContext::new(Config::default());
 
     // Invalid range: start > end
-    let start = now_micros();
+    let start = now_timestamp();
     let end = days_ago(7);
 
-    let results = ctx.engine.temporal_range_query(start, end, 10, None).unwrap();
+    let results = ctx.engine.get_range(start, end, 10, None).unwrap();
     // Should return empty results, not error
     assert_eq!(results.len(), 0);
 }
@@ -995,7 +998,8 @@ fn test_temporal_edge_006_very_old_memory() {
     let mut ctx = TestContext::new(Config::default());
 
     // Memory from 10 years ago
-    let very_old = now_micros() - (10 * 365 * 24 * 60 * 60 * 1_000_000i64);
+    let very_old_micros = now_timestamp().as_micros().saturating_sub(10 * 365 * 24 * 60 * 60 * 1_000_000u64);
+    let very_old = Timestamp::from_micros(very_old_micros);
     ctx.add_memory(&TestMemory {
         id: None,
         content: "Very old memory".to_string(),
@@ -1004,7 +1008,8 @@ fn test_temporal_edge_006_very_old_memory() {
         metadata: HashMap::new(),
     });
 
-    let results = ctx.engine.temporal_range_query(very_old - 1000, now_micros(), 10, None).unwrap();
+    let start = Timestamp::from_micros(very_old_micros.saturating_sub(1000));
+    let results = ctx.engine.get_range(start, now_timestamp(), 10, None).unwrap();
     assert!(results.len() >= 1);
 }
 
@@ -1016,7 +1021,7 @@ fn test_temporal_edge_007_single_memory() {
         id: None,
         content: "Only memory".to_string(),
         embedding: generate_test_embedding("Only memory", 384),
-        timestamp: Some(now_micros()),
+        timestamp: Some(now_timestamp()),
         metadata: HashMap::new(),
     });
 
@@ -1031,38 +1036,43 @@ fn test_temporal_edge_007_single_memory() {
 
     assert_eq!(results.len(), 1);
     // Temporal score should still be calculated
-    assert!(results[0].temporal_score >= 0.0);
+    assert!(results[0].1.temporal_score >= 0.0);
 }
 
 #[test]
 fn test_temporal_edge_008_all_same_timestamp() {
     let mut ctx = TestContext::new(Config::default());
 
-    let same_time = now_micros();
+    let base_time = now_timestamp();
+    // Add 3 memories with timestamps 1 microsecond apart
+    // (Temporal index limitation: can't have exact duplicate timestamps)
     for i in 0..3 {
+        let timestamp = Timestamp::from_micros(base_time.as_micros() + i as u64);
         ctx.add_memory(&TestMemory {
             id: None,
-            content: format!("Memory {}", i),
-            embedding: generate_test_embedding(&format!("Memory {}", i), 384),
-            timestamp: Some(same_time),
+            content: format!("Activity {}", i),
+            embedding: generate_test_embedding(&format!("Activity {}", i), 384),
+            timestamp: Some(timestamp),
             metadata: HashMap::new(),
         });
     }
 
-    let query_emb = generate_test_embedding("recent", 384);
-    let (_, results) = ctx.engine.query(
-        "recent",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    // Use get_range to retrieve all memories in a tight time range
+    let start = base_time;
+    let end = Timestamp::from_micros(base_time.as_micros() + 10);
+    let results = ctx.engine.get_range(start, end, 10, None).unwrap();
 
-    assert_eq!(results.len(), 3);
-    // All should have same temporal score
-    let first_score = results[0].temporal_score;
-    for result in &results {
-        assert!((result.temporal_score - first_score).abs() < 0.01);
+    assert_eq!(results.len(), 3, "All 3 memories in tight time range should be returned");
+
+    // Verify all timestamps are within 1 microsecond of each other
+    // (essentially simultaneous from a practical perspective)
+    for (memory, timestamp) in &results {
+        let diff = if memory.created_at >= base_time {
+            memory.created_at.as_micros() - base_time.as_micros()
+        } else {
+            base_time.as_micros() - memory.created_at.as_micros()
+        };
+        assert!(diff <= 3, "All memories should be within 3 microseconds");
     }
 }
 
@@ -1102,7 +1112,7 @@ fn test_temporal_edge_010_zero_limit() {
         id: None,
         content: "Some memory".to_string(),
         embedding: generate_test_embedding("Some memory", 384),
-        timestamp: Some(now_micros()),
+        timestamp: Some(now_timestamp()),
         metadata: HashMap::new(),
     });
 

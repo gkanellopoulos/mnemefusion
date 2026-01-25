@@ -3,9 +3,8 @@
 //! Provides helpers for setting up test databases, running queries,
 //! and asserting expected results for temporal, causal, entity, and intent tests.
 
-use mnemefusion_core::{Config, MemoryEngine, types::MemoryId, query::intent::QueryIntent};
+use mnemefusion_core::{Config, MemoryEngine, types::{MemoryId, Timestamp}, query::intent::QueryIntent};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use tempfile::TempDir;
 
 /// Test case setup configuration
@@ -22,7 +21,7 @@ pub struct TestMemory {
     pub id: Option<String>,
     pub content: String,
     pub embedding: Vec<f32>,
-    pub timestamp: Option<i64>,
+    pub timestamp: Option<Timestamp>,
     pub metadata: HashMap<String, String>,
 }
 
@@ -32,6 +31,7 @@ pub struct CausalLink {
     pub from_content: String,
     pub to_content: String,
     pub confidence: f32,
+    pub evidence: String,
 }
 
 /// Test expectations
@@ -89,8 +89,8 @@ impl TestContext {
             memory.embedding.clone(),
             if memory.metadata.is_empty() { None } else { Some(memory.metadata.clone()) },
             memory.timestamp,
+            None, // source
             None, // namespace
-            None, // causes
         ).expect("Failed to add memory");
 
         self.content_to_id.insert(memory.content.clone(), id.clone());
@@ -104,7 +104,7 @@ impl TestContext {
         let to_id = self.content_to_id.get(&link.to_content)
             .expect(&format!("Memory not found: {}", link.to_content));
 
-        self.engine.add_causal_link(from_id, to_id, link.confidence)
+        self.engine.add_causal_link(from_id, to_id, link.confidence, link.evidence.clone())
             .expect("Failed to add causal link");
     }
 
@@ -256,8 +256,8 @@ pub fn assert_fusion_weights(
 /// Assert that results are within a time range
 pub fn assert_results_in_timerange(
     result_ids: &[MemoryId],
-    start: i64,
-    end: i64,
+    start: Timestamp,
+    end: Timestamp,
     engine: &MemoryEngine,
     test_name: &str,
 ) {
@@ -265,11 +265,11 @@ pub fn assert_results_in_timerange(
         let memory = engine.get(id).expect("Failed to get memory")
             .expect("Memory not found");
 
-        let timestamp = memory.created_at;
+        // created_at is already a Timestamp
         assert!(
-            timestamp >= start && timestamp <= end,
+            memory.created_at >= start && memory.created_at <= end,
             "{}: Memory timestamp {} not in range [{}, {}]",
-            test_name, timestamp, start, end
+            test_name, memory.created_at, start, end
         );
     }
 }
