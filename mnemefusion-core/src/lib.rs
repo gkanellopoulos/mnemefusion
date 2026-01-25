@@ -20,6 +20,8 @@
 //!     embedding,
 //!     None,
 //!     None,
+//!     None,
+//!     None,
 //! ).unwrap();
 //!
 //! // Retrieve a memory
