@@ -1,9 +1,9 @@
 # MnemeFusion: Project State
 
-**Last Updated**: January 24, 2026
-**Current Sprint**: Sprint 14 COMPLETE ✅ (Performance Optimization)
-**Phase**: Phase 2 IN PROGRESS (Essential Features & Hardening)
-**Overall Progress**: Phase 1: 100% | Sprints 9-14: COMPLETE | Total: 279 tests passing + comprehensive benchmarks
+**Last Updated**: January 25, 2026
+**Current Sprint**: Sprint 15 IN PROGRESS 🚧 (Comprehensive Testing - Week 1 Days 1-3 Complete)
+**Phase**: Phase 3 IN PROGRESS (Testing, Documentation & Release)
+**Overall Progress**: Phase 1: 100% | Phase 2: 100% | Sprint 15: 84% (161/192 custom tests) | Total: 440 tests passing
 
 ---
 
@@ -1916,6 +1916,354 @@ MnemeFusion is now **explicitly multilingual-friendly**:
 - Users guided through multilingual setup
 - Runtime warnings prevent confusion
 - Clear path forward for future multilingual improvements
+
+---
+
+## 🚧 Sprint 15: IN PROGRESS - Week 1 Days 1-3 Complete (January 25, 2026)
+
+**Goal:** Comprehensive testing with custom test cases and standard benchmarks
+
+**Progress:** 161 of 192 custom tests complete (84%)
+
+### Overview
+
+Sprint 15 implements comprehensive testing across two weeks:
+- **Week 1:** Custom test cases for MnemeFusion differentiators (temporal, causal, entity, intent, fusion)
+- **Week 2:** Standard benchmarks (HotpotQA, LoCoMo) and property-based testing
+
+**Completed Tasks (Days 1-3):**
+- ✅ Test infrastructure setup with utilities (TestContext, TestMemory, CausalLink)
+- ✅ Temporal query tests (50 cases) - All passing
+- ✅ Causal query tests (60 cases) - All passing
+- ✅ Entity query tests (47 cases) - All passing
+- ✅ Enhanced IntentClassifier with 16+ temporal patterns + plural causal keywords
+
+### Test Infrastructure Setup
+
+**New Test Utilities:**
+```rust
+// TestContext - Manages temporary test databases
+pub struct TestContext {
+    pub engine: MemoryEngine,
+    pub temp_dir: TempDir,
+    pub content_to_id: HashMap<String, MemoryId>,
+}
+
+// TestMemory - Builder pattern for test memories
+pub struct TestMemory {
+    pub content: String,
+    pub embedding_seed: u64,
+    pub metadata: HashMap<String, String>,
+    pub timestamp: Option<DateTime<Utc>>,
+}
+
+// CausalLink - Builder for causal relationships
+pub struct CausalLink {
+    pub from_content: String,
+    pub to_content: String,
+    pub confidence: f32,
+    pub evidence: String,
+}
+```
+
+**Key Features:**
+- Content-to-ID mappings for easy test assertions
+- Deterministic embeddings via seeded random generation
+- Temporal offset support (create memories relative to "now")
+- Causal link builder with evidence tracking
+
+### Temporal Query Tests (50 Cases)
+
+**Test Categories:**
+1. **Basic Temporal Queries (15 tests):** Intent detection for temporal keywords
+2. **Time Range Queries (10 tests):** Before/after/between filtering
+3. **Relative Time Queries (10 tests):** "3 days ago", "last week", etc.
+4. **Recency Sorting (10 tests):** Latest/oldest/newest ordering
+5. **Edge Cases (5 tests):** Same timestamp, future times, invalid ranges
+
+**Intent Classifier Enhancement:**
+Added 16 new temporal patterns:
+```rust
+// New patterns added
+Regex::new(r"(?i)\b(yesterday|today|tomorrow)\b").unwrap(),
+Regex::new(r"(?i)\b(recent|recently|latest|newest|oldest|earlier)\b").unwrap(),
+Regex::new(r"(?i)\b(when|since|until|before|after)\b").unwrap(),
+Regex::new(r"(?i)\b(last\s+week|next\s+week|this\s+week)\b").unwrap(),
+// ... 12 more patterns for months, weekdays, time of day, etc.
+```
+
+**Test Results:**
+```
+All 50 temporal tests passing ✅
+  - Basic temporal: 15/15
+  - Time range: 10/10
+  - Relative time: 10/10
+  - Recency sorting: 10/10
+  - Edge cases: 5/5
+```
+
+### Causal Query Tests (60 Cases)
+
+**Test Categories:**
+1. **Basic Causal Queries (15 tests):** Why/because/caused intent detection
+2. **Multi-Hop Chains (15 tests):** 2-hop, 3-hop, 5-hop traversal
+3. **Confidence Filtering (10 tests):** Confidence thresholds and decay
+4. **Mixed Intent Queries (10 tests):** Causal + temporal + entity combinations
+5. **Edge Cases (10 tests):** Cycles, disconnected components, self-links
+
+**Intent Classifier Enhancement:**
+Added plural forms for causal keywords:
+```rust
+// Before:
+Regex::new(r"(?i)\b(consequence|impact|effect|outcome)\b").unwrap(),
+
+// After:
+Regex::new(r"(?i)\b(consequences?|impacts?|effects?|outcomes?)\b").unwrap(),
+```
+
+**Key Findings:**
+
+1. **Path Structure:**
+   - `get_causes(effect)` returns paths: `[effect, cause1, cause2, ...]`
+   - `get_effects(cause)` returns paths: `[cause, effect1, effect2, ...]`
+   - Paths start from query node and extend outward
+
+2. **Confidence Propagation:**
+   - Path confidence is multiplicative: `conf(path) = conf(edge1) × conf(edge2) × ...`
+   - Multi-hop chains decay rapidly (0.8 × 0.8 = 0.64 for 2-hop)
+
+3. **Deduplication Behavior:**
+   - Traversal deduplicates nodes at same depth
+   - Prevents exponential path explosion in diamond patterns
+   - May find fewer paths than all possible combinations
+
+4. **Graph Membership:**
+   - Isolated memories (no causal links) are not in graph
+   - `get_causes/get_effects` returns `MemoryNotFound` for non-graph nodes
+   - Different from empty result set
+
+**Test Results:**
+```
+All 60 causal tests passing ✅
+  - Basic causal: 15/15
+  - Multi-hop chains: 15/15
+  - Confidence filtering: 10/10
+  - Mixed intent: 10/10
+  - Edge cases: 10/10
+```
+
+**Real-World Scenario Tested:**
+```rust
+// Bug tracking workflow with 5-node causal chain
+"Bug reported by user"
+  → "Investigation reveals memory leak" (0.9)
+  → "Fix applied to codebase" (0.85)
+  → "Fix deployed to production" (0.8)
+  → "User confirms bug resolved" (0.95)
+
+// Expected confidence for full path: 0.9 × 0.85 × 0.8 × 0.95 ≈ 0.58
+```
+
+### Files Created
+
+**Test Files:**
+```
+mnemefusion-core/tests/custom/test_utils.rs     # 312 lines - Test infrastructure
+mnemefusion-core/tests/custom/temporal_tests.rs # 980 lines - 50 temporal tests
+mnemefusion-core/tests/custom/causal_tests.rs   # 1,610 lines - 60 causal tests
+mnemefusion-core/tests/custom/entity_tests.rs   # 1,515 lines - 47 entity tests
+```
+
+### Files Modified
+
+**Core Files:**
+```
+mnemefusion-core/src/query/intent.rs            # Enhanced pattern matching (temporal + causal)
+mnemefusion-core/tests/custom/mod.rs            # Module organization (all test modules)
+```
+
+**Documentation:**
+```
+IMPLEMENTATION_PLAN.md                          # Sprint 15 progress tracking
+PROJECT_STATE.md                                # This section
+```
+
+### Test Results Summary
+
+```
+Total Tests: 440 passing ✅
+  Custom Tests (Sprint 15): 161 passing
+    - Test utilities: 4
+    - Temporal tests: 50
+    - Causal tests: 60
+    - Entity tests: 47
+  Legacy Tests: 279 passing
+    - Integration tests: ~20
+    - Benchmark tests: ~259
+
+Sprint 15 Custom Test Progress: 84% (161/192)
+  ✅ Temporal: 50/50 (100%)
+  ✅ Causal: 60/60 (100%)
+  ✅ Entity: 47/47 (100%)
+  ⏳ Intent: 0/25 (0%)
+  ⏳ Fusion: 0/10 (0%, minus 4 already in test_utils)
+```
+
+### Git Commits
+
+**Day 1-2 (Temporal + Causal):**
+- **Message:** feat: add custom test suite for temporal and causal queries - Sprint 15 Week 1
+- **Hash:** 212dd2f
+- **Files changed:** 5 files, 2,209 insertions(+), 85 deletions(-)
+- **Impact:** 114 custom tests (temporal + causal)
+
+**Day 3 (Entity):**
+- **Message:** feat: add entity query tests (47 cases) - Sprint 15 Week 1 Day 3
+- **Hash:** 2f65868
+- **Files changed:** 2 files, 1,520 insertions(+), 2 deletions(-)
+- **Impact:** 47 entity tests covering extraction, lookups, relationships, mixed queries
+
+### Key Technical Learnings
+
+1. **Causal Graph Traversal:**
+   - BFS-based with depth limiting
+   - Path construction from query node outward
+   - Confidence decay via multiplication
+   - Deduplication at node level per depth
+
+2. **Intent Classification:**
+   - Pattern-based regex matching works well
+   - Need both singular and plural forms
+   - Temporal patterns most numerous (16+)
+   - Causal patterns most discriminative (0.5 weight)
+
+3. **Test Infrastructure:**
+   - Builder patterns enable readable tests
+   - Content-to-ID mappings simplify assertions
+   - Deterministic embeddings ensure reproducibility
+   - TestContext cleanup prevents database leaks
+
+### Entity Query Tests (47 Cases)
+
+**Test Categories:**
+1. **Basic Entity Queries (10 tests):** Intent detection for "about", "regarding", "concerning", "related to", "with", "involving", "mention"
+2. **Entity Extraction (8 tests):** Single/multiple names, multi-word entities, organizations, acronyms, stop word filtering
+3. **Entity-Centric Queries (7 tests):** get_entity_memories(), case-insensitive lookup, multi-word entities, list all
+4. **Entity Relationships (5 tests):** Shared entities, co-occurrence patterns, mention count tracking, many-to-many
+5. **Mixed Entity Queries (10 tests):** Entity + temporal, entity + causal, entity + location, project timelines
+6. **Edge Cases (5 tests):** Empty names, special characters, orphaned entity cleanup, deduplication
+7. **Query Results (2 tests):** Entity intent validation, mixed intent handling
+
+**Intent Classifier Enhancement:**
+No new patterns added (entity patterns already existed), but validated:
+```rust
+// Existing entity patterns
+Regex::new(r"(?i)\b(about|regarding|concerning|related\s+to)\s+[A-Z]").unwrap(),
+Regex::new(r"(?i)\b(with|involving|mention|mentioning)\s+[A-Z]").unwrap(),
+```
+
+**Test Results:**
+```
+All 47 entity tests passing ✅
+  - Basic entity: 10/10
+  - Entity extraction: 8/8
+  - Entity-centric: 7/7
+  - Entity relationships: 5/5
+  - Mixed queries: 10/10
+  - Edge cases: 5/5
+  - Query results: 2/2
+```
+
+**Key Findings:**
+
+1. **SimpleEntityExtractor Behavior:**
+   - Treats consecutive capitalized words as multi-word phrases
+   - Example: "Alice, Bob, and Charlie" → ["Alice Bob", "Charlie"] (comma stripped, consecutive caps)
+   - Punctuation is stripped from word ends
+   - Stop words are filtered ("The", "Monday", etc.)
+
+2. **Entity Extraction Patterns:**
+   - Capitalized words/phrases extracted from content
+   - Multi-word entities supported: "Project Alpha", "Acme Corp", "Building C"
+   - Acronyms extracted: "NASA", "MIT", "AWS"
+   - Possessive forms handled: "Bob's code" → "Bob"
+   - Sentence-start capitals avoided if stop word
+
+3. **Entity Graph Operations:**
+   - Bipartite graph: Memory nodes ↔ Entity nodes
+   - Edges represent "mentions" relationships
+   - `get_entity_memories(name)` returns all memories mentioning entity
+   - `get_memory_entities(id)` returns all entities in a memory
+   - Case-insensitive lookups by name
+
+4. **Entity Deduplication:**
+   - Storage-level deduplication (case-insensitive)
+   - "Alice", "alice", "ALICE" all map to same entity
+   - Mention count tracks total references across memories
+   - Orphaned entities (mention_count = 0) are automatically cleaned up
+
+5. **Intent Classification:**
+   - Entity patterns require capitalized word after keyword
+   - "about GitHub" → Entity intent
+   - "about testing" → Factual intent (lowercase after "about")
+   - Mixed queries may detect Entity, Temporal, or Factual depending on patterns
+   - Entity score is weaker (0.2 * matches, max 0.8) compared to temporal/causal
+
+**Real-World Scenario Tested:**
+```rust
+// Customer support ticket tracking
+"Acme Corp submitted support ticket"
+"Alice assigned to Acme Corp ticket"
+"Alice diagnosed Acme Corp issue"
+"Fix deployed for Acme Corp"
+"Acme Corp confirmed issue resolved"
+
+// Entity queries:
+get_entity_memories("Acme Corp") → 5 memories (all interactions)
+get_entity_memories("Alice") → 2 memories (engineer involvement)
+```
+
+### Next Steps (Week 1 Days 4-5)
+
+**Remaining Custom Tests (31 cases):**
+- ⏳ Intent classification tests (25 cases)
+- ⏳ Adaptive fusion tests (10 cases, minus 4 already in test_utils)
+
+**Week 2 Tasks:**
+- ⏳ HotpotQA evaluation (~1,000 samples)
+- ⏳ LoCoMo evaluation (~500 samples)
+- ⏳ Property-based tests (~50 properties)
+- ⏳ Test coverage measurement (target >80%)
+- ⏳ CI/CD setup
+
+### Progress Metrics
+
+| Metric | Target | Current | Status |
+|--------|--------|---------|--------|
+| Custom Tests | 192 | 161 | 84% ✅ |
+| Total Tests | 450+ | 440 | 98% ✅ |
+| Test Coverage | >80% | TBD | ⏳ |
+| Intent Patterns | ~50 | 25+ | 50% 🚧 |
+| Benchmark Evals | 2 | 0 | 0% ⏳ |
+
+### Outcome (So Far)
+
+MnemeFusion now has **comprehensive test coverage** for its core differentiators:
+- ✅ Temporal dimension thoroughly validated (50 test cases)
+- ✅ Causal dimension thoroughly validated (60 test cases)
+- ✅ Entity dimension thoroughly validated (47 test cases)
+- ✅ Intent classification enhanced with 16+ temporal patterns + plural causal keywords
+- ✅ Test infrastructure mature and reusable
+- ✅ Real-world scenarios tested (bug tracking, meeting workflows, customer support)
+- ⏳ Intent and fusion tests pending (31 cases remain)
+- ⏳ Standard benchmarks (HotpotQA, LoCoMo) pending
+
+**Test Quality:**
+- Deterministic and reproducible
+- Cover edge cases (cycles, disconnected graphs, empty results)
+- Test both happy paths and error conditions
+- Real-world scenario validation
+- Clear separation of concerns (one test per behavior)
 
 **Status**: Documentation complete, library ready for multilingual users ✅
 

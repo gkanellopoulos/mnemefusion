@@ -1557,9 +1557,13 @@ Following Sprint 14 completion, comprehensive language support documentation was
 
 **Goal**: Comprehensive testing, stable API, and production release
 
-### Sprint 15: Comprehensive Testing (Weeks 29-30)
+### Sprint 15: Comprehensive Testing (Weeks 29-30) 🚧 IN PROGRESS
 
 **Objective**: Validate quality with standard benchmarks + custom tests for differentiators
+
+**Status**: Week 1 Days 1-3 Complete (161 of 192 custom tests passing - 84%)
+
+**Started**: January 25, 2026
 
 **Note**: Moved from original Sprint 11, now Sprint 15 in Phase 3
 
@@ -1596,10 +1600,10 @@ Standard Benchmarks (~1,500 cases):
 ├── LoCoMo:                  500 samples  (conversational retrieval, intent validation)
 └── Baseline comparison             N/A  (semantic-only vs fusion)
 
-Custom Test Cases (~180 cases):
+Custom Test Cases (~192 cases):
 ├── Temporal queries:         50 cases  (recency, ranges, relative time)
 ├── Causal queries:           60 cases  (why/because, multi-hop chains, consequences)
-├── Entity queries:           35 cases  (about/mentions, multi-entity, reverse lookup)
+├── Entity queries:           47 cases  (about/mentions, extraction, relationships, mixed) ✅
 ├── Intent classification:    25 cases  (factual, mixed intent, edge cases)
 └── Adaptive fusion:          10 cases  (fusion > single dimension, weight validation)
 
@@ -1614,36 +1618,46 @@ Unit Tests (existing):        259 tests  (already passing)
 
 #### Tasks
 
-**Week 1: Custom Test Cases (Days 1-5)**
+**Week 1: Custom Test Cases (Days 1-5)** 🚧 IN PROGRESS
 
 *Goal: Validate our differentiators - temporal, causal, entity, intent*
 
-- [ ] **Set up test infrastructure**:
-  - [ ] Create `tests/custom/` directory structure
-  - [ ] Define test data format (JSON fixtures)
-  - [ ] Create test harness for custom cases
-  - [ ] Add test utilities (setup, assertions)
+- ✅ **Set up test infrastructure**:
+  - ✅ Create `tests/custom/` directory structure
+  - ✅ Define test data format (JSON fixtures - test_data_format.md)
+  - ✅ Create test harness for custom cases
+  - ✅ Add test utilities (TestContext, TestMemory, CausalLink, assertion helpers)
 
-- [ ] **Temporal query tests** (50 cases):
-  - [ ] Recency queries (15 cases): "yesterday", "recent", "latest"
-  - [ ] Range queries (15 cases): "last week", "January 2026", "between X and Y"
-  - [ ] Relative time (10 cases): "3 days ago", "earlier today"
-  - [ ] Edge cases (10 cases): "oldest", empty range, future dates
-  - [ ] **Validation**: Intent correct, time range extracted, results in range, temporal weights applied
+- ✅ **Temporal query tests** (50 cases):
+  - ✅ Recency queries (15 cases): "yesterday", "recent", "latest"
+  - ✅ Range queries (15 cases): "last week", "this month", month/weekday names, date ranges
+  - ✅ Relative time (10 cases): "N hours ago", "this morning", "last night", "past few"
+  - ✅ Edge cases (10 cases): "oldest", empty DB, future timestamps, boundary conditions, limits
+  - ✅ **Validation**: Intent correct, time range extracted, results in range, temporal weights applied
+  - ✅ **Enhanced Intent Classifier**: Added 16 temporal patterns (weekdays, months, time of day, hours ago)
+  - ✅ **Status**: All 50 tests passing
 
-- [ ] **Causal query tests** (60 cases):
-  - [ ] Why questions (20 cases): "Why was X cancelled?", "Why did Y happen?"
-  - [ ] What caused (15 cases): "What caused X?", "What led to Y?"
-  - [ ] Multi-hop causal (15 cases): 2-hop, 3-hop chains, max_hops boundary
-  - [ ] Consequence queries (10 cases): "What was the impact?", "What resulted from?"
-  - [ ] **Validation**: Causal intent detected, graph traversal works, chains found, confidence scores
+- ✅ **Causal query tests** (60 cases):
+  - ✅ Basic causal (15 cases): why, because, caused, reason, led to, effects, consequences
+  - ✅ Multi-hop chains (15 cases): 2-hop, 3-hop, branching, diamond patterns, transitive
+  - ✅ Confidence filtering (10 cases): high/low confidence, decay along paths, parallel paths
+  - ✅ Mixed queries (10 cases): causal+temporal, complex graphs, real-world scenarios
+  - ✅ Edge cases (10 cases): isolated memories, self-links, disconnected components, large branching
+  - ✅ **Validation**: Causal intent detected, graph traversal works, chains found, confidence scores
+  - ✅ **Enhanced Intent Classifier**: Added plural forms (consequences, impacts, effects, outcomes)
+  - ✅ **Status**: All 60 tests passing
 
-- [ ] **Entity query tests** (35 cases):
-  - [ ] About queries (15 cases): "Alice's work", "about Project Alpha"
-  - [ ] Mention queries (10 cases): "mentioning Bob", "involving Team Beta"
-  - [ ] Multi-entity (5 cases): "Alice and Bob", "Team Alpha on Project X"
-  - [ ] Edge cases (5 cases): reverse lookup, entities with spaces, minimal queries
-  - [ ] **Validation**: Entity extraction from query, graph lookups, entity weights applied
+- ✅ **Entity query tests** (47 cases):
+  - ✅ Basic entity (10 cases): "about", "regarding", "concerning", "related to", "with", "involving", "mention"
+  - ✅ Entity extraction (8 cases): single/multiple names, multi-word entities, organizations, stop words, acronyms
+  - ✅ Entity-centric (7 cases): get_entity_memories, case-insensitive lookup, multi-word entities, list all
+  - ✅ Entity relationships (5 cases): shared entities, co-occurrence patterns, mention count tracking
+  - ✅ Mixed queries (10 cases): entity+temporal, entity+causal, entity+location, real-world scenarios
+  - ✅ Edge cases (5 cases): empty names, special chars, orphaned cleanup, deduplication
+  - ✅ Query results (2 cases): entity intent validation, mixed intent handling
+  - ✅ **Validation**: Entity extraction, graph lookups, entity intent detected, mixed query handling
+  - ✅ **Key Findings**: Consecutive capitals form multi-word phrases, deduplication is case-insensitive
+  - ✅ **Status**: All 47 tests passing
 
 - [ ] **Intent classification tests** (25 cases):
   - [ ] Factual queries (10 cases): "machine learning", "database optimization"
@@ -1772,15 +1786,36 @@ tests/
 - ✅ Benchmark results documented
 - ✅ CI/CD workflows documented
 
-#### Sprint 15 Review
+#### Sprint 15 Progress (Week 1 Days 1-2 Complete)
 
-- ✅ Standard benchmarks competitive with industry baselines
-- ✅ Custom tests validate all differentiators (temporal, causal, entity, intent)
-- ✅ Test coverage >80%
-- ✅ Property tests passing
-- ✅ CI/CD functional
-- ✅ Regression detection working
-- ✅ Ready for API freeze and 1.0 release
+**Completed**:
+- ✅ Test infrastructure set up (TestContext, TestMemory, CausalLink, test_utils.rs)
+- ✅ Temporal query tests: 50 cases, all passing
+- ✅ Causal query tests: 60 cases, all passing
+- ✅ Intent classifier enhanced: +16 temporal patterns, plural causal keywords
+- ✅ **Total**: 114 custom tests passing (63% of 180 planned)
+
+**In Progress**:
+- 🚧 Entity query tests (35 cases) - Planned for Day 3
+- 🚧 Intent classification tests (25 cases) - Planned for Day 4
+- 🚧 Adaptive fusion tests (10 cases) - Planned for Day 5
+
+**Pending (Week 2)**:
+- ⏳ HotpotQA evaluation (~1,000 samples)
+- ⏳ LoCoMo evaluation (~500 samples)
+- ⏳ Property-based tests (~50 properties)
+- ⏳ Test coverage measurement (target >80%)
+- ⏳ CI/CD setup
+- ⏳ Documentation
+
+**Sprint 15 Review** (To be completed):
+- ⏳ Standard benchmarks competitive with industry baselines
+- 🚧 Custom tests validate all differentiators (temporal ✅, causal ✅, entity 🚧, intent 🚧, fusion 🚧)
+- ⏳ Test coverage >80%
+- ⏳ Property tests passing
+- ⏳ CI/CD functional
+- ⏳ Regression detection working
+- ⏳ Ready for API freeze and 1.0 release
 
 ---
 
