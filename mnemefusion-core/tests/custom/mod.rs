@@ -26,10 +26,10 @@ mod causal_tests;
 #[cfg(test)]
 mod entity_tests;
 
+#[cfg(test)]
+mod intent_tests;
+
 // TODO: Uncomment as we implement each test module
-//
-// #[cfg(test)]
-// mod intent_tests;
 //
 // #[cfg(test)]
 // mod fusion_tests;
