@@ -2,6 +2,10 @@
 //!
 //! Classifies natural language queries into different intents to optimize
 //! retrieval strategy across dimensions (semantic, temporal, causal, entity).
+//!
+//! **Language Support**: Intent classification currently uses English-only patterns.
+//! For non-English queries, the classifier will default to `Factual` intent,
+//! which results in pure semantic search (still functional, just suboptimal fusion weights).
 
 use regex::Regex;
 use std::collections::HashMap;
@@ -42,6 +46,9 @@ pub struct IntentClassifier {
 
 impl IntentClassifier {
     /// Create a new intent classifier with default patterns
+    ///
+    /// **Language Note**: Uses English-only patterns for temporal, causal, and entity queries.
+    /// Non-English queries will default to `Factual` intent (pure semantic search).
     pub fn new() -> Self {
         Self {
             temporal_patterns: vec![

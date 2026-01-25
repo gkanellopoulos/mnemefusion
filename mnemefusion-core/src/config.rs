@@ -16,6 +16,12 @@ pub struct Config {
     pub causal_max_hops: usize,
 
     /// Enable automatic entity extraction
+    ///
+    /// **Language Note**: Entity extraction currently uses English-only stop words
+    /// and capitalization rules. For non-English content, consider disabling this
+    /// feature and using your own NER pipeline or relying on semantic search.
+    ///
+    /// See documentation for multilingual usage examples.
     pub entity_extraction_enabled: bool,
 
     /// Minimum confidence threshold for causal links (0.0 to 1.0)
@@ -80,6 +86,22 @@ impl Config {
     }
 
     /// Enable or disable entity extraction
+    ///
+    /// **Language Note**: Entity extraction currently supports English only.
+    /// If you're working with non-English content, set this to `false` and
+    /// use multilingual embeddings for semantic search.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mnemefusion_core::Config;
+    ///
+    /// // For English content (default)
+    /// let config = Config::new().with_entity_extraction(true);
+    ///
+    /// // For non-English content
+    /// let config = Config::new().with_entity_extraction(false);
+    /// ```
     pub fn with_entity_extraction(mut self, enabled: bool) -> Self {
         self.entity_extraction_enabled = enabled;
         self
@@ -108,7 +130,17 @@ impl Config {
     /// Validate the configuration
     ///
     /// Returns detailed errors if the configuration is invalid.
+    ///
+    /// **Note**: Also prints warnings to stderr for suboptimal configurations
+    /// (e.g., entity extraction enabled for potentially non-English content).
     pub fn validate(&self) -> Result<(), crate::Error> {
+        // Print warning for entity extraction (English-only feature)
+        if self.entity_extraction_enabled {
+            eprintln!("Warning: Entity extraction is enabled. This feature currently supports English only.");
+            eprintln!("         For non-English content, consider disabling with .with_entity_extraction(false)");
+            eprintln!("         See documentation for multilingual usage: https://github.com/gkanellopoulos/mnemefusion");
+        }
+
         if self.embedding_dim == 0 {
             return Err(crate::Error::Configuration(
                 "embedding_dim must be greater than 0. Common values: 384 (MiniLM), 768 (BERT), 1536 (OpenAI)".to_string(),
@@ -296,5 +328,25 @@ mod tests {
         config.temporal_decay_hours = 0.0;
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("Recommended"));
+    }
+
+    #[test]
+    fn test_entity_extraction_warning() {
+        // Entity extraction enabled should validate successfully but print warning
+        let config = Config::default();
+        assert!(config.entity_extraction_enabled); // Default is true
+
+        // Should not error, just warn to stderr
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_entity_extraction_disabled_no_warning() {
+        // Disabling entity extraction should validate without warnings
+        let config = Config::new().with_entity_extraction(false);
+        assert!(!config.entity_extraction_enabled);
+
+        // Should validate successfully
+        assert!(config.validate().is_ok());
     }
 }

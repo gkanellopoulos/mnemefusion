@@ -38,6 +38,7 @@ Phase 1 achievements:
 - **Zero Dependencies**: Embedded library, no servers to deploy
 - **Rust Core**: Memory-safe, high-performance implementation
 - **Python Bindings**: First-class Python API with PyO3 ✅
+- **Multilingual Core**: Vector search works with any language (see [Language Support](#language-support))
 
 ## Quick Start
 
@@ -246,6 +247,100 @@ let config = Config::new()
 
 let engine = MemoryEngine::open("./brain.mfdb", config)?;
 ```
+
+## Language Support
+
+### Core Functionality: Language-Agnostic ✅
+
+MnemeFusion's **core semantic search works with any language** using multilingual embeddings:
+
+| Feature | Language Support | Notes |
+|---------|------------------|-------|
+| **Vector search** | ✅ All languages | Use multilingual embedding models |
+| **Temporal indexing** | ✅ All languages | Timestamp-based, no text processing |
+| **Causal links** | ✅ All languages | Explicit relationship tracking |
+| **Metadata filtering** | ✅ All languages | Key-value based |
+| **Namespaces** | ✅ All languages | UTF-8 string support |
+| **Deduplication** | ✅ All languages | Vector similarity based |
+| **Batch operations** | ✅ All languages | - |
+
+### Optional Features: English-Optimized ⚠️
+
+Two optional features are currently English-only:
+
+| Feature | Language | Impact if Disabled/Non-English |
+|---------|----------|-------------------------------|
+| **Entity extraction** | English only | Can be disabled. Use your own NER pipeline or rely on semantic search. |
+| **Intent classification** | English only | Falls back to semantic search (factual intent). Query still works, just with suboptimal fusion weights. |
+
+### Multilingual Usage Example
+
+```python
+import mnemefusion
+from sentence_transformers import SentenceTransformer
+
+# Use a multilingual embedding model
+model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
+
+# Configure for multilingual use
+config = mnemefusion.Config()
+config.entity_extraction_enabled = False  # Disable English-only extraction
+
+memory = mnemefusion.Memory("brain.mfdb", config)
+
+# Add Chinese memory
+chinese_text = "我今天学习了机器学习"
+embedding = model.encode(chinese_text)
+memory.add(chinese_text, embedding.tolist())
+
+# Search in Chinese - works perfectly!
+query = "机器学习"
+query_embedding = model.encode(query)
+results = memory.search(query_embedding.tolist(), top_k=10)
+```
+
+### Recommended Multilingual Embedding Models
+
+- **sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2** (50+ languages, 384-dim)
+- **intfloat/multilingual-e5-base** (100+ languages, 768-dim)
+- **intfloat/multilingual-e5-large** (100+ languages, 1024-dim)
+- **OpenAI text-embedding-3-small** (100+ languages, 1536-dim, API-based)
+- **OpenAI text-embedding-3-large** (100+ languages, 3072-dim, API-based)
+
+### What Works Across All Languages
+
+Even without entity extraction and intent classification:
+
+✅ **Semantic search** - Find similar memories by meaning
+✅ **Temporal queries** - Search by time range
+✅ **Causal relationships** - Track cause-effect (via explicit API)
+✅ **Metadata filtering** - Filter by custom fields
+✅ **Deduplication** - Detect similar memories
+✅ **Batch operations** - Efficient bulk inserts
+
+### Configuration Warning
+
+If you're using non-English content, we recommend:
+
+```rust
+let config = Config::new()
+    .with_entity_extraction(false)  // Disable for non-English
+    .with_embedding_dim(768);        // Match your multilingual model
+
+let engine = MemoryEngine::open("./brain.mfdb", config)?;
+```
+
+**Note**: The config validation will warn you if entity extraction is enabled, reminding you it's English-only.
+
+### Future Improvements
+
+Multilingual support for entity extraction and intent classification is planned for a future release. These features use a **trait-based design** to enable pluggable language-specific implementations:
+
+- Pluggable `EntityExtractor` trait (language-specific NER)
+- Pluggable `IntentClassifier` trait (language-specific patterns)
+- Language configuration option
+
+See [GitHub Issues](https://github.com/gkanellopoulos/mnemefusion/issues) for tracking and contribution opportunities.
 
 ## File Format
 
