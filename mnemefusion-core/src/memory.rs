@@ -223,7 +223,7 @@ impl MemoryEngine {
     /// ```no_run
     /// # use mnemefusion_core::{MemoryEngine, Config};
     /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
-    /// # let id = engine.add("test".to_string(), vec![0.1; 384], None, None, None).unwrap();
+    /// # let id = engine.add("test".to_string(), vec![0.1; 384], None, None, None, None).unwrap();
     /// let memory = engine.get(&id).unwrap();
     /// if let Some(mem) = memory {
     ///     println!("Content: {}", mem.content);
@@ -903,8 +903,8 @@ impl MemoryEngine {
     /// ```no_run
     /// # use mnemefusion_core::{MemoryEngine, Config};
     /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
-    /// # let id1 = engine.add("Cause".to_string(), vec![0.1; 384], None, None, None).unwrap();
-    /// # let id2 = engine.add("Effect".to_string(), vec![0.2; 384], None, None, None).unwrap();
+    /// # let id1 = engine.add("Cause".to_string(), vec![0.1; 384], None, None, None, None).unwrap();
+    /// # let id2 = engine.add("Effect".to_string(), vec![0.2; 384], None, None, None, None).unwrap();
     /// engine.add_causal_link(&id1, &id2, 0.9, "id1 caused id2".to_string()).unwrap();
     /// ```
     pub fn add_causal_link(
@@ -948,7 +948,7 @@ impl MemoryEngine {
     /// ```no_run
     /// # use mnemefusion_core::{MemoryEngine, Config};
     /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
-    /// # let id = engine.add("Memory".to_string(), vec![0.1; 384], None, None, None).unwrap();
+    /// # let id = engine.add("Memory".to_string(), vec![0.1; 384], None, None, None, None).unwrap();
     /// let causes = engine.get_causes(&id, 3).unwrap();
     /// for path in causes.paths {
     ///     println!("Found causal path with {} steps (confidence: {})",
@@ -982,7 +982,7 @@ impl MemoryEngine {
     /// ```no_run
     /// # use mnemefusion_core::{MemoryEngine, Config};
     /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
-    /// # let id = engine.add("Memory".to_string(), vec![0.1; 384], None, None, None).unwrap();
+    /// # let id = engine.add("Memory".to_string(), vec![0.1; 384], None, None, None, None).unwrap();
     /// let effects = engine.get_effects(&id, 3).unwrap();
     /// for path in effects.paths {
     ///     println!("Found effect chain with {} steps (confidence: {})",
@@ -1138,7 +1138,7 @@ impl MemoryEngine {
     /// ```no_run
     /// # use mnemefusion_core::{MemoryEngine, Config};
     /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
-    /// # let id = engine.add("Alice met Bob".to_string(), vec![0.1; 384], None, None, None).unwrap();
+    /// # let id = engine.add("Alice met Bob".to_string(), vec![0.1; 384], None, None, None, None).unwrap();
     /// let entities = engine.get_memory_entities(&id).unwrap();
     /// for entity in entities {
     ///     println!("Entity: {}", entity.name);
