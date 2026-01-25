@@ -632,7 +632,7 @@ impl MemoryEngine {
     /// # use mnemefusion_core::{MemoryEngine, Config};
     /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
     /// # let query_embedding = vec![0.1; 384];
-    /// let results = engine.search(&query_embedding, 10, None).unwrap();
+    /// let results = engine.search(&query_embedding, 10, None, None).unwrap();
     /// for (memory, score) in results {
     ///     println!("Similarity: {:.3} - {}", score, memory.content);
     /// }
@@ -727,6 +727,7 @@ impl MemoryEngine {
     ///     "Why was the meeting cancelled?",
     ///     &query_embedding,
     ///     10,
+    ///     None,
     ///     None
     /// ).unwrap();
     ///
@@ -902,8 +903,8 @@ impl MemoryEngine {
     /// ```no_run
     /// # use mnemefusion_core::{MemoryEngine, Config};
     /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
-    /// # let id1 = engine.add("Cause".to_string(), vec![0.1; 384], None, None).unwrap();
-    /// # let id2 = engine.add("Effect".to_string(), vec![0.2; 384], None, None).unwrap();
+    /// # let id1 = engine.add("Cause".to_string(), vec![0.1; 384], None, None, None).unwrap();
+    /// # let id2 = engine.add("Effect".to_string(), vec![0.2; 384], None, None, None).unwrap();
     /// engine.add_causal_link(&id1, &id2, 0.9, "id1 caused id2".to_string()).unwrap();
     /// ```
     pub fn add_causal_link(
@@ -947,7 +948,7 @@ impl MemoryEngine {
     /// ```no_run
     /// # use mnemefusion_core::{MemoryEngine, Config};
     /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
-    /// # let id = engine.add("Memory".to_string(), vec![0.1; 384], None, None).unwrap();
+    /// # let id = engine.add("Memory".to_string(), vec![0.1; 384], None, None, None).unwrap();
     /// let causes = engine.get_causes(&id, 3).unwrap();
     /// for path in causes.paths {
     ///     println!("Found causal path with {} steps (confidence: {})",
@@ -981,7 +982,7 @@ impl MemoryEngine {
     /// ```no_run
     /// # use mnemefusion_core::{MemoryEngine, Config};
     /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
-    /// # let id = engine.add("Memory".to_string(), vec![0.1; 384], None, None).unwrap();
+    /// # let id = engine.add("Memory".to_string(), vec![0.1; 384], None, None, None).unwrap();
     /// let effects = engine.get_effects(&id, 3).unwrap();
     /// for path in effects.paths {
     ///     println!("Found effect chain with {} steps (confidence: {})",
@@ -1137,7 +1138,7 @@ impl MemoryEngine {
     /// ```no_run
     /// # use mnemefusion_core::{MemoryEngine, Config};
     /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
-    /// # let id = engine.add("Alice met Bob".to_string(), vec![0.1; 384], None, None).unwrap();
+    /// # let id = engine.add("Alice met Bob".to_string(), vec![0.1; 384], None, None, None).unwrap();
     /// let entities = engine.get_memory_entities(&id).unwrap();
     /// for entity in entities {
     ///     println!("Entity: {}", entity.name);
@@ -1202,7 +1203,7 @@ impl MemoryEngine {
     ///
     /// // All operations automatically use the namespace
     /// let id = user_memory.add("User note".to_string(), vec![0.1; 384], None, None, None).unwrap();
-    /// let results = user_memory.search(&vec![0.1; 384], 10).unwrap();
+    /// let results = user_memory.search(&vec![0.1; 384], 10, None).unwrap();
     /// let count = user_memory.count().unwrap();
     /// user_memory.delete_all().unwrap();
     /// ```
@@ -1272,7 +1273,7 @@ impl MemoryEngine {
 /// ).unwrap();
 ///
 /// // Search within namespace
-/// let results = user_memory.search(&vec![0.1; 384], 10).unwrap();
+/// let results = user_memory.search(&vec![0.1; 384], 10, None).unwrap();
 ///
 /// // Count memories in namespace
 /// println!("User has {} memories", user_memory.count().unwrap());
