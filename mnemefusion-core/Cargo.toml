@@ -25,6 +25,7 @@ hex = "0.4"
 [dev-dependencies]
 tempfile = "3.10"
 criterion = "0.5"
+proptest = "1.4"
 
 # Sprint 14: Performance benchmarks
 [[bench]]
