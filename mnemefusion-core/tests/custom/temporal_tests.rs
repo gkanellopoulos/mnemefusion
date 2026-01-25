@@ -599,8 +599,8 @@ fn test_temporal_range_011_past_30_days() {
     let ctx = TestContext::new(Config::default());
 
     let results = ctx.engine.get_range(start, end, 10, None).unwrap();
-    // Should not error, even with empty database
-    assert!(results.len() >= 0);
+    // Should not error, even with empty database (results may be empty)
+    assert!(results.len() == 0); // Empty database
 }
 
 #[test]

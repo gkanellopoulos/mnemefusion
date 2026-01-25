@@ -75,11 +75,6 @@ impl MemoryId {
             .map_err(|e| Error::InvalidMemoryId(e.to_string()))
     }
 
-    /// Convert to string representation
-    pub fn to_string(&self) -> String {
-        self.0.to_string()
-    }
-
     /// Create MemoryId from u128 (for testing)
     #[cfg(test)]
     pub fn from_u128(val: u128) -> Self {

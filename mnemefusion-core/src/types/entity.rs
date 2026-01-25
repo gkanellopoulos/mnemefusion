@@ -26,11 +26,6 @@ impl EntityId {
         Ok(Self(uuid))
     }
 
-    /// Convert to string representation
-    pub fn to_string(&self) -> String {
-        self.0.to_string()
-    }
-
     /// Get the inner UUID
     pub fn as_uuid(&self) -> &Uuid {
         &self.0

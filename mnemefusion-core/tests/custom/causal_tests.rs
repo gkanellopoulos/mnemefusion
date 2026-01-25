@@ -1909,8 +1909,7 @@ fn test_causal_edge_002_self_link() {
     let causes = ctx.engine.get_causes(id, 1).unwrap();
 
     // Self-link behavior is implementation-defined
-    // Just verify it doesn't crash
-    assert!(causes.paths.len() >= 0);
+    // Just verify it doesn't crash (function completed without error)
 }
 
 #[test]
