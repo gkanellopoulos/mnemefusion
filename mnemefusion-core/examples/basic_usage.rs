@@ -51,7 +51,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         metadata.insert("example".to_string(), "basic_usage".to_string());
         metadata.insert("index".to_string(), idx.to_string());
 
-        let id = engine.add(content.to_string(), embedding, Some(metadata), None, None, None)?;
+        let id = engine.add(
+            content.to_string(),
+            embedding,
+            Some(metadata),
+            None,
+            None,
+            None,
+        )?;
         println!("  Added: {} (ID: {}...)", content, &id.to_string()[..8]);
         memory_ids.push(id);
     }
@@ -88,7 +95,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("  Found {} results:", results.len());
     for (idx, (memory, similarity)) in results.iter().enumerate() {
-        println!("    {}. [Similarity: {:.3}] {}", idx + 1, similarity, memory.content);
+        println!(
+            "    {}. [Similarity: {:.3}] {}",
+            idx + 1,
+            similarity,
+            memory.content
+        );
     }
 
     // Temporal queries
@@ -175,7 +187,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Query memories by entity
     if !all_entities.is_empty() {
         let example_entity = &all_entities[0];
-        println!("\nQuerying memories that mention '{}'...", example_entity.name);
+        println!(
+            "\nQuerying memories that mention '{}'...",
+            example_entity.name
+        );
         let entity_memories = engine.get_entity_memories(&example_entity.name)?;
         println!("  Found {} memories:", entity_memories.len());
         for (idx, memory) in entity_memories.iter().enumerate() {

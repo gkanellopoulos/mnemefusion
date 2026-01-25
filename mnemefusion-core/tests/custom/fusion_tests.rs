@@ -48,13 +48,16 @@ fn test_fusion_improvement_001_temporal_ranking() {
 
     // Query with temporal intent
     let query_emb = generate_test_embedding("recent project meetings", 384);
-    let (_intent, results) = ctx.engine.query(
-        "What happened in recent project meetings?",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (_intent, results) = ctx
+        .engine
+        .query(
+            "What happened in recent project meetings?",
+            &query_emb,
+            10,
+            None,
+            None,
+        )
+        .unwrap();
 
     // Recent relevant memory should rank higher than old relevant
     // This shows temporal dimension helping
@@ -107,16 +110,23 @@ fn test_fusion_improvement_002_causal_ranking() {
 
     // Causal query
     let query_emb = generate_test_embedding("database timeout why", 384);
-    let (intent, results) = ctx.engine.query(
-        "Why did database timeouts happen?",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, results) = ctx
+        .engine
+        .query(
+            "Why did database timeouts happen?",
+            &query_emb,
+            10,
+            None,
+            None,
+        )
+        .unwrap();
 
     // Should detect causal intent
-    assert_eq!(intent.intent, QueryIntent::Causal, "Should detect causal intent");
+    assert_eq!(
+        intent.intent,
+        QueryIntent::Causal,
+        "Should detect causal intent"
+    );
 
     // Should return results including the causally related memory
     let has_cause = results.iter().any(|(m, _)| m.id == cause);
@@ -151,16 +161,16 @@ fn test_fusion_improvement_003_entity_filtering() {
 
     // Entity query
     let query_emb = generate_test_embedding("code review completed", 384);
-    let (_intent, results) = ctx.engine.query(
-        "Show me Alice's code reviews",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (_intent, results) = ctx
+        .engine
+        .query("Show me Alice's code reviews", &query_emb, 10, None, None)
+        .unwrap();
 
     // Should return results (entity dimension helps filter/rank)
-    assert!(!results.is_empty(), "Should return results for entity query");
+    assert!(
+        !results.is_empty(),
+        "Should return results for entity query"
+    );
 
     // Alice's memory should be present
     let has_alice = results.iter().any(|(m, _)| m.id == alice_memory);
@@ -191,13 +201,16 @@ fn test_fusion_improvement_004_multi_dimensional_boost() {
 
     // Query matching multiple dimensions
     let query_emb = generate_test_embedding("Alice bug fix critical", 384);
-    let (_intent, results) = ctx.engine.query(
-        "What did Alice do recently about the critical bug?",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (_intent, results) = ctx
+        .engine
+        .query(
+            "What did Alice do recently about the critical bug?",
+            &query_emb,
+            10,
+            None,
+            None,
+        )
+        .unwrap();
 
     // Multi-dimensional match should rank higher
     let perfect_pos = results.iter().position(|(m, _)| m.id == perfect);
@@ -234,13 +247,10 @@ fn test_fusion_improvement_005_intent_adaptation() {
 
     // Temporal query should rank recent higher
     let query_emb = generate_test_embedding("generic content", 384);
-    let (_intent, results) = ctx.engine.query(
-        "Show me recent generic content",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (_intent, results) = ctx
+        .engine
+        .query("Show me recent generic content", &query_emb, 10, None, None)
+        .unwrap();
 
     let recent_pos = results.iter().position(|(m, _)| m.id == recent);
     let old_pos = results.iter().position(|(m, _)| m.id == old);
@@ -273,20 +283,20 @@ fn test_fusion_weights_001_temporal_query() {
 
     // Temporal query
     let query_emb = generate_test_embedding("test memory", 384);
-    let (intent, _results) = ctx.engine.query(
-        "What happened yesterday?",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _results) = ctx
+        .engine
+        .query("What happened yesterday?", &query_emb, 10, None, None)
+        .unwrap();
 
     // Should detect temporal intent
     assert_eq!(intent.intent, QueryIntent::Temporal);
 
     // Note: Weights are internal to fusion engine and not exposed directly
     // We validate intent detection as proxy for weight adaptation
-    assert!(intent.confidence > 0.3, "Temporal query should have reasonable confidence");
+    assert!(
+        intent.confidence > 0.3,
+        "Temporal query should have reasonable confidence"
+    );
 }
 
 #[test]
@@ -303,17 +313,17 @@ fn test_fusion_weights_002_causal_query() {
 
     // Causal query
     let query_emb = generate_test_embedding("something happened", 384);
-    let (intent, _results) = ctx.engine.query(
-        "Why did this happen?",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _results) = ctx
+        .engine
+        .query("Why did this happen?", &query_emb, 10, None, None)
+        .unwrap();
 
     // Should detect causal intent
     assert_eq!(intent.intent, QueryIntent::Causal);
-    assert!(intent.confidence >= 0.4, "Causal query should have high confidence");
+    assert!(
+        intent.confidence >= 0.4,
+        "Causal query should have high confidence"
+    );
 }
 
 #[test]
@@ -330,13 +340,10 @@ fn test_fusion_weights_003_entity_query() {
 
     // Entity query
     let query_emb = generate_test_embedding("Alice work", 384);
-    let (intent, _results) = ctx.engine.query(
-        "Tell me about Alice's work",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _results) = ctx
+        .engine
+        .query("Tell me about Alice's work", &query_emb, 10, None, None)
+        .unwrap();
 
     // Should detect entity intent
     assert_eq!(intent.intent, QueryIntent::Entity);
@@ -356,17 +363,23 @@ fn test_fusion_weights_004_factual_default() {
 
     // Factual query (no special keywords)
     let query_emb = generate_test_embedding("machine learning AI", 384);
-    let (intent, results) = ctx.engine.query(
-        "machine learning and artificial intelligence",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, results) = ctx
+        .engine
+        .query(
+            "machine learning and artificial intelligence",
+            &query_emb,
+            10,
+            None,
+            None,
+        )
+        .unwrap();
 
     // Should default to factual
     assert_eq!(intent.intent, QueryIntent::Factual);
-    assert!(!results.is_empty(), "Should return results for factual query");
+    assert!(
+        !results.is_empty(),
+        "Should return results for factual query"
+    );
 }
 
 #[test]
@@ -383,16 +396,23 @@ fn test_fusion_weights_005_mixed_intent_prioritization() {
 
     // Mixed query: temporal + entity + causal
     let query_emb = generate_test_embedding("Alice project yesterday why", 384);
-    let (intent, results) = ctx.engine.query(
-        "Why did Alice work on the project yesterday?",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, results) = ctx
+        .engine
+        .query(
+            "Why did Alice work on the project yesterday?",
+            &query_emb,
+            10,
+            None,
+            None,
+        )
+        .unwrap();
 
     // Causal should dominate (highest weight: 0.5 vs 0.4 temporal, 0.2 entity)
-    assert_eq!(intent.intent, QueryIntent::Causal, "Causal should dominate in mixed queries");
+    assert_eq!(
+        intent.intent,
+        QueryIntent::Causal,
+        "Causal should dominate in mixed queries"
+    );
     assert!(!results.is_empty(), "Should return results");
 
     // Should have secondary intents detected

@@ -43,8 +43,9 @@ impl EntityId {
 
     /// Create from bytes
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let uuid = Uuid::from_slice(bytes)
-            .map_err(|e| crate::Error::InvalidMemoryId(format!("Invalid entity ID bytes: {}", e)))?;
+        let uuid = Uuid::from_slice(bytes).map_err(|e| {
+            crate::Error::InvalidMemoryId(format!("Invalid entity ID bytes: {}", e))
+        })?;
         Ok(Self(uuid))
     }
 }
@@ -219,8 +220,7 @@ mod tests {
 
     #[test]
     fn test_entity_serialization() {
-        let entity = Entity::new("Test Entity")
-            .with_metadata("key", "value");
+        let entity = Entity::new("Test Entity").with_metadata("key", "value");
 
         let json = serde_json::to_string(&entity).unwrap();
         let deserialized: Entity = serde_json::from_str(&json).unwrap();

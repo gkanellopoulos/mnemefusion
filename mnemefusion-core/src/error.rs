@@ -282,7 +282,11 @@ mod tests {
         assert!(Error::MemoryNotFound("id".to_string()).is_recoverable());
         assert!(Error::EntityNotFound("id".to_string()).is_recoverable());
         assert!(Error::InvalidParameter("test".to_string()).is_recoverable());
-        assert!(Error::InvalidEmbeddingDimension { expected: 384, got: 512 }.is_recoverable());
+        assert!(Error::InvalidEmbeddingDimension {
+            expected: 384,
+            got: 512
+        }
+        .is_recoverable());
 
         // Non-recoverable errors
         assert!(!Error::DatabaseCorruption("test".to_string()).is_recoverable());
@@ -310,7 +314,10 @@ mod tests {
     #[test]
     fn test_user_message() {
         // Test dimension error message includes hint
-        let err = Error::InvalidEmbeddingDimension { expected: 384, got: 512 };
+        let err = Error::InvalidEmbeddingDimension {
+            expected: 384,
+            got: 512,
+        };
         let msg = err.user_message();
         assert!(msg.contains("expected 384"));
         assert!(msg.contains("got 512"));

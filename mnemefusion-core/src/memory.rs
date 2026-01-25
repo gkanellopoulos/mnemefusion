@@ -11,7 +11,10 @@ use crate::{
     ingest::IngestionPipeline,
     query::{FusedResult, IntentClassification, QueryPlanner},
     storage::StorageEngine,
-    types::{AddResult, BatchResult, Entity, Memory, MemoryId, MemoryInput, MetadataFilter, Source, Timestamp, UpsertResult},
+    types::{
+        AddResult, BatchResult, Entity, Memory, MemoryId, MemoryInput, MetadataFilter, Source,
+        Timestamp, UpsertResult,
+    },
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -315,7 +318,11 @@ impl MemoryEngine {
     ///     println!("Encountered {} errors", result.errors.len());
     /// }
     /// ```
-    pub fn add_batch(&self, inputs: Vec<MemoryInput>, namespace: Option<&str>) -> Result<BatchResult> {
+    pub fn add_batch(
+        &self,
+        inputs: Vec<MemoryInput>,
+        namespace: Option<&str>,
+    ) -> Result<BatchResult> {
         // Validate all embeddings upfront
         for (index, input) in inputs.iter().enumerate() {
             if input.embedding.len() != self.config.embedding_dim {
@@ -638,7 +645,8 @@ impl MemoryEngine {
         filters: Option<&[MetadataFilter]>,
     ) -> Result<Vec<(Memory, f32)>> {
         // If filtering is needed, fetch more results (5x) and filter
-        let needs_filtering = namespace.is_some() || (filters.is_some() && !filters.unwrap().is_empty());
+        let needs_filtering =
+            namespace.is_some() || (filters.is_some() && !filters.unwrap().is_empty());
         let fetch_k = if needs_filtering { top_k * 5 } else { top_k };
 
         // Search vector index
@@ -736,7 +744,9 @@ impl MemoryEngine {
         filters: Option<&[MetadataFilter]>,
     ) -> Result<(IntentClassification, Vec<(Memory, FusedResult)>)> {
         // Execute query using query planner
-        let (intent, fused_results) = self.query_planner.query(query_text, query_embedding, limit, namespace, filters)?;
+        let (intent, fused_results) =
+            self.query_planner
+                .query(query_text, query_embedding, limit, namespace, filters)?;
 
         // Retrieve full memory records
         let mut results = Vec::with_capacity(fused_results.len());
@@ -786,7 +796,11 @@ impl MemoryEngine {
         namespace: Option<&str>,
     ) -> Result<Vec<(Memory, Timestamp)>> {
         // Fetch more results if filtering by namespace
-        let fetch_limit = if namespace.is_some() { limit * 3 } else { limit };
+        let fetch_limit = if namespace.is_some() {
+            limit * 3
+        } else {
+            limit
+        };
         let temporal_results = self.temporal_index.range_query(start, end, fetch_limit)?;
 
         // Retrieve and filter full memory records
@@ -836,7 +850,11 @@ impl MemoryEngine {
     ///     println!("  {} - {}", timestamp.as_unix_secs(), memory.content);
     /// }
     /// ```
-    pub fn get_recent(&self, n: usize, namespace: Option<&str>) -> Result<Vec<(Memory, Timestamp)>> {
+    pub fn get_recent(
+        &self,
+        n: usize,
+        namespace: Option<&str>,
+    ) -> Result<Vec<(Memory, Timestamp)>> {
         // Fetch more results if filtering by namespace
         let fetch_n = if namespace.is_some() { n * 3 } else { n };
         let temporal_results = self.temporal_index.recent(fetch_n)?;
@@ -936,7 +954,11 @@ impl MemoryEngine {
     ///              path.memories.len(), path.confidence);
     /// }
     /// ```
-    pub fn get_causes(&self, memory_id: &MemoryId, max_hops: usize) -> Result<CausalTraversalResult> {
+    pub fn get_causes(
+        &self,
+        memory_id: &MemoryId,
+        max_hops: usize,
+    ) -> Result<CausalTraversalResult> {
         let graph = self.graph_manager.read().unwrap();
         graph.get_causes(memory_id, max_hops)
     }
@@ -966,7 +988,11 @@ impl MemoryEngine {
     ///              path.memories.len(), path.confidence);
     /// }
     /// ```
-    pub fn get_effects(&self, memory_id: &MemoryId, max_hops: usize) -> Result<CausalTraversalResult> {
+    pub fn get_effects(
+        &self,
+        memory_id: &MemoryId,
+        max_hops: usize,
+    ) -> Result<CausalTraversalResult> {
         let graph = self.graph_manager.read().unwrap();
         graph.get_effects(memory_id, max_hops)
     }
@@ -1283,7 +1309,14 @@ impl<'a> ScopedMemory<'a> {
         timestamp: Option<Timestamp>,
         source: Option<Source>,
     ) -> Result<MemoryId> {
-        self.engine.add(content, embedding, metadata, timestamp, source, Some(&self.namespace))
+        self.engine.add(
+            content,
+            embedding,
+            metadata,
+            timestamp,
+            source,
+            Some(&self.namespace),
+        )
     }
 
     /// Search for memories in this namespace
@@ -1305,7 +1338,8 @@ impl<'a> ScopedMemory<'a> {
         top_k: usize,
         filters: Option<&[MetadataFilter]>,
     ) -> Result<Vec<(Memory, f32)>> {
-        self.engine.search(query_embedding, top_k, Some(&self.namespace), filters)
+        self.engine
+            .search(query_embedding, top_k, Some(&self.namespace), filters)
     }
 
     /// Delete a memory from this namespace
@@ -1368,7 +1402,14 @@ impl<'a> ScopedMemory<'a> {
         timestamp: Option<Timestamp>,
         source: Option<Source>,
     ) -> Result<AddResult> {
-        self.engine.add_with_dedup(content, embedding, metadata, timestamp, source, Some(&self.namespace))
+        self.engine.add_with_dedup(
+            content,
+            embedding,
+            metadata,
+            timestamp,
+            source,
+            Some(&self.namespace),
+        )
     }
 
     /// Upsert a memory in this namespace
@@ -1383,7 +1424,15 @@ impl<'a> ScopedMemory<'a> {
         timestamp: Option<Timestamp>,
         source: Option<Source>,
     ) -> Result<UpsertResult> {
-        self.engine.upsert(key, content, embedding, metadata, timestamp, source, Some(&self.namespace))
+        self.engine.upsert(
+            key,
+            content,
+            embedding,
+            metadata,
+            timestamp,
+            source,
+            Some(&self.namespace),
+        )
     }
 
     /// Count memories in this namespace
@@ -1433,7 +1482,13 @@ impl<'a> ScopedMemory<'a> {
         limit: usize,
         filters: Option<&[MetadataFilter]>,
     ) -> Result<(IntentClassification, Vec<(Memory, FusedResult)>)> {
-        self.engine.query(query_text, query_embedding, limit, Some(&self.namespace), filters)
+        self.engine.query(
+            query_text,
+            query_embedding,
+            limit,
+            Some(&self.namespace),
+            filters,
+        )
     }
 
     /// Get memories in time range within this namespace
@@ -1445,7 +1500,8 @@ impl<'a> ScopedMemory<'a> {
         end: Timestamp,
         limit: usize,
     ) -> Result<Vec<(Memory, Timestamp)>> {
-        self.engine.get_range(start, end, limit, Some(&self.namespace))
+        self.engine
+            .get_range(start, end, limit, Some(&self.namespace))
     }
 
     /// Get recent memories within this namespace
@@ -1496,7 +1552,9 @@ mod tests {
         let content = "Test memory content".to_string();
         let embedding = vec![0.1; 384];
 
-        let id = engine.add(content.clone(), embedding.clone(), None, None, None, None).unwrap();
+        let id = engine
+            .add(content.clone(), embedding.clone(), None, None, None, None)
+            .unwrap();
 
         let memory = engine.get(&id).unwrap();
         assert!(memory.is_some());
@@ -1575,7 +1633,9 @@ mod tests {
         let path = dir.path().join("test.mfdb");
         let engine = MemoryEngine::open(&path, Config::default()).unwrap();
 
-        let id = engine.add("test".to_string(), vec![0.1; 384], None, None, None, None).unwrap();
+        let id = engine
+            .add("test".to_string(), vec![0.1; 384], None, None, None, None)
+            .unwrap();
 
         let deleted = engine.delete(&id, None).unwrap();
         assert!(deleted);
@@ -1592,10 +1652,14 @@ mod tests {
 
         assert_eq!(engine.count().unwrap(), 0);
 
-        engine.add("test1".to_string(), vec![0.1; 384], None, None, None, None).unwrap();
+        engine
+            .add("test1".to_string(), vec![0.1; 384], None, None, None, None)
+            .unwrap();
         assert_eq!(engine.count().unwrap(), 1);
 
-        engine.add("test2".to_string(), vec![0.2; 384], None, None, None, None).unwrap();
+        engine
+            .add("test2".to_string(), vec![0.2; 384], None, None, None, None)
+            .unwrap();
         assert_eq!(engine.count().unwrap(), 2);
     }
 
@@ -1605,8 +1669,12 @@ mod tests {
         let path = dir.path().join("test.mfdb");
         let engine = MemoryEngine::open(&path, Config::default()).unwrap();
 
-        let id1 = engine.add("test1".to_string(), vec![0.1; 384], None, None, None, None).unwrap();
-        let id2 = engine.add("test2".to_string(), vec![0.2; 384], None, None, None, None).unwrap();
+        let id1 = engine
+            .add("test1".to_string(), vec![0.1; 384], None, None, None, None)
+            .unwrap();
+        let id2 = engine
+            .add("test2".to_string(), vec![0.2; 384], None, None, None, None)
+            .unwrap();
 
         let ids = engine.list_ids().unwrap();
         assert_eq!(ids.len(), 2);
@@ -1621,7 +1689,16 @@ mod tests {
 
         let id = {
             let engine = MemoryEngine::open(&path, Config::default()).unwrap();
-            let id = engine.add("persistent".to_string(), vec![0.5; 384], None, None, None, None).unwrap();
+            let id = engine
+                .add(
+                    "persistent".to_string(),
+                    vec![0.5; 384],
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap();
             engine.close().unwrap();
             id
         };
@@ -1642,32 +1719,38 @@ mod tests {
         let engine = MemoryEngine::open(&path, Config::default()).unwrap();
 
         // Add memories to different namespaces
-        let id1 = engine.add(
-            "User 1 memory".to_string(),
-            vec![0.1; 384],
-            None,
-            None,
-            None,
-            Some("user_1"),
-        ).unwrap();
+        let id1 = engine
+            .add(
+                "User 1 memory".to_string(),
+                vec![0.1; 384],
+                None,
+                None,
+                None,
+                Some("user_1"),
+            )
+            .unwrap();
 
-        let id2 = engine.add(
-            "User 2 memory".to_string(),
-            vec![0.2; 384],
-            None,
-            None,
-            None,
-            Some("user_2"),
-        ).unwrap();
+        let id2 = engine
+            .add(
+                "User 2 memory".to_string(),
+                vec![0.2; 384],
+                None,
+                None,
+                None,
+                Some("user_2"),
+            )
+            .unwrap();
 
-        let id3 = engine.add(
-            "Default memory".to_string(),
-            vec![0.3; 384],
-            None,
-            None,
-            None,
-            None,
-        ).unwrap();
+        let id3 = engine
+            .add(
+                "Default memory".to_string(),
+                vec![0.3; 384],
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
         // Verify memories are in correct namespaces
         let mem1 = engine.get(&id1).unwrap().unwrap();
@@ -1683,12 +1766,16 @@ mod tests {
         let query_embedding = vec![0.15; 384];
 
         // Search in user_1 namespace
-        let results = engine.search(&query_embedding, 10, Some("user_1"), None).unwrap();
+        let results = engine
+            .search(&query_embedding, 10, Some("user_1"), None)
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.id, id1);
 
         // Search in user_2 namespace
-        let results = engine.search(&query_embedding, 10, Some("user_2"), None).unwrap();
+        let results = engine
+            .search(&query_embedding, 10, Some("user_2"), None)
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.id, id2);
 
@@ -1709,19 +1796,24 @@ mod tests {
         let engine = MemoryEngine::open(&path, Config::default()).unwrap();
 
         // Add memory to namespace
-        let id = engine.add(
-            "User memory".to_string(),
-            vec![0.1; 384],
-            None,
-            None,
-            None,
-            Some("user_1"),
-        ).unwrap();
+        let id = engine
+            .add(
+                "User memory".to_string(),
+                vec![0.1; 384],
+                None,
+                None,
+                None,
+                Some("user_1"),
+            )
+            .unwrap();
 
         // Try to delete with wrong namespace - should fail
         let result = engine.delete(&id, Some("user_2"));
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), crate::Error::NamespaceMismatch { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::Error::NamespaceMismatch { .. }
+        ));
 
         // Verify memory still exists
         assert!(engine.get(&id).unwrap().is_some());
@@ -1741,10 +1833,46 @@ mod tests {
         let engine = MemoryEngine::open(&path, Config::default()).unwrap();
 
         // Add memories to different namespaces
-        engine.add("Memory 1".to_string(), vec![0.1; 384], None, None, None, Some("ns1")).unwrap();
-        engine.add("Memory 2".to_string(), vec![0.2; 384], None, None, None, Some("ns1")).unwrap();
-        engine.add("Memory 3".to_string(), vec![0.3; 384], None, None, None, Some("ns2")).unwrap();
-        engine.add("Memory 4".to_string(), vec![0.4; 384], None, None, None, None).unwrap();
+        engine
+            .add(
+                "Memory 1".to_string(),
+                vec![0.1; 384],
+                None,
+                None,
+                None,
+                Some("ns1"),
+            )
+            .unwrap();
+        engine
+            .add(
+                "Memory 2".to_string(),
+                vec![0.2; 384],
+                None,
+                None,
+                None,
+                Some("ns1"),
+            )
+            .unwrap();
+        engine
+            .add(
+                "Memory 3".to_string(),
+                vec![0.3; 384],
+                None,
+                None,
+                None,
+                Some("ns2"),
+            )
+            .unwrap();
+        engine
+            .add(
+                "Memory 4".to_string(),
+                vec![0.4; 384],
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
         // List namespaces
         let namespaces = engine.list_namespaces().unwrap();
@@ -1795,7 +1923,9 @@ mod tests {
         assert_eq!(engine.count_namespace("batch_ns").unwrap(), 3);
 
         // Batch delete with namespace filter
-        let deleted = engine.delete_batch(result.ids.clone(), Some("batch_ns")).unwrap();
+        let deleted = engine
+            .delete_batch(result.ids.clone(), Some("batch_ns"))
+            .unwrap();
         assert_eq!(deleted, 3);
 
         // Verify namespace is empty
@@ -1814,13 +1944,15 @@ mod tests {
         let scoped = engine.scope("user_123");
 
         // Add memory via scoped view
-        let id = scoped.add(
-            "Scoped memory".to_string(),
-            vec![0.5; 384],
-            None,
-            None,
-            None,
-        ).unwrap();
+        let id = scoped
+            .add(
+                "Scoped memory".to_string(),
+                vec![0.5; 384],
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
         // Verify memory is in the namespace
         let memory = engine.get(&id).unwrap().unwrap();
@@ -1845,9 +1977,15 @@ mod tests {
         let scoped = engine.scope("user_456");
 
         // Add multiple memories
-        scoped.add("Memory 1".to_string(), vec![0.1; 384], None, None, None).unwrap();
-        scoped.add("Memory 2".to_string(), vec![0.2; 384], None, None, None).unwrap();
-        scoped.add("Memory 3".to_string(), vec![0.3; 384], None, None, None).unwrap();
+        scoped
+            .add("Memory 1".to_string(), vec![0.1; 384], None, None, None)
+            .unwrap();
+        scoped
+            .add("Memory 2".to_string(), vec![0.2; 384], None, None, None)
+            .unwrap();
+        scoped
+            .add("Memory 3".to_string(), vec![0.3; 384], None, None, None)
+            .unwrap();
 
         // Count via scoped view
         assert_eq!(scoped.count().unwrap(), 3);
@@ -1875,8 +2013,12 @@ mod tests {
         let scope2 = engine.scope("ns2");
 
         // Add memories to each namespace
-        let id1 = scope1.add("NS1 memory".to_string(), vec![0.1; 384], None, None, None).unwrap();
-        let id2 = scope2.add("NS2 memory".to_string(), vec![0.2; 384], None, None, None).unwrap();
+        let id1 = scope1
+            .add("NS1 memory".to_string(), vec![0.1; 384], None, None, None)
+            .unwrap();
+        let id2 = scope2
+            .add("NS2 memory".to_string(), vec![0.2; 384], None, None, None)
+            .unwrap();
 
         // Each scope should only see its own memories
         assert_eq!(scope1.count().unwrap(), 1);
@@ -1907,12 +2049,17 @@ mod tests {
         let scope2 = engine.scope("ns2");
 
         // Add memory to ns1
-        let id = scope1.add("NS1 memory".to_string(), vec![0.1; 384], None, None, None).unwrap();
+        let id = scope1
+            .add("NS1 memory".to_string(), vec![0.1; 384], None, None, None)
+            .unwrap();
 
         // Try to delete from wrong namespace - should fail
         let result = scope2.delete(&id);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), crate::Error::NamespaceMismatch { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::Error::NamespaceMismatch { .. }
+        ));
 
         // Verify memory still exists
         assert_eq!(scope1.count().unwrap(), 1);
@@ -1963,38 +2110,80 @@ mod tests {
 
         // Add memories with different metadata
         let mut mem1 = Memory::new("Event 1".to_string(), vec![0.1; 384]);
-        mem1.metadata.insert("type".to_string(), "event".to_string());
-        mem1.metadata.insert("priority".to_string(), "high".to_string());
-        engine.add(mem1.content.clone(), mem1.embedding.clone(), Some(mem1.metadata.clone()), None, None, None).unwrap();
+        mem1.metadata
+            .insert("type".to_string(), "event".to_string());
+        mem1.metadata
+            .insert("priority".to_string(), "high".to_string());
+        engine
+            .add(
+                mem1.content.clone(),
+                mem1.embedding.clone(),
+                Some(mem1.metadata.clone()),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
         let mut mem2 = Memory::new("Event 2".to_string(), vec![0.11; 384]);
-        mem2.metadata.insert("type".to_string(), "event".to_string());
-        mem2.metadata.insert("priority".to_string(), "low".to_string());
-        engine.add(mem2.content.clone(), mem2.embedding.clone(), Some(mem2.metadata.clone()), None, None, None).unwrap();
+        mem2.metadata
+            .insert("type".to_string(), "event".to_string());
+        mem2.metadata
+            .insert("priority".to_string(), "low".to_string());
+        engine
+            .add(
+                mem2.content.clone(),
+                mem2.embedding.clone(),
+                Some(mem2.metadata.clone()),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
         let mut mem3 = Memory::new("Task 1".to_string(), vec![0.12; 384]);
         mem3.metadata.insert("type".to_string(), "task".to_string());
-        mem3.metadata.insert("priority".to_string(), "high".to_string());
-        engine.add(mem3.content.clone(), mem3.embedding.clone(), Some(mem3.metadata.clone()), None, None, None).unwrap();
+        mem3.metadata
+            .insert("priority".to_string(), "high".to_string());
+        engine
+            .add(
+                mem3.content.clone(),
+                mem3.embedding.clone(),
+                Some(mem3.metadata.clone()),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
         // Search with filter: type=event
         let filters = vec![MetadataFilter::eq("type", "event")];
-        let results = engine.search(&vec![0.1; 384], 10, None, Some(&filters)).unwrap();
+        let results = engine
+            .search(&vec![0.1; 384], 10, None, Some(&filters))
+            .unwrap();
         assert_eq!(results.len(), 2);
-        assert!(results.iter().all(|(m, _)| m.metadata.get("type").unwrap() == "event"));
+        assert!(results
+            .iter()
+            .all(|(m, _)| m.metadata.get("type").unwrap() == "event"));
 
         // Search with filter: priority=high
         let filters = vec![MetadataFilter::eq("priority", "high")];
-        let results = engine.search(&vec![0.1; 384], 10, None, Some(&filters)).unwrap();
+        let results = engine
+            .search(&vec![0.1; 384], 10, None, Some(&filters))
+            .unwrap();
         assert_eq!(results.len(), 2);
-        assert!(results.iter().all(|(m, _)| m.metadata.get("priority").unwrap() == "high"));
+        assert!(results
+            .iter()
+            .all(|(m, _)| m.metadata.get("priority").unwrap() == "high"));
 
         // Search with multiple filters: type=event AND priority=high
         let filters = vec![
             MetadataFilter::eq("type", "event"),
             MetadataFilter::eq("priority", "high"),
         ];
-        let results = engine.search(&vec![0.1; 384], 10, None, Some(&filters)).unwrap();
+        let results = engine
+            .search(&vec![0.1; 384], 10, None, Some(&filters))
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.content, "Event 1");
     }
@@ -2007,18 +2196,42 @@ mod tests {
 
         // Add memories with different metadata
         let mut mem1 = Memory::new("Important meeting".to_string(), vec![0.1; 384]);
-        mem1.metadata.insert("type".to_string(), "event".to_string());
-        mem1.metadata.insert("priority".to_string(), "high".to_string());
-        engine.add(mem1.content.clone(), mem1.embedding.clone(), Some(mem1.metadata.clone()), None, None, None).unwrap();
+        mem1.metadata
+            .insert("type".to_string(), "event".to_string());
+        mem1.metadata
+            .insert("priority".to_string(), "high".to_string());
+        engine
+            .add(
+                mem1.content.clone(),
+                mem1.embedding.clone(),
+                Some(mem1.metadata.clone()),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
         let mut mem2 = Memory::new("Casual meeting".to_string(), vec![0.11; 384]);
-        mem2.metadata.insert("type".to_string(), "event".to_string());
-        mem2.metadata.insert("priority".to_string(), "low".to_string());
-        engine.add(mem2.content.clone(), mem2.embedding.clone(), Some(mem2.metadata.clone()), None, None, None).unwrap();
+        mem2.metadata
+            .insert("type".to_string(), "event".to_string());
+        mem2.metadata
+            .insert("priority".to_string(), "low".to_string());
+        engine
+            .add(
+                mem2.content.clone(),
+                mem2.embedding.clone(),
+                Some(mem2.metadata.clone()),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
         // Query with filter
         let filters = vec![MetadataFilter::eq("priority", "high")];
-        let (_intent, results) = engine.query("meeting", &vec![0.1; 384], 10, None, Some(&filters)).unwrap();
+        let (_intent, results) = engine
+            .query("meeting", &vec![0.1; 384], 10, None, Some(&filters))
+            .unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.content, "Important meeting");
@@ -2034,12 +2247,29 @@ mod tests {
 
         // Add memories with different metadata to the namespace
         let mut mem1 = Memory::new("Event 1".to_string(), vec![0.1; 384]);
-        mem1.metadata.insert("type".to_string(), "event".to_string());
-        scoped.add(mem1.content.clone(), mem1.embedding.clone(), Some(mem1.metadata.clone()), None, None).unwrap();
+        mem1.metadata
+            .insert("type".to_string(), "event".to_string());
+        scoped
+            .add(
+                mem1.content.clone(),
+                mem1.embedding.clone(),
+                Some(mem1.metadata.clone()),
+                None,
+                None,
+            )
+            .unwrap();
 
         let mut mem2 = Memory::new("Task 1".to_string(), vec![0.11; 384]);
         mem2.metadata.insert("type".to_string(), "task".to_string());
-        scoped.add(mem2.content.clone(), mem2.embedding.clone(), Some(mem2.metadata.clone()), None, None).unwrap();
+        scoped
+            .add(
+                mem2.content.clone(),
+                mem2.embedding.clone(),
+                Some(mem2.metadata.clone()),
+                None,
+                None,
+            )
+            .unwrap();
 
         // Search with filter in scoped view
         let filters = vec![MetadataFilter::eq("type", "event")];

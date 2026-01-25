@@ -4,7 +4,7 @@
 //! Total: 60 test cases
 
 use super::test_utils::*;
-use mnemefusion_core::{Config, query::intent::QueryIntent};
+use mnemefusion_core::{query::intent::QueryIntent, Config};
 use std::collections::HashMap;
 
 //
@@ -16,15 +16,16 @@ fn test_causal_basic_001_why_query() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("why", 384);
-    let (intent, _) = ctx.engine.query(
-        "Why was the meeting cancelled?",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _) = ctx
+        .engine
+        .query("Why was the meeting cancelled?", &query_emb, 10, None, None)
+        .unwrap();
 
-    assert_eq!(intent.intent, QueryIntent::Causal, "Query with 'why' should be classified as Causal");
+    assert_eq!(
+        intent.intent,
+        QueryIntent::Causal,
+        "Query with 'why' should be classified as Causal"
+    );
 }
 
 #[test]
@@ -32,13 +33,16 @@ fn test_causal_basic_002_because_query() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("because", 384);
-    let (intent, _) = ctx.engine.query(
-        "What happened because of the storm?",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _) = ctx
+        .engine
+        .query(
+            "What happened because of the storm?",
+            &query_emb,
+            10,
+            None,
+            None,
+        )
+        .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Causal);
 }
@@ -48,13 +52,10 @@ fn test_causal_basic_003_caused_query() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("caused", 384);
-    let (intent, _) = ctx.engine.query(
-        "What caused the delay?",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _) = ctx
+        .engine
+        .query("What caused the delay?", &query_emb, 10, None, None)
+        .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Causal);
 }
@@ -64,13 +65,16 @@ fn test_causal_basic_004_reason_query() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("reason", 384);
-    let (intent, _) = ctx.engine.query(
-        "What's the reason for the error?",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _) = ctx
+        .engine
+        .query(
+            "What's the reason for the error?",
+            &query_emb,
+            10,
+            None,
+            None,
+        )
+        .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Causal);
 }
@@ -80,13 +84,10 @@ fn test_causal_basic_005_led_to_query() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("led to", 384);
-    let (intent, _) = ctx.engine.query(
-        "What led to the decision?",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _) = ctx
+        .engine
+        .query("What led to the decision?", &query_emb, 10, None, None)
+        .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Causal);
 }
@@ -96,13 +97,10 @@ fn test_causal_basic_006_result_in_query() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("result", 384);
-    let (intent, _) = ctx.engine.query(
-        "What will this result in?",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _) = ctx
+        .engine
+        .query("What will this result in?", &query_emb, 10, None, None)
+        .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Causal);
 }
@@ -112,13 +110,10 @@ fn test_causal_basic_007_consequence_query() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("consequences", 384);
-    let (intent, _) = ctx.engine.query(
-        "What are the consequences?",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _) = ctx
+        .engine
+        .query("What are the consequences?", &query_emb, 10, None, None)
+        .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Causal);
 }
@@ -128,13 +123,16 @@ fn test_causal_basic_008_impact_query() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("impact", 384);
-    let (intent, _) = ctx.engine.query(
-        "What's the impact of this change?",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _) = ctx
+        .engine
+        .query(
+            "What's the impact of this change?",
+            &query_emb,
+            10,
+            None,
+            None,
+        )
+        .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Causal);
 }
@@ -144,13 +142,16 @@ fn test_causal_basic_009_effect_query() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("effect", 384);
-    let (intent, _) = ctx.engine.query(
-        "What's the effect of the update?",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _) = ctx
+        .engine
+        .query(
+            "What's the effect of the update?",
+            &query_emb,
+            10,
+            None,
+            None,
+        )
+        .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Causal);
 }
@@ -160,13 +161,10 @@ fn test_causal_basic_010_outcome_query() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("outcome", 384);
-    let (intent, _) = ctx.engine.query(
-        "What was the outcome?",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _) = ctx
+        .engine
+        .query("What was the outcome?", &query_emb, 10, None, None)
+        .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Causal);
 }
@@ -204,7 +202,11 @@ fn test_causal_basic_011_simple_link() {
     let causes = ctx.engine.get_causes(effect_id, 1).unwrap();
 
     assert_eq!(causes.paths.len(), 1, "Should find one causal path");
-    assert_eq!(causes.paths[0].memories.len(), 2, "Path should have 2 memories (cause and effect)");
+    assert_eq!(
+        causes.paths[0].memories.len(),
+        2,
+        "Path should have 2 memories (cause and effect)"
+    );
 }
 
 #[test]
@@ -237,7 +239,10 @@ fn test_causal_basic_012_confidence_stored() {
     let effect_id = ctx.get_id_by_content("Fix deployed").unwrap();
     let causes = ctx.engine.get_causes(effect_id, 1).unwrap();
 
-    assert!(causes.paths[0].confidence >= 0.8, "Confidence should be preserved");
+    assert!(
+        causes.paths[0].confidence >= 0.8,
+        "Confidence should be preserved"
+    );
 }
 
 #[test]
@@ -451,7 +456,10 @@ fn test_causal_chain_002_three_hop() {
     let causes = ctx.engine.get_causes(d_id, 3).unwrap();
 
     // Should find paths of various lengths
-    assert!(causes.paths.len() >= 1, "Should find at least one causal path");
+    assert!(
+        causes.paths.len() >= 1,
+        "Should find at least one causal path"
+    );
 
     // Check for longest path (4 memories: A->B->C->D)
     let longest = causes.paths.iter().find(|p| p.memories.len() == 4);
@@ -477,7 +485,7 @@ fn test_causal_chain_003_max_hops_limit() {
         let names = ["A", "B", "C", "D", "E"];
         ctx.add_causal_link(&CausalLink {
             from_content: names[i].to_string(),
-            to_content: names[i+1].to_string(),
+            to_content: names[i + 1].to_string(),
             confidence: 0.9,
             evidence: "link".to_string(),
         });
@@ -490,7 +498,10 @@ fn test_causal_chain_003_max_hops_limit() {
 
     // Should find paths up to 3 memories (2 hops)
     for path in &causes.paths {
-        assert!(path.memories.len() <= 3, "Should not exceed max_hops+1 memories");
+        assert!(
+            path.memories.len() <= 3,
+            "Should not exceed max_hops+1 memories"
+        );
     }
 }
 
@@ -546,7 +557,10 @@ fn test_causal_chain_004_branching() {
     let causes = ctx.engine.get_causes(d_id, 2).unwrap();
 
     // Should find multiple paths to A
-    assert!(causes.paths.len() >= 2, "Should find at least 2 paths (through B and C)");
+    assert!(
+        causes.paths.len() >= 2,
+        "Should find at least 2 paths (through B and C)"
+    );
 }
 
 #[test]
@@ -642,7 +656,10 @@ fn test_causal_chain_006_confidence_decay() {
 
     // Confidence should be product: 0.9 * 0.8 = 0.72
     let conf = full_path.unwrap().confidence;
-    assert!(conf <= 0.72 && conf >= 0.70, "Confidence should decay along path");
+    assert!(
+        conf <= 0.72 && conf >= 0.70,
+        "Confidence should decay along path"
+    );
 }
 
 #[test]
@@ -851,7 +868,7 @@ fn test_causal_chain_012_path_length() {
         let names = ["A", "B", "C", "D", "E"];
         ctx.add_causal_link(&CausalLink {
             from_content: names[i].to_string(),
-            to_content: names[i+1].to_string(),
+            to_content: names[i + 1].to_string(),
             confidence: 0.9,
             evidence: "link".to_string(),
         });
@@ -861,7 +878,12 @@ fn test_causal_chain_012_path_length() {
     let causes = ctx.engine.get_causes(e_id, 4).unwrap();
 
     // Should find paths of various lengths
-    let max_len = causes.paths.iter().map(|p| p.memories.len()).max().unwrap_or(0);
+    let max_len = causes
+        .paths
+        .iter()
+        .map(|p| p.memories.len())
+        .max()
+        .unwrap_or(0);
     assert_eq!(max_len, 5, "Should find full path of 5 memories");
 }
 
@@ -1003,7 +1025,10 @@ fn test_causal_conf_001_high_confidence() {
     let effect_id = ctx.get_id_by_content("Effect").unwrap();
     let causes = ctx.engine.get_causes(effect_id, 1).unwrap();
 
-    assert!(causes.paths[0].confidence >= 0.9, "High confidence link should be preserved");
+    assert!(
+        causes.paths[0].confidence >= 0.9,
+        "High confidence link should be preserved"
+    );
 }
 
 #[test]
@@ -1036,7 +1061,10 @@ fn test_causal_conf_002_low_confidence() {
     let effect_id = ctx.get_id_by_content("Effect").unwrap();
     let causes = ctx.engine.get_causes(effect_id, 1).unwrap();
 
-    assert!(causes.paths[0].confidence <= 0.5, "Low confidence link should be preserved");
+    assert!(
+        causes.paths[0].confidence <= 0.5,
+        "Low confidence link should be preserved"
+    );
 }
 
 #[test]
@@ -1117,7 +1145,10 @@ fn test_causal_conf_004_confidence_product() {
 
     // Confidence should be product: 0.8 * 0.5 = 0.4
     let conf = full_path.unwrap().confidence;
-    assert!((conf - 0.4).abs() < 0.05, "Confidence should be product of edges");
+    assert!(
+        (conf - 0.4).abs() < 0.05,
+        "Confidence should be product of edges"
+    );
 }
 
 #[test]
@@ -1150,7 +1181,10 @@ fn test_causal_conf_005_min_confidence_1_0() {
     let effect_id = ctx.get_id_by_content("Effect").unwrap();
     let causes = ctx.engine.get_causes(effect_id, 1).unwrap();
 
-    assert_eq!(causes.paths[0].confidence, 1.0, "Perfect confidence should be preserved");
+    assert_eq!(
+        causes.paths[0].confidence, 1.0,
+        "Perfect confidence should be preserved"
+    );
 }
 
 #[test]
@@ -1228,7 +1262,10 @@ fn test_causal_conf_007_confidence_bounds() {
         });
     }));
 
-    assert!(result.is_err() || result.is_ok(), "Should handle invalid confidence gracefully");
+    assert!(
+        result.is_err() || result.is_ok(),
+        "Should handle invalid confidence gracefully"
+    );
 }
 
 #[test]
@@ -1312,7 +1349,10 @@ fn test_causal_conf_009_mixed_confidence_chain() {
 
     // Confidence: 0.9 * 0.7 * 0.5 = 0.315
     let conf = full_path.unwrap().confidence;
-    assert!((conf - 0.315).abs() < 0.05, "Confidence should decay through chain");
+    assert!(
+        (conf - 0.315).abs() < 0.05,
+        "Confidence should decay through chain"
+    );
 }
 
 #[test]
@@ -1363,11 +1403,19 @@ fn test_causal_conf_010_parallel_paths_different_confidence() {
 
     // Due to deduplication in traversal, may find only one 2-hop path
     // But should find both 1-hop paths (B and C)
-    let paths_with_2 = causes.paths.iter().filter(|p| p.memories.len() == 2).count();
+    let paths_with_2 = causes
+        .paths
+        .iter()
+        .filter(|p| p.memories.len() == 2)
+        .count();
     assert!(paths_with_2 >= 2, "Should find both direct causes B and C");
 
     // Should also find at least one 2-hop path through A
-    let paths_with_3 = causes.paths.iter().filter(|p| p.memories.len() == 3).count();
+    let paths_with_3 = causes
+        .paths
+        .iter()
+        .filter(|p| p.memories.len() == 3)
+        .count();
     assert!(paths_with_3 >= 1, "Should find at least one path to A");
 }
 
@@ -1380,13 +1428,10 @@ fn test_causal_mixed_001_causal_with_temporal() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("why recently", 384);
-    let (intent, _) = ctx.engine.query(
-        "Why did this happen recently?",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _) = ctx
+        .engine
+        .query("Why did this happen recently?", &query_emb, 10, None, None)
+        .unwrap();
 
     // Should detect causal intent (stronger than temporal)
     assert_eq!(intent.intent, QueryIntent::Causal);
@@ -1397,13 +1442,10 @@ fn test_causal_mixed_002_multiple_why() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("why why", 384);
-    let (intent, _) = ctx.engine.query(
-        "Why, oh why, did this happen?",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _) = ctx
+        .engine
+        .query("Why, oh why, did this happen?", &query_emb, 10, None, None)
+        .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Causal);
     // Multiple causal keywords should increase confidence
@@ -1441,13 +1483,10 @@ fn test_causal_mixed_003_causal_chain_semantic_query() {
 
     // Query with causal intent
     let query_emb = generate_test_embedding("storm work home", 384);
-    let (intent, _results) = ctx.engine.query(
-        "Why did I work from home?",
-        &query_emb,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _results) = ctx
+        .engine
+        .query("Why did I work from home?", &query_emb, 10, None, None)
+        .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Causal);
     // With causal intent, causal dimension should be weighted higher
@@ -1515,7 +1554,7 @@ fn test_causal_mixed_005_high_confidence_chain() {
     for i in 0..4 {
         ctx.add_causal_link(&CausalLink {
             from_content: format!("Step{}", i),
-            to_content: format!("Step{}", i+1),
+            to_content: format!("Step{}", i + 1),
             confidence: 0.95,
             evidence: "Strong link".to_string(),
         });
@@ -1531,7 +1570,10 @@ fn test_causal_mixed_005_high_confidence_chain() {
     // High confidence should be preserved through chain
     // 0.95^4 ≈ 0.815
     let conf = full_path.unwrap().confidence;
-    assert!(conf >= 0.80, "High confidence chain should maintain high confidence");
+    assert!(
+        conf >= 0.80,
+        "High confidence chain should maintain high confidence"
+    );
 }
 
 #[test]
@@ -1579,7 +1621,10 @@ fn test_causal_mixed_006_weak_link_in_chain() {
     assert!(full_path.is_some());
 
     let conf = full_path.unwrap().confidence;
-    assert!(conf <= 0.2, "Weak link should reduce overall confidence significantly");
+    assert!(
+        conf <= 0.2,
+        "Weak link should reduce overall confidence significantly"
+    );
 }
 
 #[test]
@@ -1647,7 +1692,10 @@ fn test_causal_mixed_007_complex_graph() {
     let e_id = ctx.get_id_by_content("E").unwrap();
     let causes = ctx.engine.get_causes(e_id, 2).unwrap();
 
-    assert!(causes.paths.len() >= 2, "Complex graph should find multiple causal paths");
+    assert!(
+        causes.paths.len() >= 2,
+        "Complex graph should find multiple causal paths"
+    );
 }
 
 #[test]
@@ -1748,7 +1796,10 @@ fn test_causal_mixed_009_pruning_low_confidence() {
     let full_path = causes.paths.iter().find(|p| p.memories.len() == 3);
     if let Some(path) = full_path {
         // 0.01 * 0.9 = 0.009
-        assert!(path.confidence < 0.05, "Low confidence link should propagate");
+        assert!(
+            path.confidence < 0.05,
+            "Low confidence link should propagate"
+        );
     }
 }
 
@@ -1824,8 +1875,14 @@ fn test_causal_edge_001_no_links() {
     let causes_result = ctx.engine.get_causes(id, 1);
     let effects_result = ctx.engine.get_effects(id, 1);
 
-    assert!(causes_result.is_err(), "Should error for memory not in causal graph");
-    assert!(effects_result.is_err(), "Should error for memory not in causal graph");
+    assert!(
+        causes_result.is_err(),
+        "Should error for memory not in causal graph"
+    );
+    assert!(
+        effects_result.is_err(),
+        "Should error for memory not in causal graph"
+    );
 }
 
 #[test]
@@ -1915,7 +1972,7 @@ fn test_causal_edge_005_very_long_chain() {
     for i in 0..10 {
         ctx.add_causal_link(&CausalLink {
             from_content: format!("Node{}", i),
-            to_content: format!("Node{}", i+1),
+            to_content: format!("Node{}", i + 1),
             confidence: 0.9,
             evidence: "link".to_string(),
         });
@@ -1926,7 +1983,12 @@ fn test_causal_edge_005_very_long_chain() {
 
     // Should find the full chain
     assert!(causes.paths.len() > 0);
-    let max_len = causes.paths.iter().map(|p| p.memories.len()).max().unwrap_or(0);
+    let max_len = causes
+        .paths
+        .iter()
+        .map(|p| p.memories.len())
+        .max()
+        .unwrap_or(0);
     assert!(max_len >= 10, "Should find long chains");
 }
 
@@ -2076,7 +2138,11 @@ fn test_causal_edge_009_partial_path() {
 
     // Should find B but not A (due to max_hops=1)
     assert_eq!(causes.paths.len(), 1);
-    assert_eq!(causes.paths[0].memories.len(), 2, "Should be 2-memory path (B->C)");
+    assert_eq!(
+        causes.paths[0].memories.len(),
+        2,
+        "Should be 2-memory path (B->C)"
+    );
 }
 
 #[test]

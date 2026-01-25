@@ -20,7 +20,9 @@ fn test_create_add_retrieve_close_reopen() {
         let content = "The quick brown fox jumps over the lazy dog".to_string();
         let embedding = vec![0.5; 384]; // 384 dimensions
 
-        let id = engine.add(content.clone(), embedding.clone(), None, None, None, None).unwrap();
+        let id = engine
+            .add(content.clone(), embedding.clone(), None, None, None, None)
+            .unwrap();
 
         // Verify it was added
         assert_eq!(engine.count().unwrap(), 1);
@@ -39,8 +41,14 @@ fn test_create_add_retrieve_close_reopen() {
 
         assert_eq!(engine.count().unwrap(), 1);
 
-        let memory = engine.get(&memory_id).unwrap().expect("Memory should persist");
-        assert_eq!(memory.content, "The quick brown fox jumps over the lazy dog");
+        let memory = engine
+            .get(&memory_id)
+            .unwrap()
+            .expect("Memory should persist");
+        assert_eq!(
+            memory.content,
+            "The quick brown fox jumps over the lazy dog"
+        );
 
         engine.close().unwrap();
     }
@@ -77,7 +85,14 @@ fn test_multiple_memories_with_metadata() {
 
         let embedding = vec![0.5; 384];
         let id = engine
-            .add(content.to_string(), embedding, Some(metadata), None, None, None)
+            .add(
+                content.to_string(),
+                embedding,
+                Some(metadata),
+                None,
+                None,
+                None,
+            )
             .unwrap();
         ids.push(id);
     }
@@ -109,7 +124,9 @@ fn test_delete_operations() {
     for i in 0..5 {
         let content = format!("Memory number {}", i);
         let embedding = vec![i as f32 * 0.1; 384];
-        let id = engine.add(content, embedding, None, None, None, None).unwrap();
+        let id = engine
+            .add(content, embedding, None, None, None, None)
+            .unwrap();
         ids.push(id);
     }
 
@@ -179,7 +196,9 @@ fn test_large_number_of_memories() {
     for i in 0..count {
         let content = format!("Memory {}", i);
         let embedding = vec![(i % 100) as f32 / 100.0; 384];
-        engine.add(content, embedding, None, None, None, None).unwrap();
+        engine
+            .add(content, embedding, None, None, None, None)
+            .unwrap();
     }
 
     assert_eq!(engine.count().unwrap(), count);
@@ -204,13 +223,34 @@ fn test_custom_timestamps() {
     let ts3 = Timestamp::from_unix_secs(1672531200.0); // 2023-01-01
 
     let id1 = engine
-        .add("2021 memory".to_string(), vec![0.1; 384], None, Some(ts1), None, None)
+        .add(
+            "2021 memory".to_string(),
+            vec![0.1; 384],
+            None,
+            Some(ts1),
+            None,
+            None,
+        )
         .unwrap();
     let id2 = engine
-        .add("2022 memory".to_string(), vec![0.2; 384], None, Some(ts2), None, None)
+        .add(
+            "2022 memory".to_string(),
+            vec![0.2; 384],
+            None,
+            Some(ts2),
+            None,
+            None,
+        )
         .unwrap();
     let id3 = engine
-        .add("2023 memory".to_string(), vec![0.3; 384], None, Some(ts3), None, None)
+        .add(
+            "2023 memory".to_string(),
+            vec![0.3; 384],
+            None,
+            Some(ts3),
+            None,
+            None,
+        )
         .unwrap();
 
     // Verify timestamps
@@ -526,23 +566,58 @@ fn test_causal_multi_hop_traversal() {
     //      ↓
     //     m3 → m5
     let id1 = engine
-        .add("Root cause".to_string(), vec![0.1; 384], None, None, None, None)
+        .add(
+            "Root cause".to_string(),
+            vec![0.1; 384],
+            None,
+            None,
+            None,
+            None,
+        )
         .unwrap();
 
     let id2 = engine
-        .add("Effect A".to_string(), vec![0.2; 384], None, None, None, None)
+        .add(
+            "Effect A".to_string(),
+            vec![0.2; 384],
+            None,
+            None,
+            None,
+            None,
+        )
         .unwrap();
 
     let id3 = engine
-        .add("Effect B".to_string(), vec![0.3; 384], None, None, None, None)
+        .add(
+            "Effect B".to_string(),
+            vec![0.3; 384],
+            None,
+            None,
+            None,
+            None,
+        )
         .unwrap();
 
     let id4 = engine
-        .add("Second-order effect A".to_string(), vec![0.4; 384], None, None, None, None)
+        .add(
+            "Second-order effect A".to_string(),
+            vec![0.4; 384],
+            None,
+            None,
+            None,
+            None,
+        )
         .unwrap();
 
     let id5 = engine
-        .add("Second-order effect B".to_string(), vec![0.5; 384], None, None, None, None)
+        .add(
+            "Second-order effect B".to_string(),
+            vec![0.5; 384],
+            None,
+            None,
+            None,
+            None,
+        )
         .unwrap();
 
     // Add causal links
@@ -593,15 +668,36 @@ fn test_causal_graph_persistence() {
         let engine = MemoryEngine::open(&path, Config::default()).unwrap();
 
         id1 = engine
-            .add("Cause A".to_string(), vec![0.1; 384], None, None, None, None)
+            .add(
+                "Cause A".to_string(),
+                vec![0.1; 384],
+                None,
+                None,
+                None,
+                None,
+            )
             .unwrap();
 
         id2 = engine
-            .add("Effect A".to_string(), vec![0.2; 384], None, None, None, None)
+            .add(
+                "Effect A".to_string(),
+                vec![0.2; 384],
+                None,
+                None,
+                None,
+                None,
+            )
             .unwrap();
 
         id3 = engine
-            .add("Effect B".to_string(), vec![0.3; 384], None, None, None, None)
+            .add(
+                "Effect B".to_string(),
+                vec![0.3; 384],
+                None,
+                None,
+                None,
+                None,
+            )
             .unwrap();
 
         // Add causal links
@@ -666,11 +762,25 @@ fn test_crash_recovery_no_close() {
         let engine = MemoryEngine::open(&path, Config::default()).unwrap();
 
         id1 = engine
-            .add("Memory 1".to_string(), vec![0.1; 384], None, None, None, None)
+            .add(
+                "Memory 1".to_string(),
+                vec![0.1; 384],
+                None,
+                None,
+                None,
+                None,
+            )
             .unwrap();
 
         id2 = engine
-            .add("Memory 2".to_string(), vec![0.2; 384], None, None, None, None)
+            .add(
+                "Memory 2".to_string(),
+                vec![0.2; 384],
+                None,
+                None,
+                None,
+                None,
+            )
             .unwrap();
 
         // NO close() - simulates crash
@@ -706,7 +816,14 @@ fn test_crash_recovery_during_batch() {
 
         // Add first memory
         let _ = engine
-            .add("Before batch".to_string(), vec![0.1; 384], None, None, None, None)
+            .add(
+                "Before batch".to_string(),
+                vec![0.1; 384],
+                None,
+                None,
+                None,
+                None,
+            )
             .unwrap();
 
         // Prepare batch (simulates crash before batch completes)
@@ -771,11 +888,11 @@ fn test_corruption_bad_header() {
         // Should mention either invalid format, magic number, or corruption
         // Using lowercase to be case-insensitive
         assert!(
-            err_str.contains("invalid") ||
-            err_str.contains("magic") ||
-            err_str.contains("corruption") ||
-            err_str.contains("database") ||
-            err_str.contains("storage")
+            err_str.contains("invalid")
+                || err_str.contains("magic")
+                || err_str.contains("corruption")
+                || err_str.contains("database")
+                || err_str.contains("storage")
         );
     }
 }
@@ -789,7 +906,14 @@ fn test_acid_atomicity_failed_add() {
 
     // Add valid memory
     let _ = engine
-        .add("Valid memory".to_string(), vec![0.1; 384], None, None, None, None)
+        .add(
+            "Valid memory".to_string(),
+            vec![0.1; 384],
+            None,
+            None,
+            None,
+            None,
+        )
         .unwrap();
 
     assert_eq!(engine.count().unwrap(), 1);
@@ -825,11 +949,25 @@ fn test_acid_consistency_after_operations() {
         let engine = MemoryEngine::open(&path, Config::default()).unwrap();
 
         id1 = engine
-            .add("Memory 1".to_string(), vec![0.1; 384], None, None, None, None)
+            .add(
+                "Memory 1".to_string(),
+                vec![0.1; 384],
+                None,
+                None,
+                None,
+                None,
+            )
             .unwrap();
 
         id2 = engine
-            .add("Memory 2".to_string(), vec![0.2; 384], None, None, None, None)
+            .add(
+                "Memory 2".to_string(),
+                vec![0.2; 384],
+                None,
+                None,
+                None,
+                None,
+            )
             .unwrap();
 
         // Delete one
@@ -868,7 +1006,14 @@ fn test_acid_durability() {
         let engine = MemoryEngine::open(&path, Config::default()).unwrap();
 
         id = engine
-            .add("Durable memory".to_string(), vec![0.1; 384], None, None, None, None)
+            .add(
+                "Durable memory".to_string(),
+                vec![0.1; 384],
+                None,
+                None,
+                None,
+                None,
+            )
             .unwrap();
 
         engine.close().unwrap();
@@ -897,11 +1042,25 @@ fn test_crash_recovery_vector_index_intact() {
         let engine = MemoryEngine::open(&path, config).unwrap();
 
         let _ = engine
-            .add("Vector 1".to_string(), vec![1.0, 0.0, 0.0], None, None, None, None)
+            .add(
+                "Vector 1".to_string(),
+                vec![1.0, 0.0, 0.0],
+                None,
+                None,
+                None,
+                None,
+            )
             .unwrap();
 
         let _ = engine
-            .add("Vector 2".to_string(), vec![0.0, 1.0, 0.0], None, None, None, None)
+            .add(
+                "Vector 2".to_string(),
+                vec![0.0, 1.0, 0.0],
+                None,
+                None,
+                None,
+                None,
+            )
             .unwrap();
 
         // NO close() - crash

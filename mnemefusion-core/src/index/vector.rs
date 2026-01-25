@@ -3,11 +3,7 @@
 //! Wraps the usearch library to provide semantic similarity search
 //! with persistence to the storage layer.
 
-use crate::{
-    storage::StorageEngine,
-    types::MemoryId,
-    Error, Result,
-};
+use crate::{storage::StorageEngine, types::MemoryId, Error, Result};
 use std::sync::Arc;
 
 /// Configuration for HNSW vector index
@@ -166,7 +162,8 @@ impl VectorIndex {
         }
 
         // Search index
-        let matches = self.index
+        let matches = self
+            .index
             .search(query, top_k)
             .map_err(|e| Error::VectorIndex(format!("Search failed: {}", e)))?;
 
@@ -253,18 +250,19 @@ impl VectorIndex {
                     continue;
                 }
                 Err(e) => {
-                    return Err(Error::VectorIndex(format!("Failed to serialize index: {}", e)));
+                    return Err(Error::VectorIndex(format!(
+                        "Failed to serialize index: {}",
+                        e
+                    )));
                 }
             }
         }
 
-        Err(Error::VectorIndex(
-            format!(
-                "Failed to serialize index after multiple attempts. Index size: {} vectors. \
+        Err(Error::VectorIndex(format!(
+            "Failed to serialize index after multiple attempts. Index size: {} vectors. \
                  This may indicate the index is too large or corrupted.",
-                self.count
-            )
-        ))
+            self.count
+        )))
     }
 
     /// Load the index from storage
@@ -279,16 +277,17 @@ impl VectorIndex {
                 // Validate buffer is not empty
                 if buffer.is_empty() {
                     return Err(Error::DatabaseCorruption(
-                        "Vector index buffer is empty".to_string()
+                        "Vector index buffer is empty".to_string(),
                     ));
                 }
 
                 // Validate minimum buffer size (usearch has minimum overhead)
                 const MIN_INDEX_SIZE: usize = 100; // Conservative minimum for usearch metadata
                 if buffer.len() < MIN_INDEX_SIZE {
-                    return Err(Error::DatabaseCorruption(
-                        format!("Vector index buffer too small: {} bytes", buffer.len())
-                    ));
+                    return Err(Error::DatabaseCorruption(format!(
+                        "Vector index buffer too small: {} bytes",
+                        buffer.len()
+                    )));
                 }
 
                 // Load from buffer
@@ -321,29 +320,28 @@ impl VectorIndex {
         // Check that usearch size matches our count
         let usearch_size = self.index.size();
         if usearch_size != self.count {
-            return Err(Error::DatabaseCorruption(
-                format!("Vector index size mismatch: internal count = {}, usearch size = {}",
-                    self.count, usearch_size)
-            ));
+            return Err(Error::DatabaseCorruption(format!(
+                "Vector index size mismatch: internal count = {}, usearch size = {}",
+                self.count, usearch_size
+            )));
         }
 
         // Validate configuration consistency
         let index_dimensions = self.index.dimensions();
         if index_dimensions != self.config.dimension {
-            return Err(Error::DatabaseCorruption(
-                format!("Vector index dimension mismatch: config = {}, index = {}",
-                    self.config.dimension, index_dimensions)
-            ));
+            return Err(Error::DatabaseCorruption(format!(
+                "Vector index dimension mismatch: config = {}, index = {}",
+                self.config.dimension, index_dimensions
+            )));
         }
 
         // Additional validation: check that the index can perform a basic operation
         // Try a search with a zero vector (should not crash even if no results)
         if self.count > 0 {
             let zero_vector = vec![0.0f32; self.config.dimension];
-            let _ = self.index.search(&zero_vector, 1)
-                .map_err(|e| Error::DatabaseCorruption(
-                    format!("Vector index failed basic search test: {}", e)
-                ))?;
+            let _ = self.index.search(&zero_vector, 1).map_err(|e| {
+                Error::DatabaseCorruption(format!("Vector index failed basic search test: {}", e))
+            })?;
         }
 
         Ok(())

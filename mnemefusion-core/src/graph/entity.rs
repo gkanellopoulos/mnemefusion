@@ -105,7 +105,8 @@ impl EntityGraph {
         let entity_idx = self.get_or_create_entity_node(entity_id);
 
         // Add edge from memory to entity
-        self.graph.add_edge(memory_idx, entity_idx, EntityEdge::mentions());
+        self.graph
+            .add_edge(memory_idx, entity_idx, EntityEdge::mentions());
     }
 
     /// Get all memories that mention a specific entity
@@ -122,7 +123,10 @@ impl EntityGraph {
 
         if let Some(&entity_idx) = self.entity_nodes.get(entity_id) {
             // Find all edges pointing to this entity
-            for edge_ref in self.graph.edges_directed(entity_idx, petgraph::Direction::Incoming) {
+            for edge_ref in self
+                .graph
+                .edges_directed(entity_idx, petgraph::Direction::Incoming)
+            {
                 let source_idx = edge_ref.source();
                 if let Some(EntityNode::Memory(memory_id)) = self.graph.node_weight(source_idx) {
                     memories.push(memory_id.clone());
@@ -147,7 +151,10 @@ impl EntityGraph {
 
         if let Some(&memory_idx) = self.memory_nodes.get(memory_id) {
             // Find all edges from this memory
-            for edge_ref in self.graph.edges_directed(memory_idx, petgraph::Direction::Outgoing) {
+            for edge_ref in self
+                .graph
+                .edges_directed(memory_idx, petgraph::Direction::Outgoing)
+            {
                 let target_idx = edge_ref.target();
                 if let Some(EntityNode::Entity(entity_id)) = self.graph.node_weight(target_idx) {
                     entities.push(entity_id.clone());

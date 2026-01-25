@@ -237,8 +237,14 @@ mod tests {
     fn test_source_type_from_str() {
         use std::str::FromStr;
 
-        assert_eq!(SourceType::from_str("conversation").unwrap(), SourceType::Conversation);
-        assert_eq!(SourceType::from_str("DOCUMENT").unwrap(), SourceType::Document);
+        assert_eq!(
+            SourceType::from_str("conversation").unwrap(),
+            SourceType::Conversation
+        );
+        assert_eq!(
+            SourceType::from_str("DOCUMENT").unwrap(),
+            SourceType::Document
+        );
         assert_eq!(SourceType::from_str("Url").unwrap(), SourceType::Url);
         assert!(SourceType::from_str("invalid").is_err());
     }

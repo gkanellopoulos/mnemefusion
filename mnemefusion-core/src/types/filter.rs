@@ -211,7 +211,8 @@ mod tests {
 
     #[test]
     fn test_metadata_filter_in() {
-        let filter = MetadataFilter::in_list("category", vec!["food".to_string(), "travel".to_string()]);
+        let filter =
+            MetadataFilter::in_list("category", vec!["food".to_string(), "travel".to_string()]);
         assert!(filter.matches(Some("food")));
         assert!(filter.matches(Some("travel")));
         assert!(!filter.matches(Some("work")));

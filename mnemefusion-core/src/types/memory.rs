@@ -131,11 +131,7 @@ impl Memory {
     }
 
     /// Create a new memory with custom timestamp
-    pub fn new_with_timestamp(
-        content: String,
-        embedding: Vec<f32>,
-        timestamp: Timestamp,
-    ) -> Self {
+    pub fn new_with_timestamp(content: String, embedding: Vec<f32>, timestamp: Timestamp) -> Self {
         Self {
             id: MemoryId::new(),
             content,
@@ -400,11 +396,7 @@ mod tests {
         let mut metadata = HashMap::new();
         metadata.insert("source".to_string(), "test".to_string());
 
-        let memory = Memory::new_with_metadata(
-            "test".to_string(),
-            vec![0.1],
-            metadata,
-        );
+        let memory = Memory::new_with_metadata("test".to_string(), vec![0.1], metadata);
 
         assert_eq!(memory.get_metadata("source"), Some(&"test".to_string()));
     }
@@ -459,7 +451,9 @@ mod tests {
         memory.set_source(source.clone()).unwrap();
 
         // Source should be stored in metadata
-        assert!(memory.metadata.contains_key(super::super::SOURCE_METADATA_KEY));
+        assert!(memory
+            .metadata
+            .contains_key(super::super::SOURCE_METADATA_KEY));
 
         // Should be able to retrieve it
         let retrieved = memory.get_source().unwrap().unwrap();

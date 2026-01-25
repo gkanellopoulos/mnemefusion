@@ -5,8 +5,11 @@
 //! - Each edge is a CausalEdge (confidence + evidence)
 //! - Supports multi-hop traversal with configurable depth
 
-use crate::{types::{EntityId, MemoryId}, Error, Result};
 use super::entity::{EntityGraph, EntityQueryResult};
+use crate::{
+    types::{EntityId, MemoryId},
+    Error, Result,
+};
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;
@@ -121,7 +124,11 @@ impl GraphManager {
     ///
     /// # Returns
     /// CausalTraversalResult with all paths found
-    pub fn get_causes(&self, memory_id: &MemoryId, max_hops: usize) -> Result<CausalTraversalResult> {
+    pub fn get_causes(
+        &self,
+        memory_id: &MemoryId,
+        max_hops: usize,
+    ) -> Result<CausalTraversalResult> {
         let start_node = self
             .node_map
             .get(memory_id)
@@ -145,7 +152,11 @@ impl GraphManager {
     ///
     /// # Returns
     /// CausalTraversalResult with all paths found
-    pub fn get_effects(&self, memory_id: &MemoryId, max_hops: usize) -> Result<CausalTraversalResult> {
+    pub fn get_effects(
+        &self,
+        memory_id: &MemoryId,
+        max_hops: usize,
+    ) -> Result<CausalTraversalResult> {
         let start_node = self
             .node_map
             .get(memory_id)
@@ -172,12 +183,7 @@ impl GraphManager {
         }
 
         // Queue: (current_node, path_so_far, cumulative_confidence, depth)
-        let mut queue = vec![(
-            start,
-            vec![self.graph[start].clone()],
-            1.0f32,
-            0usize,
-        )];
+        let mut queue = vec![(start, vec![self.graph[start].clone()], 1.0f32, 0usize)];
         let mut visited = HashMap::new();
         visited.insert(start, 0);
 
@@ -187,10 +193,7 @@ impl GraphManager {
             }
 
             // Get neighbors in the specified direction
-            let neighbors: Vec<_> = self
-                .graph
-                .neighbors_directed(current, direction)
-                .collect();
+            let neighbors: Vec<_> = self.graph.neighbors_directed(current, direction).collect();
 
             for neighbor in neighbors {
                 // Check if we've visited this node at a shallower depth
@@ -258,7 +261,10 @@ impl GraphManager {
     /// Load edges into the graph (for persistence).
     ///
     /// Clears the current graph and rebuilds it from the provided edges.
-    pub(crate) fn load_edges(&mut self, edges: Vec<(MemoryId, MemoryId, CausalEdge)>) -> Result<()> {
+    pub(crate) fn load_edges(
+        &mut self,
+        edges: Vec<(MemoryId, MemoryId, CausalEdge)>,
+    ) -> Result<()> {
         self.graph.clear();
         self.node_map.clear();
 
@@ -286,7 +292,8 @@ impl GraphManager {
     /// * `memory_id` - The memory that mentions the entity
     /// * `entity_id` - The entity being mentioned
     pub fn link_memory_to_entity(&mut self, memory_id: &MemoryId, entity_id: &EntityId) {
-        self.entity_graph.link_memory_to_entity(memory_id, entity_id);
+        self.entity_graph
+            .link_memory_to_entity(memory_id, entity_id);
     }
 
     /// Get all memories that mention a specific entity

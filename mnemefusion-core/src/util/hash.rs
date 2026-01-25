@@ -44,10 +44,7 @@ pub fn hash_content(content: &str) -> String {
 /// ```
 pub fn hash_content_normalized(content: &str) -> String {
     // Normalize: trim, collapse multiple spaces to single
-    let normalized: String = content
-        .split_whitespace()
-        .collect::<Vec<&str>>()
-        .join(" ");
+    let normalized: String = content.split_whitespace().collect::<Vec<&str>>().join(" ");
     hash_content(&normalized)
 }
 

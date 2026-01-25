@@ -10,7 +10,9 @@ use crate::{
     index::{TemporalIndex, VectorIndex},
     ingest::{EntityExtractor, SimpleEntityExtractor},
     storage::StorageEngine,
-    types::{AddResult, BatchError, BatchResult, Entity, Memory, MemoryId, MemoryInput, UpsertResult},
+    types::{
+        AddResult, BatchError, BatchResult, Entity, Memory, MemoryId, MemoryInput, UpsertResult,
+    },
     util::hash,
 };
 use std::sync::{Arc, RwLock};
@@ -280,10 +282,9 @@ impl IngestionPipeline {
 
             // Step 1: Store memory
             if let Err(e) = self.storage.store_memory(memory) {
-                result.errors.push(BatchError::new(
-                    index,
-                    format!("Storage failed: {}", e),
-                ));
+                result
+                    .errors
+                    .push(BatchError::new(index, format!("Storage failed: {}", e)));
                 continue;
             }
 
@@ -714,10 +715,7 @@ mod tests {
         // Verify temporal index (use wider time range)
         let start = Timestamp::from_unix_secs(timestamp.as_unix_secs() - 1.0);
         let end = Timestamp::from_unix_secs(timestamp.as_unix_secs() + 1.0);
-        let temporal_results = pipeline
-            .temporal_index
-            .range_query(start, end, 10)
-            .unwrap();
+        let temporal_results = pipeline.temporal_index.range_query(start, end, 10).unwrap();
         assert_eq!(temporal_results.len(), 1);
         assert_eq!(temporal_results[0].id, id);
     }
@@ -910,7 +908,11 @@ mod tests {
         assert_eq!(result.created_count, 1);
 
         // Verify metadata and source
-        let memory = pipeline.storage.get_memory(&result.ids[0]).unwrap().unwrap();
+        let memory = pipeline
+            .storage
+            .get_memory(&result.ids[0])
+            .unwrap()
+            .unwrap();
         assert_eq!(memory.get_metadata("project"), Some(&"alpha".to_string()));
         assert!(memory.get_source().unwrap().is_some());
     }
@@ -972,7 +974,9 @@ mod tests {
         pipeline.add(memory3).unwrap();
 
         // Delete batch
-        let deleted_count = pipeline.delete_batch(vec![id1.clone(), id2.clone(), id3.clone()]).unwrap();
+        let deleted_count = pipeline
+            .delete_batch(vec![id1.clone(), id2.clone(), id3.clone()])
+            .unwrap();
 
         assert_eq!(deleted_count, 3);
 
@@ -997,7 +1001,9 @@ mod tests {
 
         // Try to delete 3 (one doesn't exist)
         let fake_id = MemoryId::new();
-        let deleted_count = pipeline.delete_batch(vec![id1.clone(), fake_id, id2.clone()]).unwrap();
+        let deleted_count = pipeline
+            .delete_batch(vec![id1.clone(), fake_id, id2.clone()])
+            .unwrap();
 
         // Only 2 should be deleted
         assert_eq!(deleted_count, 2);
@@ -1144,7 +1150,10 @@ mod tests {
         assert!(!result2.created);
         assert!(result2.updated);
         assert!(result2.is_updated());
-        assert_eq!(result2.previous_content, Some("original content".to_string()));
+        assert_eq!(
+            result2.previous_content,
+            Some("original content".to_string())
+        );
 
         // Original memory should be deleted
         let original = pipeline.storage.get_memory(&first_id).unwrap();
@@ -1204,7 +1213,10 @@ mod tests {
         {
             let index = pipeline.vector_index.read().unwrap();
             let results = index.search(&vec![0.9; 384], 5).unwrap();
-            assert!(!results.is_empty(), "Vector index should have results after upsert");
+            assert!(
+                !results.is_empty(),
+                "Vector index should have results after upsert"
+            );
         }
     }
 

@@ -14,7 +14,8 @@ use super::FileHeader;
 
 // Table definitions
 const MEMORIES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("memories");
-pub(crate) const TEMPORAL_INDEX: TableDefinition<u64, &[u8]> = TableDefinition::new("temporal_index");
+pub(crate) const TEMPORAL_INDEX: TableDefinition<u64, &[u8]> =
+    TableDefinition::new("temporal_index");
 const METADATA_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("metadata");
 const MEMORY_ID_INDEX: TableDefinition<u64, &[u8]> = TableDefinition::new("memory_id_index");
 const CAUSAL_GRAPH: TableDefinition<&str, &[u8]> = TableDefinition::new("causal_graph");
@@ -47,9 +48,10 @@ impl StorageEngine {
             const MIN_FILE_SIZE: u64 = 512; // Conservative minimum
 
             if file_size < MIN_FILE_SIZE {
-                return Err(Error::FileTruncated(
-                    format!("File size ({} bytes) is too small to be a valid database", file_size)
-                ));
+                return Err(Error::FileTruncated(format!(
+                    "File size ({} bytes) is too small to be a valid database",
+                    file_size
+                )));
             }
         }
 
@@ -129,63 +131,73 @@ impl StorageEngine {
         // We open each table individually since they have different type parameters
 
         if let Err(e) = read_txn.open_table(MEMORIES) {
-            return Err(Error::DatabaseCorruption(
-                format!("Required table 'memories' is missing or corrupt: {}", e)
-            ));
+            return Err(Error::DatabaseCorruption(format!(
+                "Required table 'memories' is missing or corrupt: {}",
+                e
+            )));
         }
 
         if let Err(e) = read_txn.open_table(TEMPORAL_INDEX) {
-            return Err(Error::DatabaseCorruption(
-                format!("Required table 'temporal_index' is missing or corrupt: {}", e)
-            ));
+            return Err(Error::DatabaseCorruption(format!(
+                "Required table 'temporal_index' is missing or corrupt: {}",
+                e
+            )));
         }
 
         if let Err(e) = read_txn.open_table(METADATA_TABLE) {
-            return Err(Error::DatabaseCorruption(
-                format!("Required table 'metadata' is missing or corrupt: {}", e)
-            ));
+            return Err(Error::DatabaseCorruption(format!(
+                "Required table 'metadata' is missing or corrupt: {}",
+                e
+            )));
         }
 
         if let Err(e) = read_txn.open_table(MEMORY_ID_INDEX) {
-            return Err(Error::DatabaseCorruption(
-                format!("Required table 'memory_id_index' is missing or corrupt: {}", e)
-            ));
+            return Err(Error::DatabaseCorruption(format!(
+                "Required table 'memory_id_index' is missing or corrupt: {}",
+                e
+            )));
         }
 
         if let Err(e) = read_txn.open_table(CAUSAL_GRAPH) {
-            return Err(Error::DatabaseCorruption(
-                format!("Required table 'causal_graph' is missing or corrupt: {}", e)
-            ));
+            return Err(Error::DatabaseCorruption(format!(
+                "Required table 'causal_graph' is missing or corrupt: {}",
+                e
+            )));
         }
 
         if let Err(e) = read_txn.open_table(ENTITIES) {
-            return Err(Error::DatabaseCorruption(
-                format!("Required table 'entities' is missing or corrupt: {}", e)
-            ));
+            return Err(Error::DatabaseCorruption(format!(
+                "Required table 'entities' is missing or corrupt: {}",
+                e
+            )));
         }
 
         if let Err(e) = read_txn.open_table(ENTITY_NAMES) {
-            return Err(Error::DatabaseCorruption(
-                format!("Required table 'entity_names' is missing or corrupt: {}", e)
-            ));
+            return Err(Error::DatabaseCorruption(format!(
+                "Required table 'entity_names' is missing or corrupt: {}",
+                e
+            )));
         }
 
         if let Err(e) = read_txn.open_table(CONTENT_HASH_INDEX) {
-            return Err(Error::DatabaseCorruption(
-                format!("Required table 'content_hash_index' is missing or corrupt: {}", e)
-            ));
+            return Err(Error::DatabaseCorruption(format!(
+                "Required table 'content_hash_index' is missing or corrupt: {}",
+                e
+            )));
         }
 
         if let Err(e) = read_txn.open_table(LOGICAL_KEY_INDEX) {
-            return Err(Error::DatabaseCorruption(
-                format!("Required table 'logical_key_index' is missing or corrupt: {}", e)
-            ));
+            return Err(Error::DatabaseCorruption(format!(
+                "Required table 'logical_key_index' is missing or corrupt: {}",
+                e
+            )));
         }
 
         if let Err(e) = read_txn.open_table(METADATA_INDEX) {
-            return Err(Error::DatabaseCorruption(
-                format!("Required table 'metadata_index' is missing or corrupt: {}", e)
-            ));
+            return Err(Error::DatabaseCorruption(format!(
+                "Required table 'metadata_index' is missing or corrupt: {}",
+                e
+            )));
         }
 
         // Validate header exists
@@ -198,7 +210,7 @@ impl StorageEngine {
             }
             None => {
                 return Err(Error::DatabaseCorruption(
-                    "File header is missing".to_string()
+                    "File header is missing".to_string(),
                 ));
             }
         }
@@ -221,7 +233,10 @@ impl StorageEngine {
             memories.insert(memory.id.as_bytes().as_slice(), memory_data.as_slice())?;
 
             // Index by timestamp
-            temporal.insert(memory.created_at.as_micros(), memory.id.as_bytes().as_slice())?;
+            temporal.insert(
+                memory.created_at.as_micros(),
+                memory.id.as_bytes().as_slice(),
+            )?;
 
             // Index by u64 (for vector index lookups)
             id_index.insert(memory.id.to_u64(), memory.id.as_bytes().as_slice())?;
@@ -354,14 +369,18 @@ impl StorageEngine {
 
         // Timestamp
         if bytes.len() < offset + 8 {
-            return Err(Error::Deserialization("Incomplete timestamp data".to_string()));
+            return Err(Error::Deserialization(
+                "Incomplete timestamp data".to_string(),
+            ));
         }
         let created_at = Timestamp::from_bytes(&bytes[offset..offset + 8])?;
         offset += 8;
 
         // Content
         if bytes.len() < offset + 4 {
-            return Err(Error::Deserialization("Incomplete content length".to_string()));
+            return Err(Error::Deserialization(
+                "Incomplete content length".to_string(),
+            ));
         }
         let content_len = u32::from_le_bytes([
             bytes[offset],
@@ -372,7 +391,9 @@ impl StorageEngine {
         offset += 4;
 
         if bytes.len() < offset + content_len {
-            return Err(Error::Deserialization("Incomplete content data".to_string()));
+            return Err(Error::Deserialization(
+                "Incomplete content data".to_string(),
+            ));
         }
         let content = String::from_utf8(bytes[offset..offset + content_len].to_vec())
             .map_err(|e| Error::Deserialization(e.to_string()))?;
@@ -380,7 +401,9 @@ impl StorageEngine {
 
         // Embedding
         if bytes.len() < offset + 4 {
-            return Err(Error::Deserialization("Incomplete embedding length".to_string()));
+            return Err(Error::Deserialization(
+                "Incomplete embedding length".to_string(),
+            ));
         }
         let embedding_len = u32::from_le_bytes([
             bytes[offset],
@@ -391,7 +414,9 @@ impl StorageEngine {
         offset += 4;
 
         if bytes.len() < offset + embedding_len * 4 {
-            return Err(Error::Deserialization("Incomplete embedding data".to_string()));
+            return Err(Error::Deserialization(
+                "Incomplete embedding data".to_string(),
+            ));
         }
         let mut embedding = Vec::with_capacity(embedding_len);
         for _ in 0..embedding_len {
@@ -407,7 +432,9 @@ impl StorageEngine {
 
         // Metadata
         if bytes.len() < offset + 4 {
-            return Err(Error::Deserialization("Incomplete metadata length".to_string()));
+            return Err(Error::Deserialization(
+                "Incomplete metadata length".to_string(),
+            ));
         }
         let metadata_len = u32::from_le_bytes([
             bytes[offset],
@@ -418,7 +445,9 @@ impl StorageEngine {
         offset += 4;
 
         if bytes.len() < offset + metadata_len {
-            return Err(Error::Deserialization("Incomplete metadata data".to_string()));
+            return Err(Error::Deserialization(
+                "Incomplete metadata data".to_string(),
+            ));
         }
         let metadata_str = String::from_utf8(bytes[offset..offset + metadata_len].to_vec())
             .map_err(|e| Error::Deserialization(e.to_string()))?;
@@ -499,8 +528,8 @@ impl StorageEngine {
             let mut names = write_txn.open_table(ENTITY_NAMES)?;
 
             // Serialize entity to JSON
-            let entity_data = serde_json::to_vec(entity)
-                .map_err(|e| Error::Serialization(e.to_string()))?;
+            let entity_data =
+                serde_json::to_vec(entity).map_err(|e| Error::Serialization(e.to_string()))?;
 
             // Store entity by ID
             entities.insert(entity.id.as_bytes().as_slice(), entity_data.as_slice())?;
@@ -1080,7 +1109,10 @@ mod tests {
         let retrieved = engine.get_memory(&id).unwrap().unwrap();
         assert_eq!(retrieved.metadata.len(), 2);
         assert_eq!(retrieved.metadata.get("source"), Some(&"test".to_string()));
-        assert_eq!(retrieved.metadata.get("category"), Some(&"example".to_string()));
+        assert_eq!(
+            retrieved.metadata.get("category"),
+            Some(&"example".to_string())
+        );
     }
 
     #[test]
@@ -1241,7 +1273,8 @@ mod tests {
 
         let mut mem = Memory::new("test content".to_string(), vec![0.1; 384]);
         mem.metadata.insert("type".to_string(), "event".to_string());
-        mem.metadata.insert("priority".to_string(), "high".to_string());
+        mem.metadata
+            .insert("priority".to_string(), "high".to_string());
         let id = mem.id.clone();
 
         // Add to metadata index
@@ -1273,11 +1306,13 @@ mod tests {
         let engine = StorageEngine::open(&path).unwrap();
 
         let mut mem1 = Memory::new("content 1".to_string(), vec![0.1; 384]);
-        mem1.metadata.insert("type".to_string(), "event".to_string());
+        mem1.metadata
+            .insert("type".to_string(), "event".to_string());
         let id1 = mem1.id.clone();
 
         let mut mem2 = Memory::new("content 2".to_string(), vec![0.2; 384]);
-        mem2.metadata.insert("type".to_string(), "event".to_string());
+        mem2.metadata
+            .insert("type".to_string(), "event".to_string());
         let id2 = mem2.id.clone();
 
         let mut mem3 = Memory::new("content 3".to_string(), vec![0.3; 384]);
@@ -1285,9 +1320,15 @@ mod tests {
         let id3 = mem3.id.clone();
 
         // Add to index
-        engine.add_to_metadata_index("type", "event", "", &id1).unwrap();
-        engine.add_to_metadata_index("type", "event", "", &id2).unwrap();
-        engine.add_to_metadata_index("type", "task", "", &id3).unwrap();
+        engine
+            .add_to_metadata_index("type", "event", "", &id1)
+            .unwrap();
+        engine
+            .add_to_metadata_index("type", "event", "", &id2)
+            .unwrap();
+        engine
+            .add_to_metadata_index("type", "task", "", &id3)
+            .unwrap();
 
         // Find all events
         let ids = engine.find_by_metadata("type", "event", "").unwrap();
@@ -1309,12 +1350,14 @@ mod tests {
 
         let mut mem1 = Memory::new("content 1".to_string(), vec![0.1; 384]);
         mem1.set_namespace("user_123");
-        mem1.metadata.insert("type".to_string(), "event".to_string());
+        mem1.metadata
+            .insert("type".to_string(), "event".to_string());
         let id1 = mem1.id.clone();
 
         let mut mem2 = Memory::new("content 2".to_string(), vec![0.2; 384]);
         mem2.set_namespace("user_456");
-        mem2.metadata.insert("type".to_string(), "event".to_string());
+        mem2.metadata
+            .insert("type".to_string(), "event".to_string());
         let id2 = mem2.id.clone();
 
         // Add to index
@@ -1326,11 +1369,15 @@ mod tests {
             .unwrap();
 
         // Find in each namespace
-        let ids = engine.find_by_metadata("type", "event", "user_123").unwrap();
+        let ids = engine
+            .find_by_metadata("type", "event", "user_123")
+            .unwrap();
         assert_eq!(ids.len(), 1);
         assert_eq!(ids[0], id1);
 
-        let ids = engine.find_by_metadata("type", "event", "user_456").unwrap();
+        let ids = engine
+            .find_by_metadata("type", "event", "user_456")
+            .unwrap();
         assert_eq!(ids.len(), 1);
         assert_eq!(ids[0], id2);
 
@@ -1350,14 +1397,18 @@ mod tests {
         let id = mem.id.clone();
 
         // Add to index
-        engine.add_to_metadata_index("type", "event", "", &id).unwrap();
+        engine
+            .add_to_metadata_index("type", "event", "", &id)
+            .unwrap();
 
         // Verify it's there
         let ids = engine.find_by_metadata("type", "event", "").unwrap();
         assert_eq!(ids.len(), 1);
 
         // Remove from index
-        engine.remove_from_metadata_index("type", "event", "", &id).unwrap();
+        engine
+            .remove_from_metadata_index("type", "event", "", &id)
+            .unwrap();
 
         // Verify it's gone
         let ids = engine.find_by_metadata("type", "event", "").unwrap();
@@ -1371,23 +1422,31 @@ mod tests {
         let engine = StorageEngine::open(&path).unwrap();
 
         let mut mem1 = Memory::new("content 1".to_string(), vec![0.1; 384]);
-        mem1.metadata.insert("type".to_string(), "event".to_string());
+        mem1.metadata
+            .insert("type".to_string(), "event".to_string());
         let id1 = mem1.id.clone();
 
         let mut mem2 = Memory::new("content 2".to_string(), vec![0.2; 384]);
-        mem2.metadata.insert("type".to_string(), "event".to_string());
+        mem2.metadata
+            .insert("type".to_string(), "event".to_string());
         let id2 = mem2.id.clone();
 
         // Add both to index
-        engine.add_to_metadata_index("type", "event", "", &id1).unwrap();
-        engine.add_to_metadata_index("type", "event", "", &id2).unwrap();
+        engine
+            .add_to_metadata_index("type", "event", "", &id1)
+            .unwrap();
+        engine
+            .add_to_metadata_index("type", "event", "", &id2)
+            .unwrap();
 
         // Verify both are there
         let ids = engine.find_by_metadata("type", "event", "").unwrap();
         assert_eq!(ids.len(), 2);
 
         // Remove one
-        engine.remove_from_metadata_index("type", "event", "", &id1).unwrap();
+        engine
+            .remove_from_metadata_index("type", "event", "", &id1)
+            .unwrap();
 
         // Verify only one remains
         let ids = engine.find_by_metadata("type", "event", "").unwrap();
@@ -1403,28 +1462,60 @@ mod tests {
 
         let mut mem = Memory::new("test content".to_string(), vec![0.1; 384]);
         mem.metadata.insert("type".to_string(), "event".to_string());
-        mem.metadata.insert("priority".to_string(), "high".to_string());
-        mem.metadata.insert("category".to_string(), "work".to_string());
+        mem.metadata
+            .insert("priority".to_string(), "high".to_string());
+        mem.metadata
+            .insert("category".to_string(), "work".to_string());
         let id = mem.id.clone();
 
         // Add to indexes
-        engine.add_to_metadata_index("type", "event", "", &id).unwrap();
-        engine.add_to_metadata_index("priority", "high", "", &id).unwrap();
-        engine.add_to_metadata_index("category", "work", "", &id).unwrap();
+        engine
+            .add_to_metadata_index("type", "event", "", &id)
+            .unwrap();
+        engine
+            .add_to_metadata_index("priority", "high", "", &id)
+            .unwrap();
+        engine
+            .add_to_metadata_index("category", "work", "", &id)
+            .unwrap();
 
         // Verify all are indexed
-        assert!(!engine.find_by_metadata("type", "event", "").unwrap().is_empty());
-        assert!(!engine.find_by_metadata("priority", "high", "").unwrap().is_empty());
-        assert!(!engine.find_by_metadata("category", "work", "").unwrap().is_empty());
+        assert!(!engine
+            .find_by_metadata("type", "event", "")
+            .unwrap()
+            .is_empty());
+        assert!(!engine
+            .find_by_metadata("priority", "high", "")
+            .unwrap()
+            .is_empty());
+        assert!(!engine
+            .find_by_metadata("category", "work", "")
+            .unwrap()
+            .is_empty());
 
         // Remove all indexes for this memory
-        let indexed_fields = vec!["type".to_string(), "priority".to_string(), "category".to_string()];
-        engine.remove_metadata_indexes_for_memory(&mem, &indexed_fields).unwrap();
+        let indexed_fields = vec![
+            "type".to_string(),
+            "priority".to_string(),
+            "category".to_string(),
+        ];
+        engine
+            .remove_metadata_indexes_for_memory(&mem, &indexed_fields)
+            .unwrap();
 
         // Verify all are removed
-        assert!(engine.find_by_metadata("type", "event", "").unwrap().is_empty());
-        assert!(engine.find_by_metadata("priority", "high", "").unwrap().is_empty());
-        assert!(engine.find_by_metadata("category", "work", "").unwrap().is_empty());
+        assert!(engine
+            .find_by_metadata("type", "event", "")
+            .unwrap()
+            .is_empty());
+        assert!(engine
+            .find_by_metadata("priority", "high", "")
+            .unwrap()
+            .is_empty());
+        assert!(engine
+            .find_by_metadata("category", "work", "")
+            .unwrap()
+            .is_empty());
     }
 
     // Validation tests for Task 4: File header validation on open

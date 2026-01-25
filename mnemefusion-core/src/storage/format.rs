@@ -59,7 +59,9 @@ impl FileHeader {
     pub fn validate(&self) -> Result<()> {
         // Check magic number
         if &self.magic != MAGIC {
-            return Err(Error::InvalidFormat("Invalid magic number - file may be corrupted or not a MnemeFusion database"));
+            return Err(Error::InvalidFormat(
+                "Invalid magic number - file may be corrupted or not a MnemeFusion database",
+            ));
         }
 
         // Check version
@@ -76,23 +78,25 @@ impl FileHeader {
         const YEAR_2100: u64 = 4102444800; // 2100-01-01 in Unix seconds
 
         if self.created_at < YEAR_2020 || self.created_at > YEAR_2100 {
-            return Err(Error::DatabaseCorruption(
-                format!("Invalid creation timestamp: {}", self.created_at)
-            ));
+            return Err(Error::DatabaseCorruption(format!(
+                "Invalid creation timestamp: {}",
+                self.created_at
+            )));
         }
 
         if self.modified_at < YEAR_2020 || self.modified_at > YEAR_2100 {
-            return Err(Error::DatabaseCorruption(
-                format!("Invalid modification timestamp: {}", self.modified_at)
-            ));
+            return Err(Error::DatabaseCorruption(format!(
+                "Invalid modification timestamp: {}",
+                self.modified_at
+            )));
         }
 
         // modified_at should be >= created_at
         if self.modified_at < self.created_at {
-            return Err(Error::DatabaseCorruption(
-                format!("Modified timestamp ({}) before created timestamp ({})",
-                    self.modified_at, self.created_at)
-            ));
+            return Err(Error::DatabaseCorruption(format!(
+                "Modified timestamp ({}) before created timestamp ({})",
+                self.modified_at, self.created_at
+            )));
         }
 
         Ok(())
@@ -134,16 +138,13 @@ impl FileHeader {
 
         let version = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         let flags = u64::from_le_bytes([
-            bytes[8], bytes[9], bytes[10], bytes[11],
-            bytes[12], bytes[13], bytes[14], bytes[15],
+            bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
         ]);
         let created_at = u64::from_le_bytes([
-            bytes[16], bytes[17], bytes[18], bytes[19],
-            bytes[20], bytes[21], bytes[22], bytes[23],
+            bytes[16], bytes[17], bytes[18], bytes[19], bytes[20], bytes[21], bytes[22], bytes[23],
         ]);
         let modified_at = u64::from_le_bytes([
-            bytes[24], bytes[25], bytes[26], bytes[27],
-            bytes[28], bytes[29], bytes[30], bytes[31],
+            bytes[24], bytes[25], bytes[26], bytes[27], bytes[28], bytes[29], bytes[30], bytes[31],
         ]);
 
         let mut reserved = [0u8; 32];

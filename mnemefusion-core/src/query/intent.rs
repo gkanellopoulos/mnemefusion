@@ -135,14 +135,12 @@ impl IntentClassifier {
         }
 
         if causal_matches > 0 {
-            *scores.get_mut(&QueryIntent::Causal).unwrap() =
-                (causal_matches as f32 * 0.5).min(1.0);
+            *scores.get_mut(&QueryIntent::Causal).unwrap() = (causal_matches as f32 * 0.5).min(1.0);
         }
 
         if entity_matches > 0 {
             // Entity patterns are weaker indicators
-            *scores.get_mut(&QueryIntent::Entity).unwrap() =
-                (entity_matches as f32 * 0.2).min(0.8);
+            *scores.get_mut(&QueryIntent::Entity).unwrap() = (entity_matches as f32 * 0.2).min(0.8);
         }
 
         // Find primary intent (highest score)

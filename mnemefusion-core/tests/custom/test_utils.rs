@@ -3,7 +3,11 @@
 //! Provides helpers for setting up test databases, running queries,
 //! and asserting expected results for temporal, causal, entity, and intent tests.
 
-use mnemefusion_core::{Config, MemoryEngine, types::{MemoryId, Timestamp}, query::intent::QueryIntent};
+use mnemefusion_core::{
+    query::intent::QueryIntent,
+    types::{MemoryId, Timestamp},
+    Config, MemoryEngine,
+};
 use std::collections::HashMap;
 use tempfile::TempDir;
 
@@ -84,27 +88,40 @@ impl TestContext {
 
     /// Add a test memory to the database
     pub fn add_memory(&mut self, memory: &TestMemory) -> MemoryId {
-        let id = self.engine.add(
-            memory.content.clone(),
-            memory.embedding.clone(),
-            if memory.metadata.is_empty() { None } else { Some(memory.metadata.clone()) },
-            memory.timestamp,
-            None, // source
-            None, // namespace
-        ).expect("Failed to add memory");
+        let id = self
+            .engine
+            .add(
+                memory.content.clone(),
+                memory.embedding.clone(),
+                if memory.metadata.is_empty() {
+                    None
+                } else {
+                    Some(memory.metadata.clone())
+                },
+                memory.timestamp,
+                None, // source
+                None, // namespace
+            )
+            .expect("Failed to add memory");
 
-        self.content_to_id.insert(memory.content.clone(), id.clone());
+        self.content_to_id
+            .insert(memory.content.clone(), id.clone());
         id
     }
 
     /// Add a causal link between two memories
     pub fn add_causal_link(&mut self, link: &CausalLink) {
-        let from_id = self.content_to_id.get(&link.from_content)
+        let from_id = self
+            .content_to_id
+            .get(&link.from_content)
             .expect(&format!("Memory not found: {}", link.from_content));
-        let to_id = self.content_to_id.get(&link.to_content)
+        let to_id = self
+            .content_to_id
+            .get(&link.to_content)
             .expect(&format!("Memory not found: {}", link.to_content));
 
-        self.engine.add_causal_link(from_id, to_id, link.confidence, link.evidence.clone())
+        self.engine
+            .add_causal_link(from_id, to_id, link.confidence, link.evidence.clone())
             .expect("Failed to add causal link");
     }
 
@@ -122,7 +139,9 @@ pub fn generate_test_embedding(content: &str, dim: usize) -> Vec<f32> {
     let mut embedding = vec![0.0; dim];
 
     // Simple hash-based generation for determinism
-    let hash = content.bytes().fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
+    let hash = content
+        .bytes()
+        .fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
 
     for i in 0..dim {
         let seed = hash.wrapping_add(i as u64);
@@ -141,11 +160,7 @@ pub fn generate_test_embedding(content: &str, dim: usize) -> Vec<f32> {
 }
 
 /// Assert that the intent matches expectations
-pub fn assert_intent(
-    actual: QueryIntent,
-    expected: QueryIntent,
-    test_name: &str,
-) {
+pub fn assert_intent(actual: QueryIntent, expected: QueryIntent, test_name: &str) {
     assert_eq!(
         actual, expected,
         "{}: Expected intent {:?}, got {:?}",
@@ -154,29 +169,25 @@ pub fn assert_intent(
 }
 
 /// Assert that intent confidence meets minimum threshold
-pub fn assert_intent_confidence(
-    actual: f32,
-    min_expected: f32,
-    test_name: &str,
-) {
+pub fn assert_intent_confidence(actual: f32, min_expected: f32, test_name: &str) {
     assert!(
         actual >= min_expected,
         "{}: Expected confidence >= {}, got {}",
-        test_name, min_expected, actual
+        test_name,
+        min_expected,
+        actual
     );
 }
 
 /// Assert that results include expected memories
-pub fn assert_results_include(
-    result_contents: &[String],
-    expected: &[String],
-    test_name: &str,
-) {
+pub fn assert_results_include(result_contents: &[String], expected: &[String], test_name: &str) {
     for expected_content in expected {
         assert!(
             result_contents.contains(expected_content),
             "{}: Expected result '{}' not found in results: {:?}",
-            test_name, expected_content, result_contents
+            test_name,
+            expected_content,
+            result_contents
         );
     }
 }
@@ -190,14 +201,20 @@ pub fn assert_results_ordered(
 ) {
     let expected_ids: Vec<&MemoryId> = expected_contents
         .iter()
-        .map(|content| content_to_id.get(content).expect(&format!("Content not found: {}", content)))
+        .map(|content| {
+            content_to_id
+                .get(content)
+                .expect(&format!("Content not found: {}", content))
+        })
         .collect();
 
     assert_eq!(
         actual_ids.len(),
         expected_ids.len(),
         "{}: Result count mismatch. Expected {}, got {}",
-        test_name, expected_ids.len(), actual_ids.len()
+        test_name,
+        expected_ids.len(),
+        actual_ids.len()
     );
 
     for (i, (actual, expected)) in actual_ids.iter().zip(expected_ids.iter()).enumerate() {
@@ -223,33 +240,82 @@ pub fn assert_fusion_weights(
     assert!(
         (sum - 1.0).abs() < 0.01,
         "{}: Fusion weights should sum to 1.0, got {}",
-        test_name, sum
+        test_name,
+        sum
     );
 
     // Check individual weight ranges
     if let Some(min) = expectations.semantic_min {
-        assert!(semantic >= min, "{}: semantic weight {} < min {}", test_name, semantic, min);
+        assert!(
+            semantic >= min,
+            "{}: semantic weight {} < min {}",
+            test_name,
+            semantic,
+            min
+        );
     }
     if let Some(max) = expectations.semantic_max {
-        assert!(semantic <= max, "{}: semantic weight {} > max {}", test_name, semantic, max);
+        assert!(
+            semantic <= max,
+            "{}: semantic weight {} > max {}",
+            test_name,
+            semantic,
+            max
+        );
     }
     if let Some(min) = expectations.temporal_min {
-        assert!(temporal >= min, "{}: temporal weight {} < min {}", test_name, temporal, min);
+        assert!(
+            temporal >= min,
+            "{}: temporal weight {} < min {}",
+            test_name,
+            temporal,
+            min
+        );
     }
     if let Some(max) = expectations.temporal_max {
-        assert!(temporal <= max, "{}: temporal weight {} > max {}", test_name, temporal, max);
+        assert!(
+            temporal <= max,
+            "{}: temporal weight {} > max {}",
+            test_name,
+            temporal,
+            max
+        );
     }
     if let Some(min) = expectations.causal_min {
-        assert!(causal >= min, "{}: causal weight {} < min {}", test_name, causal, min);
+        assert!(
+            causal >= min,
+            "{}: causal weight {} < min {}",
+            test_name,
+            causal,
+            min
+        );
     }
     if let Some(max) = expectations.causal_max {
-        assert!(causal <= max, "{}: causal weight {} > max {}", test_name, causal, max);
+        assert!(
+            causal <= max,
+            "{}: causal weight {} > max {}",
+            test_name,
+            causal,
+            max
+        );
     }
     if let Some(min) = expectations.entity_min {
-        assert!(entity >= min, "{}: entity weight {} < min {}", test_name, entity, min);
+        assert!(
+            entity >= min,
+            "{}: entity weight {} < min {}",
+            test_name,
+            entity,
+            min
+        );
     }
     if let Some(max) = expectations.entity_max {
-        assert!(entity <= max, "{}: entity weight {} > max {}", test_name, entity, max);
+        assert!(
+            entity <= max,
+            "{}: entity weight {} > max {}",
+            test_name,
+            entity,
+            max
+        );
     }
 }
 
@@ -262,14 +328,19 @@ pub fn assert_results_in_timerange(
     test_name: &str,
 ) {
     for id in result_ids {
-        let memory = engine.get(id).expect("Failed to get memory")
+        let memory = engine
+            .get(id)
+            .expect("Failed to get memory")
             .expect("Memory not found");
 
         // created_at is already a Timestamp
         assert!(
             memory.created_at >= start && memory.created_at <= end,
             "{}: Memory timestamp {} not in range [{}, {}]",
-            test_name, memory.created_at, start, end
+            test_name,
+            memory.created_at,
+            start,
+            end
         );
     }
 }
@@ -289,7 +360,10 @@ mod tests {
     fn test_generate_embedding_normalized() {
         let emb = generate_test_embedding("test", 384);
         let magnitude: f32 = emb.iter().map(|x| x * x).sum::<f32>().sqrt();
-        assert!((magnitude - 1.0).abs() < 0.01, "Embedding should be normalized");
+        assert!(
+            (magnitude - 1.0).abs() < 0.01,
+            "Embedding should be normalized"
+        );
     }
 
     #[test]

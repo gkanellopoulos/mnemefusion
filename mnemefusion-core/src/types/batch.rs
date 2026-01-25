@@ -265,8 +265,8 @@ mod tests {
         let mut metadata = HashMap::new();
         metadata.insert("project".to_string(), "alpha".to_string());
 
-        let input = MemoryInput::new("test".to_string(), vec![0.1; 384])
-            .with_metadata(metadata.clone());
+        let input =
+            MemoryInput::new("test".to_string(), vec![0.1; 384]).with_metadata(metadata.clone());
 
         let memory = input.to_memory();
         assert_eq!(memory.get_metadata("project"), Some(&"alpha".to_string()));
@@ -298,7 +298,9 @@ mod tests {
     fn test_batch_result_with_errors() {
         let mut result = BatchResult::new();
         result.created_count = 5;
-        result.errors.push(BatchError::new(3, "Test error".to_string()));
+        result
+            .errors
+            .push(BatchError::new(3, "Test error".to_string()));
 
         assert_eq!(result.created_count, 5);
         assert!(!result.is_success());

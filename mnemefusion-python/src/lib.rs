@@ -99,53 +99,72 @@ fn parse_filter_from_dict(dict: &PyDict) -> PyResult<MetadataFilter> {
         "eq" => {
             let value: String = dict
                 .get_item("value")?
-                .ok_or_else(|| PyValueError::new_err("Filter 'value' is required for 'eq' operator"))?
+                .ok_or_else(|| {
+                    PyValueError::new_err("Filter 'value' is required for 'eq' operator")
+                })?
                 .extract()?;
             FilterOp::Eq(value)
         }
         "ne" => {
             let value: String = dict
                 .get_item("value")?
-                .ok_or_else(|| PyValueError::new_err("Filter 'value' is required for 'ne' operator"))?
+                .ok_or_else(|| {
+                    PyValueError::new_err("Filter 'value' is required for 'ne' operator")
+                })?
                 .extract()?;
             FilterOp::Ne(value)
         }
         "gt" => {
             let value: String = dict
                 .get_item("value")?
-                .ok_or_else(|| PyValueError::new_err("Filter 'value' is required for 'gt' operator"))?
+                .ok_or_else(|| {
+                    PyValueError::new_err("Filter 'value' is required for 'gt' operator")
+                })?
                 .extract()?;
             FilterOp::Gt(value)
         }
         "gte" => {
             let value: String = dict
                 .get_item("value")?
-                .ok_or_else(|| PyValueError::new_err("Filter 'value' is required for 'gte' operator"))?
+                .ok_or_else(|| {
+                    PyValueError::new_err("Filter 'value' is required for 'gte' operator")
+                })?
                 .extract()?;
             FilterOp::Gte(value)
         }
         "lt" => {
             let value: String = dict
                 .get_item("value")?
-                .ok_or_else(|| PyValueError::new_err("Filter 'value' is required for 'lt' operator"))?
+                .ok_or_else(|| {
+                    PyValueError::new_err("Filter 'value' is required for 'lt' operator")
+                })?
                 .extract()?;
             FilterOp::Lt(value)
         }
         "lte" => {
             let value: String = dict
                 .get_item("value")?
-                .ok_or_else(|| PyValueError::new_err("Filter 'value' is required for 'lte' operator"))?
+                .ok_or_else(|| {
+                    PyValueError::new_err("Filter 'value' is required for 'lte' operator")
+                })?
                 .extract()?;
             FilterOp::Lte(value)
         }
         "in" => {
             let values: Vec<String> = dict
                 .get_item("values")?
-                .ok_or_else(|| PyValueError::new_err("Filter 'values' (list) is required for 'in' operator"))?
+                .ok_or_else(|| {
+                    PyValueError::new_err("Filter 'values' (list) is required for 'in' operator")
+                })?
                 .extract()?;
             FilterOp::In(values)
         }
-        _ => return Err(PyValueError::new_err(format!("Unknown filter operator: {}", op_str))),
+        _ => {
+            return Err(PyValueError::new_err(format!(
+                "Unknown filter operator: {}",
+                op_str
+            )))
+        }
     };
 
     Ok(MetadataFilter::new(field, op))
@@ -156,7 +175,8 @@ fn parse_filters_from_list(filters: Option<&PyList>) -> PyResult<Option<Vec<Meta
     if let Some(filter_list) = filters {
         let mut parsed_filters = Vec::new();
         for item in filter_list.iter() {
-            let dict = item.downcast::<PyDict>()
+            let dict = item
+                .downcast::<PyDict>()
                 .map_err(|_| PyValueError::new_err("Filter must be a dict"))?;
             parsed_filters.push(parse_filter_from_dict(dict)?);
         }
@@ -179,9 +199,7 @@ impl PyMemory {
         if borrow.is_none() {
             return Err(PyRuntimeError::new_err("Database is closed"));
         }
-        Ok(std::cell::Ref::map(borrow, |opt| {
-            opt.as_ref().unwrap()
-        }))
+        Ok(std::cell::Ref::map(borrow, |opt| opt.as_ref().unwrap()))
     }
 }
 
@@ -477,8 +495,7 @@ impl PyMemory {
             .map(|id_str| MemoryId::parse(id_str))
             .collect();
 
-        let ids =
-            ids.map_err(|e| PyValueError::new_err(format!("Invalid memory ID: {}", e)))?;
+        let ids = ids.map_err(|e| PyValueError::new_err(format!("Invalid memory ID: {}", e)))?;
 
         // Call batch delete with namespace parameter
         engine
@@ -599,7 +616,15 @@ impl PyMemory {
         };
 
         let result = engine
-            .upsert(&key, content, embedding, metadata, ts, rust_source, namespace)
+            .upsert(
+                &key,
+                content,
+                embedding,
+                metadata,
+                ts,
+                rust_source,
+                namespace,
+            )
             .map_err(|e| PyValueError::new_err(format!("Failed to upsert: {}", e)))?;
 
         // Convert result to Python dict
@@ -637,7 +662,13 @@ impl PyMemory {
     ///     >>> for mem, score in results:
     ///     >>>     print(f"{score:.3f}: {mem['content']}")
     #[pyo3(signature = (query_embedding, top_k, namespace=None, filters=None))]
-    fn search(&self, query_embedding: Vec<f32>, top_k: usize, namespace: Option<&str>, filters: Option<&PyList>) -> PyResult<Vec<PyObject>> {
+    fn search(
+        &self,
+        query_embedding: Vec<f32>,
+        top_k: usize,
+        namespace: Option<&str>,
+        filters: Option<&PyList>,
+    ) -> PyResult<Vec<PyObject>> {
         let engine = self.get_engine()?;
 
         // Parse filters
@@ -957,7 +988,12 @@ impl PyMemory {
     }
 
     /// Context manager support: __exit__
-    fn __exit__(&self, _exc_type: PyObject, _exc_value: PyObject, _traceback: PyObject) -> PyResult<bool> {
+    fn __exit__(
+        &self,
+        _exc_type: PyObject,
+        _exc_value: PyObject,
+        _traceback: PyObject,
+    ) -> PyResult<bool> {
         self.close()?;
         Ok(false)
     }

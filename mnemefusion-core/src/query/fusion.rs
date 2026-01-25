@@ -3,10 +3,7 @@
 //! Combines semantic, temporal, causal, and entity search results with
 //! adaptive weighting based on query intent.
 
-use crate::{
-    query::intent::QueryIntent,
-    types::MemoryId,
-};
+use crate::{query::intent::QueryIntent, types::MemoryId};
 use std::collections::HashMap;
 
 /// Configuration for adaptive weight selection based on intent
@@ -214,7 +211,10 @@ mod tests {
     fn test_intent_weights_normalization() {
         let weights = IntentWeights::new(1.0, 2.0, 3.0, 4.0);
         assert!(weights.validate());
-        assert!((weights.semantic + weights.temporal + weights.causal + weights.entity - 1.0).abs() < 0.01);
+        assert!(
+            (weights.semantic + weights.temporal + weights.causal + weights.entity - 1.0).abs()
+                < 0.01
+        );
     }
 
     #[test]
@@ -282,13 +282,7 @@ mod tests {
         let causal = HashMap::new();
         let entity = HashMap::new();
 
-        let results = engine.fuse(
-            QueryIntent::Factual,
-            &semantic,
-            &temporal,
-            &causal,
-            &entity,
-        );
+        let results = engine.fuse(QueryIntent::Factual, &semantic, &temporal, &causal, &entity);
 
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].id, make_memory_id(1));

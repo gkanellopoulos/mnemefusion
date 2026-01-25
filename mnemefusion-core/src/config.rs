@@ -48,7 +48,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            embedding_dim: 384, // Default for all-MiniLM-L6-v2
+            embedding_dim: 384,          // Default for all-MiniLM-L6-v2
             temporal_decay_hours: 168.0, // 1 week
             causal_max_hops: 3,
             entity_extraction_enabled: true,
@@ -168,15 +168,17 @@ impl Config {
 
         // Warn if hops is very large
         if self.causal_max_hops > 10 {
-            return Err(crate::Error::Configuration(
-                format!("causal_max_hops of {} may be too large and cause slow queries. Recommended: 2-5", self.causal_max_hops)
-            ));
+            return Err(crate::Error::Configuration(format!(
+                "causal_max_hops of {} may be too large and cause slow queries. Recommended: 2-5",
+                self.causal_max_hops
+            )));
         }
 
         if self.causal_min_confidence < 0.0 || self.causal_min_confidence > 1.0 {
-            return Err(crate::Error::Configuration(
-                format!("causal_min_confidence must be between 0.0 and 1.0, got {}", self.causal_min_confidence)
-            ));
+            return Err(crate::Error::Configuration(format!(
+                "causal_min_confidence must be between 0.0 and 1.0, got {}",
+                self.causal_min_confidence
+            )));
         }
 
         if self.hnsw_m == 0 {
@@ -186,9 +188,10 @@ impl Config {
         }
 
         if self.hnsw_m > 100 {
-            return Err(crate::Error::Configuration(
-                format!("hnsw_m of {} is very large and will consume excessive memory. Recommended: 12-48", self.hnsw_m)
-            ));
+            return Err(crate::Error::Configuration(format!(
+                "hnsw_m of {} is very large and will consume excessive memory. Recommended: 12-48",
+                self.hnsw_m
+            )));
         }
 
         if self.hnsw_ef_construction < 10 {
@@ -257,8 +260,8 @@ mod tests {
         assert!(config.indexed_metadata.is_empty());
 
         // Test with_indexed_metadata
-        let config = Config::new()
-            .with_indexed_metadata(vec!["type".to_string(), "category".to_string()]);
+        let config =
+            Config::new().with_indexed_metadata(vec!["type".to_string(), "category".to_string()]);
         assert_eq!(config.indexed_metadata.len(), 2);
         assert!(config.indexed_metadata.contains(&"type".to_string()));
         assert!(config.indexed_metadata.contains(&"category".to_string()));

@@ -254,21 +254,12 @@ mod tests {
         let now = Timestamp::now();
 
         // Add memories with different timestamps
-        let mem1 = Memory::new_with_timestamp(
-            "oldest".to_string(),
-            vec![0.1; 384],
-            now.subtract_days(3),
-        );
-        let mem2 = Memory::new_with_timestamp(
-            "middle".to_string(),
-            vec![0.2; 384],
-            now.subtract_days(2),
-        );
-        let mem3 = Memory::new_with_timestamp(
-            "newest".to_string(),
-            vec![0.3; 384],
-            now.subtract_days(1),
-        );
+        let mem1 =
+            Memory::new_with_timestamp("oldest".to_string(), vec![0.1; 384], now.subtract_days(3));
+        let mem2 =
+            Memory::new_with_timestamp("middle".to_string(), vec![0.2; 384], now.subtract_days(2));
+        let mem3 =
+            Memory::new_with_timestamp("newest".to_string(), vec![0.3; 384], now.subtract_days(1));
 
         storage.store_memory(&mem1).unwrap();
         storage.store_memory(&mem2).unwrap();
@@ -303,11 +294,8 @@ mod tests {
         let end = now;
 
         // Add memory within range
-        let mem1 = Memory::new_with_timestamp(
-            "within".to_string(),
-            vec![0.1; 384],
-            now.subtract_days(3),
-        );
+        let mem1 =
+            Memory::new_with_timestamp("within".to_string(), vec![0.1; 384], now.subtract_days(3));
         // Add memory outside range (too old)
         let mem2 = Memory::new_with_timestamp(
             "too old".to_string(),
@@ -383,9 +371,7 @@ mod tests {
         }
 
         // Count last 5 days
-        let count = temporal
-            .count_range(now.subtract_days(5), now)
-            .unwrap();
+        let count = temporal.count_range(now.subtract_days(5), now).unwrap();
         assert_eq!(count, 6); // Days 0,1,2,3,4,5 = 6 days
     }
 
@@ -406,7 +392,9 @@ mod tests {
             storage.store_memory(&mem).unwrap();
         }
 
-        let results = temporal.range_query(now.subtract_days(10), now, 100).unwrap();
+        let results = temporal
+            .range_query(now.subtract_days(10), now, 100)
+            .unwrap();
 
         // Verify ordering: newest first
         for i in 0..results.len() - 1 {

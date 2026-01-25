@@ -10,7 +10,9 @@ use tempfile::tempdir;
 
 /// Generate a simple embedding vector for testing
 fn generate_embedding(dim: usize, seed: usize) -> Vec<f32> {
-    (0..dim).map(|i| ((i + seed) as f32 % 100.0) / 100.0).collect()
+    (0..dim)
+        .map(|i| ((i + seed) as f32 % 100.0) / 100.0)
+        .collect()
 }
 
 /// Benchmark: Full add operation (baseline)
@@ -26,7 +28,11 @@ fn bench_full_add(c: &mut Criterion) {
             let content = format!("Test memory {}", counter);
             let embedding = generate_embedding(384, counter);
             counter += 1;
-            black_box(engine.add(content, embedding, None, None, None, None).unwrap())
+            black_box(
+                engine
+                    .add(content, embedding, None, None, None, None)
+                    .unwrap(),
+            )
         });
     });
 }
@@ -48,7 +54,9 @@ fn profile_add_components() {
         let embedding = generate_embedding(384, i);
 
         let start = Instant::now();
-        let _id = engine.add(content, embedding, None, None, None, None).unwrap();
+        let _id = engine
+            .add(content, embedding, None, None, None, None)
+            .unwrap();
         let elapsed = start.elapsed();
 
         full_times.push(elapsed.as_micros() as f64);
@@ -101,8 +109,14 @@ fn profile_add_components() {
     println!("Optimization Potential:");
     println!("  Current (eager save):    {:.2}ms", mean / 1000.0);
     println!("  Estimated eager overhead: {:.2}ms", eager_save_overhead);
-    println!("  Estimated (lazy save):   {:.2}ms", estimated_lazy_save.max(0.0));
-    println!("  Potential improvement:   {:.1}%", (eager_save_overhead / (mean / 1000.0)) * 100.0);
+    println!(
+        "  Estimated (lazy save):   {:.2}ms",
+        estimated_lazy_save.max(0.0)
+    );
+    println!(
+        "  Potential improvement:   {:.1}%",
+        (eager_save_overhead / (mean / 1000.0)) * 100.0
+    );
     println!();
 }
 
@@ -123,9 +137,7 @@ fn bench_search_for_comparison(c: &mut Criterion) {
     let query_embedding = generate_embedding(384, 999);
 
     c.bench_function("search_1k_for_comparison", |b| {
-        b.iter(|| {
-            black_box(engine.search(&query_embedding, 10, None, None).unwrap())
-        });
+        b.iter(|| black_box(engine.search(&query_embedding, 10, None, None).unwrap()));
     });
 }
 

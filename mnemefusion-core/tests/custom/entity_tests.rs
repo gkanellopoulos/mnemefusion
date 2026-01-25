@@ -4,7 +4,7 @@
 //! Total: 35 test cases
 
 use super::test_utils::*;
-use mnemefusion_core::{Config, query::intent::QueryIntent, types::Timestamp};
+use mnemefusion_core::{query::intent::QueryIntent, types::Timestamp, Config};
 use std::collections::HashMap;
 
 // Helper to get current timestamp
@@ -50,16 +50,17 @@ fn test_entity_basic_001_about_query() {
     });
 
     let query_embedding = generate_test_embedding("about Alice", 384);
-    let (intent, _results) = ctx.engine.query(
-        "Tell me about Alice",
-        &query_embedding,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _results) = ctx
+        .engine
+        .query("Tell me about Alice", &query_embedding, 10, None, None)
+        .unwrap();
 
     // Should detect entity intent
-    assert_eq!(intent.intent, QueryIntent::Entity, "Should detect entity intent for 'about Alice'");
+    assert_eq!(
+        intent.intent,
+        QueryIntent::Entity,
+        "Should detect entity intent for 'about Alice'"
+    );
 }
 
 #[test]
@@ -75,15 +76,22 @@ fn test_entity_basic_002_regarding_query() {
     });
 
     let query_embedding = generate_test_embedding("regarding Project Alpha", 384);
-    let (intent, _results) = ctx.engine.query(
-        "Information regarding Project Alpha",
-        &query_embedding,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _results) = ctx
+        .engine
+        .query(
+            "Information regarding Project Alpha",
+            &query_embedding,
+            10,
+            None,
+            None,
+        )
+        .unwrap();
 
-    assert_eq!(intent.intent, QueryIntent::Entity, "Should detect entity intent for 'regarding Project'");
+    assert_eq!(
+        intent.intent,
+        QueryIntent::Entity,
+        "Should detect entity intent for 'regarding Project'"
+    );
 }
 
 #[test]
@@ -99,15 +107,22 @@ fn test_entity_basic_003_concerning_query() {
     });
 
     let query_embedding = generate_test_embedding("concerning Team Beta", 384);
-    let (intent, _results) = ctx.engine.query(
-        "What concerning Team Beta?",
-        &query_embedding,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _results) = ctx
+        .engine
+        .query(
+            "What concerning Team Beta?",
+            &query_embedding,
+            10,
+            None,
+            None,
+        )
+        .unwrap();
 
-    assert_eq!(intent.intent, QueryIntent::Entity, "Should detect entity intent for 'concerning Team'");
+    assert_eq!(
+        intent.intent,
+        QueryIntent::Entity,
+        "Should detect entity intent for 'concerning Team'"
+    );
 }
 
 #[test]
@@ -123,15 +138,22 @@ fn test_entity_basic_004_related_to_query() {
     });
 
     let query_embedding = generate_test_embedding("related to Q1", 384);
-    let (intent, _results) = ctx.engine.query(
-        "Show me items related to Q1",
-        &query_embedding,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _results) = ctx
+        .engine
+        .query(
+            "Show me items related to Q1",
+            &query_embedding,
+            10,
+            None,
+            None,
+        )
+        .unwrap();
 
-    assert_eq!(intent.intent, QueryIntent::Entity, "Should detect entity intent for 'related to Q1'");
+    assert_eq!(
+        intent.intent,
+        QueryIntent::Entity,
+        "Should detect entity intent for 'related to Q1'"
+    );
 }
 
 #[test]
@@ -147,15 +169,16 @@ fn test_entity_basic_005_with_entity() {
     });
 
     let query_embedding = generate_test_embedding("with Charlie", 384);
-    let (intent, _results) = ctx.engine.query(
-        "Meetings with Charlie",
-        &query_embedding,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _results) = ctx
+        .engine
+        .query("Meetings with Charlie", &query_embedding, 10, None, None)
+        .unwrap();
 
-    assert_eq!(intent.intent, QueryIntent::Entity, "Should detect entity intent for 'with Charlie'");
+    assert_eq!(
+        intent.intent,
+        QueryIntent::Entity,
+        "Should detect entity intent for 'with Charlie'"
+    );
 }
 
 #[test]
@@ -171,15 +194,16 @@ fn test_entity_basic_006_involving_entity() {
     });
 
     let query_embedding = generate_test_embedding("involving Diana", 384);
-    let (intent, _results) = ctx.engine.query(
-        "Issues involving Diana",
-        &query_embedding,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _results) = ctx
+        .engine
+        .query("Issues involving Diana", &query_embedding, 10, None, None)
+        .unwrap();
 
-    assert_eq!(intent.intent, QueryIntent::Entity, "Should detect entity intent for 'involving Diana'");
+    assert_eq!(
+        intent.intent,
+        QueryIntent::Entity,
+        "Should detect entity intent for 'involving Diana'"
+    );
 }
 
 #[test]
@@ -195,15 +219,16 @@ fn test_entity_basic_007_mention_query() {
     });
 
     let query_embedding = generate_test_embedding("mention AWS", 384);
-    let (intent, _results) = ctx.engine.query(
-        "Mention AWS",
-        &query_embedding,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _results) = ctx
+        .engine
+        .query("Mention AWS", &query_embedding, 10, None, None)
+        .unwrap();
 
-    assert_eq!(intent.intent, QueryIntent::Entity, "Should detect entity intent for 'mention AWS'");
+    assert_eq!(
+        intent.intent,
+        QueryIntent::Entity,
+        "Should detect entity intent for 'mention AWS'"
+    );
 }
 
 #[test]
@@ -219,16 +244,23 @@ fn test_entity_basic_008_capitalized_word_trigger() {
     });
 
     let query_embedding = generate_test_embedding("Tell me about GitHub Actions", 384);
-    let (intent, _results) = ctx.engine.query(
-        "Tell me about GitHub Actions",
-        &query_embedding,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _results) = ctx
+        .engine
+        .query(
+            "Tell me about GitHub Actions",
+            &query_embedding,
+            10,
+            None,
+            None,
+        )
+        .unwrap();
 
     // Capitalized words after 'about' should trigger entity intent
-    assert_eq!(intent.intent, QueryIntent::Entity, "Should detect entity intent with capitalized word");
+    assert_eq!(
+        intent.intent,
+        QueryIntent::Entity,
+        "Should detect entity intent with capitalized word"
+    );
 }
 
 #[test]
@@ -244,15 +276,22 @@ fn test_entity_basic_009_multi_word_entity() {
     });
 
     let query_embedding = generate_test_embedding("about Project Alpha Beta", 384);
-    let (intent, _results) = ctx.engine.query(
-        "What about Project Alpha Beta?",
-        &query_embedding,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _results) = ctx
+        .engine
+        .query(
+            "What about Project Alpha Beta?",
+            &query_embedding,
+            10,
+            None,
+            None,
+        )
+        .unwrap();
 
-    assert_eq!(intent.intent, QueryIntent::Entity, "Should detect entity intent for multi-word entity");
+    assert_eq!(
+        intent.intent,
+        QueryIntent::Entity,
+        "Should detect entity intent for multi-word entity"
+    );
 }
 
 #[test]
@@ -268,16 +307,17 @@ fn test_entity_basic_010_lowercase_not_entity() {
     });
 
     let query_embedding = generate_test_embedding("about testing", 384);
-    let (intent, _results) = ctx.engine.query(
-        "about testing",
-        &query_embedding,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _results) = ctx
+        .engine
+        .query("about testing", &query_embedding, 10, None, None)
+        .unwrap();
 
     // Lowercase word after 'about' should NOT trigger entity intent
-    assert_ne!(intent.intent, QueryIntent::Entity, "Should not detect entity intent for lowercase word");
+    assert_ne!(
+        intent.intent,
+        QueryIntent::Entity,
+        "Should not detect entity intent for lowercase word"
+    );
 }
 
 // ============================================================================
@@ -425,7 +465,11 @@ fn test_entity_extract_007_no_entities() {
     let entities = ctx.engine.get_memory_entities(&id).unwrap();
 
     // Should extract no entities
-    assert_eq!(entities.len(), 0, "Should extract no entities from lowercase content");
+    assert_eq!(
+        entities.len(),
+        0,
+        "Should extract no entities from lowercase content"
+    );
 }
 
 #[test]
@@ -454,7 +498,11 @@ fn test_entity_extract_008_mention_count_increments() {
     // Find Alice
     let alice = all_entities.iter().find(|e| e.name == "Alice");
     assert!(alice.is_some(), "Alice should exist");
-    assert_eq!(alice.unwrap().mention_count, 2, "Alice should have 2 mentions");
+    assert_eq!(
+        alice.unwrap().mention_count,
+        2,
+        "Alice should have 2 mentions"
+    );
 }
 
 // ============================================================================
@@ -492,10 +540,20 @@ fn test_entity_centric_001_get_entity_memories() {
     // Get all memories about Alice
     let memories = ctx.engine.get_entity_memories("Alice").unwrap();
 
-    assert_eq!(memories.len(), 3, "Should find all memories mentioning Alice");
-    assert!(memories.iter().any(|m| m.content.contains("joined the team")));
-    assert!(memories.iter().any(|m| m.content.contains("completed the sprint")));
-    assert!(memories.iter().any(|m| m.content.contains("helped Alice with debugging")));
+    assert_eq!(
+        memories.len(),
+        3,
+        "Should find all memories mentioning Alice"
+    );
+    assert!(memories
+        .iter()
+        .any(|m| m.content.contains("joined the team")));
+    assert!(memories
+        .iter()
+        .any(|m| m.content.contains("completed the sprint")));
+    assert!(memories
+        .iter()
+        .any(|m| m.content.contains("helped Alice with debugging")));
 }
 
 #[test]
@@ -541,7 +599,11 @@ fn test_entity_centric_003_multi_word_entity_lookup() {
 
     let memories = ctx.engine.get_entity_memories("Project Alpha").unwrap();
 
-    assert_eq!(memories.len(), 2, "Should find memories for multi-word entity");
+    assert_eq!(
+        memories.len(),
+        2,
+        "Should find memories for multi-word entity"
+    );
 }
 
 #[test]
@@ -559,7 +621,11 @@ fn test_entity_centric_004_entity_not_found() {
     // Query for non-existent entity
     let memories = ctx.engine.get_entity_memories("Bob").unwrap();
 
-    assert_eq!(memories.len(), 0, "Should return empty for non-existent entity");
+    assert_eq!(
+        memories.len(),
+        0,
+        "Should return empty for non-existent entity"
+    );
 }
 
 #[test]
@@ -613,7 +679,11 @@ fn test_entity_centric_006_organization_queries() {
     let acme_memories = ctx.engine.get_entity_memories("Acme Corp").unwrap();
     let beta_memories = ctx.engine.get_entity_memories("Beta Inc").unwrap();
 
-    assert_eq!(acme_memories.len(), 2, "Should find both Acme Corp memories");
+    assert_eq!(
+        acme_memories.len(),
+        2,
+        "Should find both Acme Corp memories"
+    );
     assert_eq!(beta_memories.len(), 1, "Should find Beta Inc memory");
 }
 
@@ -683,7 +753,11 @@ fn test_entity_rel_001_shared_entity() {
 
     let alice_memories = ctx.engine.get_entity_memories("Alice").unwrap();
 
-    assert_eq!(alice_memories.len(), 3, "Should find all memories with shared entity");
+    assert_eq!(
+        alice_memories.len(),
+        3,
+        "Should find all memories with shared entity"
+    );
     let memory_ids: Vec<_> = alice_memories.iter().map(|m| m.id.clone()).collect();
     assert!(memory_ids.contains(&id1));
     assert!(memory_ids.contains(&id2));
@@ -731,7 +805,11 @@ fn test_entity_rel_002_entity_co_occurrence() {
         .filter(|m| bob_memories.iter().any(|bm| bm.id == m.id))
         .collect();
 
-    assert_eq!(co_occurring.len(), 2, "Alice and Bob co-occur in 2 memories");
+    assert_eq!(
+        co_occurring.len(),
+        2,
+        "Alice and Bob co-occur in 2 memories"
+    );
 }
 
 #[test]
@@ -763,7 +841,11 @@ fn test_entity_rel_003_entity_in_multiple_contexts() {
 
     let paris_memories = ctx.engine.get_entity_memories("Paris").unwrap();
 
-    assert_eq!(paris_memories.len(), 3, "Should find entity across different contexts");
+    assert_eq!(
+        paris_memories.len(),
+        3,
+        "Should find entity across different contexts"
+    );
 }
 
 #[test]
@@ -854,39 +936,42 @@ fn test_entity_mixed_001_entity_plus_temporal() {
         id: None,
         content: "Alice sent email".to_string(),
         embedding: generate_test_embedding("Alice sent email", 384),
-        timestamp: Some(days_ago(3)),  // 3 days ago
+        timestamp: Some(days_ago(3)), // 3 days ago
         metadata: HashMap::new(),
     });
     ctx.add_memory(&TestMemory {
         id: None,
         content: "Alice made a commit".to_string(),
         embedding: generate_test_embedding("Alice made a commit", 384),
-        timestamp: Some(days_ago(1)),  // 1 day ago
+        timestamp: Some(days_ago(1)), // 1 day ago
         metadata: HashMap::new(),
     });
     ctx.add_memory(&TestMemory {
         id: None,
         content: "Bob sent email".to_string(),
         embedding: generate_test_embedding("Bob sent email", 384),
-        timestamp: Some(days_ago(1)),  // 1 day ago
+        timestamp: Some(days_ago(1)), // 1 day ago
         metadata: HashMap::new(),
     });
 
     let query_embedding = generate_test_embedding("Alice last 2 days", 384);
-    let (intent, results) = ctx.engine.query(
-        "What did Alice do in the last 2 days?",
-        &query_embedding,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, results) = ctx
+        .engine
+        .query(
+            "What did Alice do in the last 2 days?",
+            &query_embedding,
+            10,
+            None,
+            None,
+        )
+        .unwrap();
 
     // Should detect mixed intent or prioritize one (or factual for "what" questions)
     // The query has both entity ("Alice") and temporal ("last 2 days")
     assert!(
-        intent.intent == QueryIntent::Entity ||
-        intent.intent == QueryIntent::Temporal ||
-        intent.intent == QueryIntent::Factual,
+        intent.intent == QueryIntent::Entity
+            || intent.intent == QueryIntent::Temporal
+            || intent.intent == QueryIntent::Factual,
         "Should detect entity, temporal, or factual intent for mixed query"
     );
 
@@ -922,13 +1007,16 @@ fn test_entity_mixed_002_entity_plus_causal() {
     });
 
     let query_embedding = generate_test_embedding("because Alice joined", 384);
-    let (intent, _results) = ctx.engine.query(
-        "What happened because Alice joined?",
-        &query_embedding,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _results) = ctx
+        .engine
+        .query(
+            "What happened because Alice joined?",
+            &query_embedding,
+            10,
+            None,
+            None,
+        )
+        .unwrap();
 
     // Query has both entity ("Alice") and causal ("because")
     // Should detect one or the other based on patterns
@@ -954,7 +1042,7 @@ fn test_entity_mixed_003_entity_in_recent_time() {
         id: None,
         content: "Alice deployed to prod".to_string(),
         embedding: generate_test_embedding("Alice deployed to prod", 384),
-        timestamp: Some(hours_ago(2)),  // 2 hours ago
+        timestamp: Some(hours_ago(2)), // 2 hours ago
         metadata: HashMap::new(),
     });
     ctx.add_memory(&TestMemory {
@@ -966,13 +1054,16 @@ fn test_entity_mixed_003_entity_in_recent_time() {
     });
 
     let query_embedding = generate_test_embedding("Alice recently", 384);
-    let (_intent, results) = ctx.engine.query(
-        "What did Alice do recently?",
-        &query_embedding,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (_intent, results) = ctx
+        .engine
+        .query(
+            "What did Alice do recently?",
+            &query_embedding,
+            10,
+            None,
+            None,
+        )
+        .unwrap();
 
     // Should return results (fusion will rank appropriately)
     assert!(!results.is_empty(), "Should find recent Alice activities");
@@ -1012,13 +1103,16 @@ fn test_entity_mixed_004_multiple_entities_query() {
     });
 
     let query_embedding = generate_test_embedding("Alice and Bob interactions", 384);
-    let (_intent, results) = ctx.engine.query(
-        "Interactions between Alice and Bob",
-        &query_embedding,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (_intent, results) = ctx
+        .engine
+        .query(
+            "Interactions between Alice and Bob",
+            &query_embedding,
+            10,
+            None,
+            None,
+        )
+        .unwrap();
 
     // Should return results mentioning both or either
     assert!(!results.is_empty(), "Should find interactions");
@@ -1051,13 +1145,10 @@ fn test_entity_mixed_005_entity_with_factual() {
     });
 
     let query_embedding = generate_test_embedding("Who knows Rust", 384);
-    let (intent, _results) = ctx.engine.query(
-        "Who knows Rust?",
-        &query_embedding,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, _results) = ctx
+        .engine
+        .query("Who knows Rust?", &query_embedding, 10, None, None)
+        .unwrap();
 
     // "Who" is an entity-related question word
     // Should likely detect as entity or factual
@@ -1075,28 +1166,34 @@ fn test_entity_mixed_006_entity_before_date() {
         id: None,
         content: "Alice submitted proposal".to_string(),
         embedding: generate_test_embedding("Alice submitted proposal", 384),
-        timestamp: Some(days_ago(10)),  // 10 days ago
+        timestamp: Some(days_ago(10)), // 10 days ago
         metadata: HashMap::new(),
     });
     ctx.add_memory(&TestMemory {
         id: None,
         content: "Alice got approval".to_string(),
         embedding: generate_test_embedding("Alice got approval", 384),
-        timestamp: Some(days_ago(2)),   // 2 days ago
+        timestamp: Some(days_ago(2)), // 2 days ago
         metadata: HashMap::new(),
     });
 
     let query_embedding = generate_test_embedding("Alice before last week", 384);
-    let (_intent, results) = ctx.engine.query(
-        "What did Alice do before last week?",
-        &query_embedding,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (_intent, results) = ctx
+        .engine
+        .query(
+            "What did Alice do before last week?",
+            &query_embedding,
+            10,
+            None,
+            None,
+        )
+        .unwrap();
 
     // Should find the proposal from 10 days ago
-    assert!(!results.is_empty(), "Should find Alice's activities before last week");
+    assert!(
+        !results.is_empty(),
+        "Should find Alice's activities before last week"
+    );
 }
 
 #[test]
@@ -1140,16 +1237,22 @@ fn test_entity_mixed_007_entity_causal_chain() {
     });
 
     let query_embedding = generate_test_embedding("Alice discovery results", 384);
-    let (_intent, results) = ctx.engine.query(
-        "What resulted from Alice's discovery?",
-        &query_embedding,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (_intent, results) = ctx
+        .engine
+        .query(
+            "What resulted from Alice's discovery?",
+            &query_embedding,
+            10,
+            None,
+            None,
+        )
+        .unwrap();
 
     // Should return relevant results (fusion handles multi-dimensional ranking)
-    assert!(!results.is_empty(), "Should find causal chain from Alice's action");
+    assert!(
+        !results.is_empty(),
+        "Should find causal chain from Alice's action"
+    );
 }
 
 #[test]
@@ -1179,16 +1282,16 @@ fn test_entity_mixed_008_entity_with_location() {
     });
 
     let query_embedding = generate_test_embedding("Alice San Francisco", 384);
-    let (_intent, results) = ctx.engine.query(
-        "Alice in San Francisco",
-        &query_embedding,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (_intent, results) = ctx
+        .engine
+        .query("Alice in San Francisco", &query_embedding, 10, None, None)
+        .unwrap();
 
     // Should find memories with both Alice and San Francisco
-    assert!(!results.is_empty(), "Should find entity-location combinations");
+    assert!(
+        !results.is_empty(),
+        "Should find entity-location combinations"
+    );
 }
 
 #[test]
@@ -1219,13 +1322,16 @@ fn test_entity_mixed_009_project_timeline() {
     });
 
     let query_embedding = generate_test_embedding("Project Omega progress timeline", 384);
-    let (_intent, results) = ctx.engine.query(
-        "Project Omega progress over time",
-        &query_embedding,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (_intent, results) = ctx
+        .engine
+        .query(
+            "Project Omega progress over time",
+            &query_embedding,
+            10,
+            None,
+            None,
+        )
+        .unwrap();
 
     // Should find all project memories
     assert_eq!(results.len(), 3, "Should find all project timeline entries");
@@ -1274,23 +1380,37 @@ fn test_entity_mixed_010_real_world_scenario() {
 
     // Query for company
     let acme_memories = ctx.engine.get_entity_memories("Acme Corp").unwrap();
-    assert_eq!(acme_memories.len(), 5, "Should track all customer interactions");
+    assert_eq!(
+        acme_memories.len(),
+        5,
+        "Should track all customer interactions"
+    );
 
     // Query for engineer
     let alice_memories = ctx.engine.get_entity_memories("Alice").unwrap();
-    assert_eq!(alice_memories.len(), 2, "Should track engineer's involvement");
+    assert_eq!(
+        alice_memories.len(),
+        2,
+        "Should track engineer's involvement"
+    );
 
     // Mixed query
     let query_embedding = generate_test_embedding("Alice Acme Corp work", 384);
-    let (_intent, results) = ctx.engine.query(
-        "Alice's work on Acme Corp issue",
-        &query_embedding,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (_intent, results) = ctx
+        .engine
+        .query(
+            "Alice's work on Acme Corp issue",
+            &query_embedding,
+            10,
+            None,
+            None,
+        )
+        .unwrap();
 
-    assert!(!results.is_empty(), "Should find relevant customer-engineer interactions");
+    assert!(
+        !results.is_empty(),
+        "Should find relevant customer-engineer interactions"
+    );
 }
 
 // ============================================================================
@@ -1305,7 +1425,11 @@ fn test_entity_edge_001_empty_entity_name() {
     // Query with empty entity name
     let memories = ctx.engine.get_entity_memories("").unwrap();
 
-    assert_eq!(memories.len(), 0, "Empty entity name should return no results");
+    assert_eq!(
+        memories.len(),
+        0,
+        "Empty entity name should return no results"
+    );
 }
 
 #[test]
@@ -1329,8 +1453,14 @@ fn test_entity_edge_002_special_characters() {
     // At minimum should have Smith and Johnson
     assert!(!entities.is_empty(), "Should extract some entities");
     let names: Vec<String> = entities.iter().map(|e| e.name.clone()).collect();
-    assert!(names.iter().any(|n| n.contains("Smith")), "Should extract Smith");
-    assert!(names.iter().any(|n| n.contains("Johnson")), "Should extract Johnson");
+    assert!(
+        names.iter().any(|n| n.contains("Smith")),
+        "Should extract Smith"
+    );
+    assert!(
+        names.iter().any(|n| n.contains("Johnson")),
+        "Should extract Johnson"
+    );
 }
 
 #[test]
@@ -1355,8 +1485,10 @@ fn test_entity_edge_003_orphaned_entity_cleanup() {
 
     // Verify entity is cleaned up (orphaned)
     let entities_after = ctx.engine.list_entities().unwrap();
-    assert!(!entities_after.iter().any(|e| e.name == "TemporaryEntity"),
-        "Orphaned entity should be removed");
+    assert!(
+        !entities_after.iter().any(|e| e.name == "TemporaryEntity"),
+        "Orphaned entity should be removed"
+    );
 }
 
 #[test]
@@ -1389,12 +1521,20 @@ fn test_entity_edge_004_entity_deduplication() {
     let all_entities = ctx.engine.list_entities().unwrap();
 
     // Should have only one Alice entity (deduplication)
-    let alice_entities: Vec<_> = all_entities.iter()
+    let alice_entities: Vec<_> = all_entities
+        .iter()
         .filter(|e| e.name.to_lowercase() == "alice")
         .collect();
 
-    assert_eq!(alice_entities.len(), 1, "Should deduplicate Alice across mentions");
-    assert_eq!(alice_entities[0].mention_count, 3, "Should track all 3 mentions");
+    assert_eq!(
+        alice_entities.len(),
+        1,
+        "Should deduplicate Alice across mentions"
+    );
+    assert_eq!(
+        alice_entities[0].mention_count, 3,
+        "Should track all 3 mentions"
+    );
 }
 
 #[test]
@@ -1410,23 +1550,33 @@ fn test_entity_edge_005_no_extraction_when_disabled() {
 
     // Add memory with potential entities
     let embedding = generate_test_embedding("Alice and Bob worked together", 384);
-    let id = engine.add(
-        "Alice and Bob worked together".to_string(),
-        embedding,
-        None,
-        None,
-        None,
-        None,
-    ).unwrap();
+    let id = engine
+        .add(
+            "Alice and Bob worked together".to_string(),
+            embedding,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
     // Get entities for this memory
     let entities = engine.get_memory_entities(&id).unwrap();
 
-    assert_eq!(entities.len(), 0, "Should not extract entities when disabled");
+    assert_eq!(
+        entities.len(),
+        0,
+        "Should not extract entities when disabled"
+    );
 
     // List all entities
     let all_entities = engine.list_entities().unwrap();
-    assert_eq!(all_entities.len(), 0, "No entities should exist when extraction disabled");
+    assert_eq!(
+        all_entities.len(),
+        0,
+        "No entities should exist when extraction disabled"
+    );
 }
 
 // ============================================================================
@@ -1462,19 +1612,19 @@ fn test_entity_query_001_entity_intent_returns_relevant() {
     });
 
     let query_embedding = generate_test_embedding("Tell me about Alice", 384);
-    let (intent, results) = ctx.engine.query(
-        "Tell me about Alice",
-        &query_embedding,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, results) = ctx
+        .engine
+        .query("Tell me about Alice", &query_embedding, 10, None, None)
+        .unwrap();
 
     // Should detect entity intent
     assert_eq!(intent.intent, QueryIntent::Entity);
 
     // Should return relevant results (fusion will prioritize Alice-related)
-    assert!(!results.is_empty(), "Should return results for entity query");
+    assert!(
+        !results.is_empty(),
+        "Should return results for entity query"
+    );
 }
 
 #[test]
@@ -1497,13 +1647,16 @@ fn test_entity_query_002_mixed_entity_temporal() {
     });
 
     let query_embedding = generate_test_embedding("Alice yesterday", 384);
-    let (intent, results) = ctx.engine.query(
-        "What did Alice do yesterday?",
-        &query_embedding,
-        10,
-        None,
-        None,
-    ).unwrap();
+    let (intent, results) = ctx
+        .engine
+        .query(
+            "What did Alice do yesterday?",
+            &query_embedding,
+            10,
+            None,
+            None,
+        )
+        .unwrap();
 
     // Mixed query should balance dimensions
     // Could be Entity or Temporal depending on classifier priority

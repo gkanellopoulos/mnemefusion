@@ -16,8 +16,8 @@ use std::sync::Arc;
 /// Serializable representation of a causal edge.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CausalEdgeData {
-    source: String,  // MemoryId as string
-    target: String,  // MemoryId as string
+    source: String, // MemoryId as string
+    target: String, // MemoryId as string
     confidence: f32,
     evidence: String,
 }
@@ -25,8 +25,8 @@ struct CausalEdgeData {
 /// Serializable representation of an entity graph edge.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct EntityEdgeData {
-    memory_id: String,  // MemoryId as string
-    entity_id: String,  // EntityId as string
+    memory_id: String, // MemoryId as string
+    entity_id: String, // EntityId as string
 }
 
 /// Save the causal and entity graphs to storage.
@@ -111,10 +111,12 @@ pub fn load_graph(graph: &mut GraphManager, storage: &Arc<StorageEngine>) -> Res
         let edges: Vec<(MemoryId, MemoryId, CausalEdge)> = edge_data
             .into_iter()
             .map(|data| {
-                let source = MemoryId::parse(&data.source)
-                    .map_err(|e| crate::Error::Deserialization(format!("Invalid source ID: {}", e)))?;
-                let target = MemoryId::parse(&data.target)
-                    .map_err(|e| crate::Error::Deserialization(format!("Invalid target ID: {}", e)))?;
+                let source = MemoryId::parse(&data.source).map_err(|e| {
+                    crate::Error::Deserialization(format!("Invalid source ID: {}", e))
+                })?;
+                let target = MemoryId::parse(&data.target).map_err(|e| {
+                    crate::Error::Deserialization(format!("Invalid target ID: {}", e))
+                })?;
                 let edge = CausalEdge {
                     confidence: data.confidence,
                     evidence: data.evidence,
@@ -189,8 +191,12 @@ mod tests {
         let m3 = make_memory_id(3);
 
         // Build graph
-        graph.add_causal_link(&m1, &m2, 0.9, "edge1".to_string()).unwrap();
-        graph.add_causal_link(&m2, &m3, 0.8, "edge2".to_string()).unwrap();
+        graph
+            .add_causal_link(&m1, &m2, 0.9, "edge1".to_string())
+            .unwrap();
+        graph
+            .add_causal_link(&m2, &m3, 0.8, "edge2".to_string())
+            .unwrap();
 
         // Save
         save_graph(&graph, &storage).unwrap();
@@ -219,12 +225,16 @@ mod tests {
         let m2 = make_memory_id(2);
 
         // Save first graph
-        graph.add_causal_link(&m1, &m2, 0.9, "edge1".to_string()).unwrap();
+        graph
+            .add_causal_link(&m1, &m2, 0.9, "edge1".to_string())
+            .unwrap();
         save_graph(&graph, &storage).unwrap();
 
         // Modify and save again
         let m3 = make_memory_id(3);
-        graph.add_causal_link(&m2, &m3, 0.8, "edge2".to_string()).unwrap();
+        graph
+            .add_causal_link(&m2, &m3, 0.8, "edge2".to_string())
+            .unwrap();
         save_graph(&graph, &storage).unwrap();
 
         // Load should get the latest version

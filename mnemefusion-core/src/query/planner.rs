@@ -8,7 +8,7 @@ use crate::{
     graph::GraphManager,
     index::{TemporalIndex, VectorIndex},
     query::{
-        fusion::{FusionEngine, FusedResult},
+        fusion::{FusedResult, FusionEngine},
         intent::{IntentClassification, IntentClassifier},
     },
     storage::StorageEngine,
@@ -73,9 +73,11 @@ impl QueryPlanner {
         let intent = self.intent_classifier.classify(query_text);
 
         // Step 2: Retrieve from all dimensions (fetch more to account for filtering)
-        let needs_filtering = namespace.is_some() || (filters.is_some() && !filters.unwrap().is_empty());
+        let needs_filtering =
+            namespace.is_some() || (filters.is_some() && !filters.unwrap().is_empty());
         let fetch_multiplier = if needs_filtering { 5 } else { 3 };
-        let mut semantic_scores = self.semantic_search(query_embedding, limit * fetch_multiplier)?;
+        let mut semantic_scores =
+            self.semantic_search(query_embedding, limit * fetch_multiplier)?;
         let mut temporal_scores = self.temporal_search(limit * fetch_multiplier)?;
         let causal_scores = HashMap::new(); // TODO: Implement causal search
         let mut entity_scores = self.entity_search(query_text, limit * fetch_multiplier)?;
@@ -158,8 +160,7 @@ impl QueryPlanner {
         let potential_entities: Vec<&str> = query_text
             .split_whitespace()
             .filter(|word| {
-                word.chars().next().map_or(false, |c| c.is_uppercase())
-                    && word.len() > 1
+                word.chars().next().map_or(false, |c| c.is_uppercase()) && word.len() > 1
             })
             .collect();
 
@@ -208,7 +209,11 @@ impl QueryPlanner {
         namespace: Option<&str>,
     ) -> Result<Vec<FusedResult>> {
         // Fetch more results if filtering by namespace
-        let fetch_limit = if namespace.is_some() { limit * 3 } else { limit };
+        let fetch_limit = if namespace.is_some() {
+            limit * 3
+        } else {
+            limit
+        };
         let results = self.temporal_index.range_query(start, end, fetch_limit)?;
 
         // Convert to fused results with temporal scores
@@ -359,12 +364,7 @@ mod tests {
         let temporal_index = Arc::new(TemporalIndex::new(Arc::clone(&storage)));
         let graph_manager = Arc::new(RwLock::new(GraphManager::new()));
 
-        let planner = QueryPlanner::new(
-            storage,
-            vector_index,
-            temporal_index,
-            graph_manager,
-        );
+        let planner = QueryPlanner::new(storage, vector_index, temporal_index, graph_manager);
 
         (planner, dir)
     }
@@ -407,8 +407,14 @@ mod tests {
         planner.storage.store_memory(&mem2).unwrap();
 
         // Also add to temporal index (normally done by ingestion pipeline)
-        planner.temporal_index.add(&mem1.id, mem1.created_at).unwrap();
-        planner.temporal_index.add(&mem2.id, mem2.created_at).unwrap();
+        planner
+            .temporal_index
+            .add(&mem1.id, mem1.created_at)
+            .unwrap();
+        planner
+            .temporal_index
+            .add(&mem2.id, mem2.created_at)
+            .unwrap();
 
         // Search
         let scores = planner.temporal_search(10).unwrap();
@@ -443,7 +449,10 @@ mod tests {
             index.add(mem_id.clone(), &memory.embedding).unwrap();
         }
         // Add to temporal index too
-        planner.temporal_index.add(&mem_id, memory.created_at).unwrap();
+        planner
+            .temporal_index
+            .add(&mem_id, memory.created_at)
+            .unwrap();
 
         // Execute query
         let (intent, results) = planner
@@ -472,7 +481,10 @@ mod tests {
 
         planner.storage.store_memory(&mem1).unwrap();
         // Add to temporal index
-        planner.temporal_index.add(&mem1.id, mem1.created_at).unwrap();
+        planner
+            .temporal_index
+            .add(&mem1.id, mem1.created_at)
+            .unwrap();
 
         let results = planner
             .temporal_range_query(now.subtract_days(2), now, 10, None)
@@ -510,9 +522,18 @@ mod tests {
             index.add(mem2_id.clone(), &mem2.embedding).unwrap();
             index.add(mem3_id.clone(), &mem3.embedding).unwrap();
         }
-        planner.temporal_index.add(&mem1_id, mem1.created_at).unwrap();
-        planner.temporal_index.add(&mem2_id, mem2.created_at).unwrap();
-        planner.temporal_index.add(&mem3_id, mem3.created_at).unwrap();
+        planner
+            .temporal_index
+            .add(&mem1_id, mem1.created_at)
+            .unwrap();
+        planner
+            .temporal_index
+            .add(&mem2_id, mem2.created_at)
+            .unwrap();
+        planner
+            .temporal_index
+            .add(&mem3_id, mem3.created_at)
+            .unwrap();
 
         // Query with ns1 filter
         let (_, results) = planner
@@ -552,27 +573,25 @@ mod tests {
         let ts2 = Timestamp::from_unix_secs(ts1.as_unix_secs() + 60.0); // 1 minute later
 
         // Create memories in different namespaces
-        let mut mem1 = Memory::new_with_timestamp(
-            "NS1 memory".to_string(),
-            vec![0.1; 384],
-            ts1,
-        );
+        let mut mem1 = Memory::new_with_timestamp("NS1 memory".to_string(), vec![0.1; 384], ts1);
         mem1.set_namespace("ns1");
         let mem1_id = mem1.id.clone();
 
-        let mut mem2 = Memory::new_with_timestamp(
-            "NS2 memory".to_string(),
-            vec![0.2; 384],
-            ts2,
-        );
+        let mut mem2 = Memory::new_with_timestamp("NS2 memory".to_string(), vec![0.2; 384], ts2);
         mem2.set_namespace("ns2");
         let mem2_id = mem2.id.clone();
 
         // Store and index
         planner.storage.store_memory(&mem1).unwrap();
         planner.storage.store_memory(&mem2).unwrap();
-        planner.temporal_index.add(&mem1_id, mem1.created_at).unwrap();
-        planner.temporal_index.add(&mem2_id, mem2.created_at).unwrap();
+        planner
+            .temporal_index
+            .add(&mem1_id, mem1.created_at)
+            .unwrap();
+        planner
+            .temporal_index
+            .add(&mem2_id, mem2.created_at)
+            .unwrap();
 
         // First verify memories are stored correctly
         let retrieved_mem1 = planner.storage.get_memory(&mem1_id).unwrap().unwrap();
@@ -582,7 +601,11 @@ mod tests {
         let all_results = planner
             .temporal_range_query(now.subtract_days(2), now, 10, None)
             .unwrap();
-        assert_eq!(all_results.len(), 2, "Should find both memories without filter");
+        assert_eq!(
+            all_results.len(),
+            2,
+            "Should find both memories without filter"
+        );
 
         // Query with namespace filter
         let results = planner
@@ -631,13 +654,16 @@ mod tests {
 
         // Create memories with different metadata
         let mut mem1 = Memory::new("Event memory".to_string(), vec![0.1; 384]);
-        mem1.metadata.insert("type".to_string(), "event".to_string());
-        mem1.metadata.insert("priority".to_string(), "high".to_string());
+        mem1.metadata
+            .insert("type".to_string(), "event".to_string());
+        mem1.metadata
+            .insert("priority".to_string(), "high".to_string());
         let mem1_id = mem1.id.clone();
 
         let mut mem2 = Memory::new("Task memory".to_string(), vec![0.2; 384]);
         mem2.metadata.insert("type".to_string(), "task".to_string());
-        mem2.metadata.insert("priority".to_string(), "low".to_string());
+        mem2.metadata
+            .insert("priority".to_string(), "low".to_string());
         let mem2_id = mem2.id.clone();
 
         // Store memories
@@ -665,18 +691,23 @@ mod tests {
 
         // Create memories with different metadata
         let mut mem1 = Memory::new("High priority event".to_string(), vec![0.1; 384]);
-        mem1.metadata.insert("type".to_string(), "event".to_string());
-        mem1.metadata.insert("priority".to_string(), "high".to_string());
+        mem1.metadata
+            .insert("type".to_string(), "event".to_string());
+        mem1.metadata
+            .insert("priority".to_string(), "high".to_string());
         let mem1_id = mem1.id.clone();
 
         let mut mem2 = Memory::new("Low priority event".to_string(), vec![0.2; 384]);
-        mem2.metadata.insert("type".to_string(), "event".to_string());
-        mem2.metadata.insert("priority".to_string(), "low".to_string());
+        mem2.metadata
+            .insert("type".to_string(), "event".to_string());
+        mem2.metadata
+            .insert("priority".to_string(), "low".to_string());
         let mem2_id = mem2.id.clone();
 
         let mut mem3 = Memory::new("High priority task".to_string(), vec![0.3; 384]);
         mem3.metadata.insert("type".to_string(), "task".to_string());
-        mem3.metadata.insert("priority".to_string(), "high".to_string());
+        mem3.metadata
+            .insert("priority".to_string(), "high".to_string());
         let mem3_id = mem3.id.clone();
 
         // Store memories
@@ -708,15 +739,18 @@ mod tests {
 
         // Create memories with numeric priority values
         let mut mem1 = Memory::new("Priority 8".to_string(), vec![0.1; 384]);
-        mem1.metadata.insert("priority".to_string(), "8".to_string());
+        mem1.metadata
+            .insert("priority".to_string(), "8".to_string());
         let mem1_id = mem1.id.clone();
 
         let mut mem2 = Memory::new("Priority 5".to_string(), vec![0.2; 384]);
-        mem2.metadata.insert("priority".to_string(), "5".to_string());
+        mem2.metadata
+            .insert("priority".to_string(), "5".to_string());
         let mem2_id = mem2.id.clone();
 
         let mut mem3 = Memory::new("Priority 3".to_string(), vec![0.3; 384]);
-        mem3.metadata.insert("priority".to_string(), "3".to_string());
+        mem3.metadata
+            .insert("priority".to_string(), "3".to_string());
         let mem3_id = mem3.id.clone();
 
         // Store memories
@@ -747,15 +781,18 @@ mod tests {
 
         // Create memories with different categories
         let mut mem1 = Memory::new("Food memory".to_string(), vec![0.1; 384]);
-        mem1.metadata.insert("category".to_string(), "food".to_string());
+        mem1.metadata
+            .insert("category".to_string(), "food".to_string());
         let mem1_id = mem1.id.clone();
 
         let mut mem2 = Memory::new("Travel memory".to_string(), vec![0.2; 384]);
-        mem2.metadata.insert("category".to_string(), "travel".to_string());
+        mem2.metadata
+            .insert("category".to_string(), "travel".to_string());
         let mem2_id = mem2.id.clone();
 
         let mut mem3 = Memory::new("Work memory".to_string(), vec![0.3; 384]);
-        mem3.metadata.insert("category".to_string(), "work".to_string());
+        mem3.metadata
+            .insert("category".to_string(), "work".to_string());
         let mem3_id = mem3.id.clone();
 
         // Store memories
@@ -787,7 +824,9 @@ mod tests {
     fn test_memory_matches_filters() {
         // Test exact match
         let mut memory = Memory::new("Test".to_string(), vec![0.1; 384]);
-        memory.metadata.insert("type".to_string(), "event".to_string());
+        memory
+            .metadata
+            .insert("type".to_string(), "event".to_string());
 
         let filters = vec![MetadataFilter::eq("type", "event")];
         assert!(QueryPlanner::memory_matches_filters(&memory, &filters));
@@ -800,7 +839,9 @@ mod tests {
         assert!(!QueryPlanner::memory_matches_filters(&memory, &filters));
 
         // Test multiple filters (AND logic)
-        memory.metadata.insert("priority".to_string(), "high".to_string());
+        memory
+            .metadata
+            .insert("priority".to_string(), "high".to_string());
         let filters = vec![
             MetadataFilter::eq("type", "event"),
             MetadataFilter::eq("priority", "high"),

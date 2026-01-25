@@ -16,8 +16,15 @@ fn test_intent_factual_001_topic_query() {
 
     let result = classifier.classify("machine learning techniques");
 
-    assert_eq!(result.intent, QueryIntent::Factual, "Pure topic query should be factual");
-    assert!(result.confidence >= 0.3, "Factual base score should be 0.3+");
+    assert_eq!(
+        result.intent,
+        QueryIntent::Factual,
+        "Pure topic query should be factual"
+    );
+    assert!(
+        result.confidence >= 0.3,
+        "Factual base score should be 0.3+"
+    );
 }
 
 #[test]
@@ -73,7 +80,7 @@ fn test_intent_factual_007_long_descriptive() {
     let classifier = IntentClassifier::new();
 
     let result = classifier.classify(
-        "best practices for building scalable microservices architecture with containerization"
+        "best practices for building scalable microservices architecture with containerization",
     );
 
     assert_eq!(result.intent, QueryIntent::Factual);
@@ -140,10 +147,16 @@ fn test_intent_mixed_002_temporal_causal() {
     let result = classifier.classify("Why did the meeting get cancelled last week?");
 
     // Causal should dominate (higher weight: 0.5 vs 0.4)
-    assert_eq!(result.intent, QueryIntent::Causal, "Causal should dominate over temporal");
+    assert_eq!(
+        result.intent,
+        QueryIntent::Causal,
+        "Causal should dominate over temporal"
+    );
 
     // Should have temporal as secondary
-    let has_temporal_secondary = result.secondary.iter()
+    let has_temporal_secondary = result
+        .secondary
+        .iter()
         .any(|(intent, _)| *intent == QueryIntent::Temporal);
     assert!(has_temporal_secondary || result.confidence > 0.5);
 }
@@ -156,7 +169,11 @@ fn test_intent_mixed_003_entity_causal() {
     let result = classifier.classify("Why did Alice leave the company?");
 
     // Causal should dominate (stronger pattern)
-    assert_eq!(result.intent, QueryIntent::Causal, "Causal should dominate over entity");
+    assert_eq!(
+        result.intent,
+        QueryIntent::Causal,
+        "Causal should dominate over entity"
+    );
 }
 
 #[test]
@@ -167,7 +184,11 @@ fn test_intent_mixed_004_all_three() {
     let result = classifier.classify("Why did Alice cancel the meeting yesterday?");
 
     // Causal should win (highest weight)
-    assert_eq!(result.intent, QueryIntent::Causal, "Causal should dominate in triple-mixed query");
+    assert_eq!(
+        result.intent,
+        QueryIntent::Causal,
+        "Causal should dominate in triple-mixed query"
+    );
 
     // Should have multiple secondary intents
     assert!(result.secondary.len() >= 1 || result.confidence > 0.5);
@@ -182,7 +203,10 @@ fn test_intent_mixed_005_multiple_temporal() {
 
     assert_eq!(result.intent, QueryIntent::Temporal);
     // Multiple distinct matches should increase confidence: 2 * 0.4 = 0.8
-    assert!(result.confidence >= 0.5, "Multiple temporal keywords should boost confidence");
+    assert!(
+        result.confidence >= 0.5,
+        "Multiple temporal keywords should boost confidence"
+    );
 }
 
 #[test]
@@ -194,7 +218,10 @@ fn test_intent_mixed_006_multiple_causal() {
 
     assert_eq!(result.intent, QueryIntent::Causal);
     // Multiple matches: at least 2 * 0.5 = 1.0 (capped)
-    assert!(result.confidence >= 0.8, "Multiple causal keywords should boost confidence");
+    assert!(
+        result.confidence >= 0.8,
+        "Multiple causal keywords should boost confidence"
+    );
 }
 
 #[test]
@@ -237,9 +264,7 @@ fn test_intent_mixed_010_complex_real_world() {
     let classifier = IntentClassifier::new();
 
     // Complex query with multiple dimensions
-    let result = classifier.classify(
-        "What caused Alice to resign from Project Beta last month?"
-    );
+    let result = classifier.classify("What caused Alice to resign from Project Beta last month?");
 
     // Has: causal ("caused"), entity ("Alice", "Project Beta"), temporal ("last month")
     // Causal should dominate
@@ -304,9 +329,9 @@ fn test_intent_edge_004_very_long_query() {
 
     // Should still detect intents in long queries
     assert!(
-        result.intent == QueryIntent::Temporal ||
-        result.intent == QueryIntent::Causal ||
-        result.intent == QueryIntent::Entity
+        result.intent == QueryIntent::Temporal
+            || result.intent == QueryIntent::Causal
+            || result.intent == QueryIntent::Entity
     );
 }
 
@@ -316,7 +341,10 @@ fn test_intent_edge_005_confidence_boundaries() {
 
     // Test confidence never exceeds 1.0
     let result = classifier.classify("why why why why why");
-    assert!(result.confidence <= 1.0, "Confidence should be capped at 1.0");
+    assert!(
+        result.confidence <= 1.0,
+        "Confidence should be capped at 1.0"
+    );
     assert_eq!(result.intent, QueryIntent::Causal);
 
     // Test confidence minimum for factual
@@ -336,16 +364,14 @@ fn test_intent_secondary_001_temporal_with_entity() {
     let result = classifier.classify("Show me recent work about Alice");
 
     // Primary should be temporal or entity
-    assert!(
-        result.intent == QueryIntent::Temporal || result.intent == QueryIntent::Entity
-    );
+    assert!(result.intent == QueryIntent::Temporal || result.intent == QueryIntent::Entity);
 
     // Query has both temporal ("recent") and entity ("about Alice") signals
     // At least one should be detected (could be primary or have high confidence)
     assert!(
-        result.intent == QueryIntent::Temporal ||
-        result.intent == QueryIntent::Entity ||
-        result.confidence > 0.4,
+        result.intent == QueryIntent::Temporal
+            || result.intent == QueryIntent::Entity
+            || result.confidence > 0.4,
         "Should detect intent signals"
     );
 }
@@ -360,10 +386,15 @@ fn test_intent_secondary_002_causal_with_temporal() {
     assert_eq!(result.intent, QueryIntent::Causal);
 
     // Check for temporal in secondary
-    let has_temporal = result.secondary.iter()
+    let has_temporal = result
+        .secondary
+        .iter()
         .any(|(intent, score)| *intent == QueryIntent::Temporal && *score > 0.3);
 
-    assert!(has_temporal || result.confidence > 0.7, "Should detect temporal as secondary");
+    assert!(
+        has_temporal || result.confidence > 0.7,
+        "Should detect temporal as secondary"
+    );
 }
 
 #[test]
@@ -389,7 +420,10 @@ fn test_intent_secondary_004_no_secondary_for_pure() {
     let result = classifier.classify("database architecture");
 
     assert_eq!(result.intent, QueryIntent::Factual);
-    assert!(result.secondary.is_empty(), "Pure factual should have no secondary intents");
+    assert!(
+        result.secondary.is_empty(),
+        "Pure factual should have no secondary intents"
+    );
 }
 
 #[test]
