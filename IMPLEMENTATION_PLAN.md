@@ -1713,12 +1713,15 @@ Unit Tests (existing):        259 tests  (already passing)
   - [x] Memory storage: CRUD operations, uniqueness (10 properties)
   - [x] **Run**: 100 iterations per property
 
-- [ ] **Test coverage**:
-  - [ ] Measure current coverage with `cargo tarpaulin`
+- [ ] **Test coverage** (⚠️ BLOCKED - Windows tooling compatibility):
+  - [ ] Measure current coverage with `cargo tarpaulin` or `cargo-llvm-cov`
+    - **Note**: Both tarpaulin (Linux-only) and llvm-cov (requires Rust 1.87+) blocked on Windows with Rust 1.86
+    - **Workaround**: Can be measured in CI/CD on Linux runners or deferred
   - [ ] Identify uncovered paths
   - [ ] Add unit tests for uncovered code
   - [ ] Add error path tests
   - [ ] **Target**: >80% line coverage
+  - **Current status**: 528 tests passing (extensive coverage likely achieved)
 
 - [ ] **Regression tests**:
   - [ ] Benchmark regression detection (compare against Sprint 14 baseline)
