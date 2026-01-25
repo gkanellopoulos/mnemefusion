@@ -1559,9 +1559,11 @@ Following Sprint 14 completion, comprehensive language support documentation was
 
 ### Sprint 15: Comprehensive Testing (Weeks 29-30)
 
-**Objective**: Achieve >80% test coverage, add property-based tests
+**Objective**: Validate quality with standard benchmarks + custom tests for differentiators
 
 **Note**: Moved from original Sprint 11, now Sprint 15 in Phase 3
+
+**Strategy**: Use industry-standard benchmarks (HotpotQA, LoCoMo) for credibility, plus hand-crafted test cases for our unique features (temporal, causal, intent) which lack standard benchmarks.
 
 #### Stories
 
@@ -1569,56 +1571,216 @@ Following Sprint 14 completion, comprehensive language support documentation was
 - **Priority**: P1 (High)
 - **Points**: 13
 - **Acceptance Criteria**:
-  - >80% line coverage
+  - Standard benchmarks: HotpotQA + LoCoMo competitive with baselines
+  - Custom tests: 150-200 cases for temporal/causal/entity/intent
   - Property-based tests for core algorithms
-  - Integration tests for all user flows
-  - Performance regression tests
+  - >80% line coverage
   - Test suite runs in CI
+
+**[STORY-15.2] As a user, I can trust MnemeFusion's quality vs industry benchmarks**
+- **Priority**: P0 (Critical)
+- **Points**: 8
+- **Acceptance Criteria**:
+  - HotpotQA: Recall@10 competitive with DPR baseline (>60%)
+  - LoCoMo: Session accuracy >70%
+  - Results published in documentation
+  - Comparison with semantic-only baseline shows fusion improvement
+
+#### Test Suite Structure
+
+**Total: ~1,990 comprehensive test cases**
+
+```
+Standard Benchmarks (~1,500 cases):
+├── HotpotQA:              1,000 samples  (multi-hop reasoning, semantic quality)
+├── LoCoMo:                  500 samples  (conversational retrieval, intent validation)
+└── Baseline comparison             N/A  (semantic-only vs fusion)
+
+Custom Test Cases (~180 cases):
+├── Temporal queries:         50 cases  (recency, ranges, relative time)
+├── Causal queries:           60 cases  (why/because, multi-hop chains, consequences)
+├── Entity queries:           35 cases  (about/mentions, multi-entity, reverse lookup)
+├── Intent classification:    25 cases  (factual, mixed intent, edge cases)
+└── Adaptive fusion:          10 cases  (fusion > single dimension, weight validation)
+
+Property-Based Tests (~50 properties):
+├── MemoryId conversions      (u64 ↔ UUID roundtrip)
+├── Fusion weights            (always sum to 1.0)
+├── Timestamp utilities       (ordering, ranges)
+└── Score normalization       (always 0.0-1.0)
+
+Unit Tests (existing):        259 tests  (already passing)
+```
 
 #### Tasks
 
-**Test Coverage**
-- [ ] Measure current coverage with tarpaulin
-- [ ] Add unit tests for uncovered paths
-- [ ] Add edge case tests
-- [ ] Add error path tests
-- [ ] Target: >80% coverage
+**Week 1: Custom Test Cases (Days 1-5)**
 
-**Property-Based Testing**
-- [ ] Add proptest dependency
-- [ ] Property tests for MemoryId conversions
-- [ ] Property tests for fusion algorithm (weights always sum to 1)
-- [ ] Property tests for timestamp utilities
-- [ ] Property tests for score normalization
+*Goal: Validate our differentiators - temporal, causal, entity, intent*
 
-**Integration Tests**
-- [ ] End-to-end user flows:
-  - Create DB → Add memories → Search → Close → Reopen
-  - Build causal graph → Query chains
-  - Add entities → Query entity memories
-- [ ] Multi-query test suite (50+ queries)
-- [ ] Concurrent access tests (if supported)
+- [ ] **Set up test infrastructure**:
+  - [ ] Create `tests/custom/` directory structure
+  - [ ] Define test data format (JSON fixtures)
+  - [ ] Create test harness for custom cases
+  - [ ] Add test utilities (setup, assertions)
 
-**Regression Tests**
-- [ ] Benchmark regression detection
-- [ ] API compatibility tests
-- [ ] File format backward compatibility
+- [ ] **Temporal query tests** (50 cases):
+  - [ ] Recency queries (15 cases): "yesterday", "recent", "latest"
+  - [ ] Range queries (15 cases): "last week", "January 2026", "between X and Y"
+  - [ ] Relative time (10 cases): "3 days ago", "earlier today"
+  - [ ] Edge cases (10 cases): "oldest", empty range, future dates
+  - [ ] **Validation**: Intent correct, time range extracted, results in range, temporal weights applied
 
-**CI/CD**
-- [ ] Set up GitHub Actions
-- [ ] Run tests on commit
-- [ ] Run benchmarks on PR
-- [ ] Generate coverage reports
-- [ ] Fail on regressions
+- [ ] **Causal query tests** (60 cases):
+  - [ ] Why questions (20 cases): "Why was X cancelled?", "Why did Y happen?"
+  - [ ] What caused (15 cases): "What caused X?", "What led to Y?"
+  - [ ] Multi-hop causal (15 cases): 2-hop, 3-hop chains, max_hops boundary
+  - [ ] Consequence queries (10 cases): "What was the impact?", "What resulted from?"
+  - [ ] **Validation**: Causal intent detected, graph traversal works, chains found, confidence scores
 
-**Documentation**
-- [ ] Testing guide for contributors
-- [ ] CI/CD documentation
+- [ ] **Entity query tests** (35 cases):
+  - [ ] About queries (15 cases): "Alice's work", "about Project Alpha"
+  - [ ] Mention queries (10 cases): "mentioning Bob", "involving Team Beta"
+  - [ ] Multi-entity (5 cases): "Alice and Bob", "Team Alpha on Project X"
+  - [ ] Edge cases (5 cases): reverse lookup, entities with spaces, minimal queries
+  - [ ] **Validation**: Entity extraction from query, graph lookups, entity weights applied
 
-**Sprint 15 Review**
+- [ ] **Intent classification tests** (25 cases):
+  - [ ] Factual queries (10 cases): "machine learning", "database optimization"
+  - [ ] Mixed intent (10 cases): "Why did Alice quit yesterday?" (causal+temporal+entity)
+  - [ ] Edge cases (5 cases): empty query, punctuation only, repeated keywords
+  - [ ] **Validation**: Primary intent correct, secondary intents detected, confidence reasonable
+
+- [ ] **Adaptive fusion tests** (10 cases):
+  - [ ] Fusion improvement (5 cases): fusion recall > semantic-only baseline
+  - [ ] Weight validation (5 cases): temporal queries have temporal_weight > 0.4
+  - [ ] **Validation**: Weights sum to 1.0, weights adapt to intent, normalization correct
+
+**Week 2: Standard Benchmarks + Infrastructure (Days 6-10)**
+
+*Goal: Industry credibility and semantic search validation*
+
+- [ ] **HotpotQA evaluation** (~1,000 samples):
+  - [ ] Download HotpotQA dataset
+  - [ ] Create evaluation pipeline:
+    - [ ] Load questions + supporting facts
+    - [ ] Generate embeddings (use sentence-transformers)
+    - [ ] Build test database with supporting facts as memories
+    - [ ] Run search queries
+    - [ ] Calculate Recall@10, MRR, P@10
+  - [ ] Run baseline (semantic-only, no fusion)
+  - [ ] Run with fusion enabled
+  - [ ] Generate comparison report
+  - [ ] **Target**: Recall@10 > 60% (competitive with DPR)
+
+- [ ] **LoCoMo evaluation** (~500 samples):
+  - [ ] Download LoCoMo dataset
+  - [ ] Create conversational evaluation pipeline:
+    - [ ] Load conversation sessions
+    - [ ] Build memory databases per session
+    - [ ] Run queries with conversational context
+    - [ ] Measure session accuracy
+  - [ ] Test intent classification on conversational queries
+  - [ ] Test fusion with temporal context (recent messages weighted higher)
+  - [ ] **Target**: Session accuracy > 70%
+
+- [ ] **Property-based tests**:
+  - [ ] Add `proptest` dependency to Cargo.toml
+  - [ ] MemoryId conversions: u64 ↔ UUID ↔ u64 = identity
+  - [ ] Fusion weights: semantic + temporal + causal + entity = 1.0 (±0.01)
+  - [ ] Timestamp ordering: created_at ≤ updated_at always
+  - [ ] Score normalization: all scores in [0.0, 1.0]
+  - [ ] **Run**: 100 iterations per property
+
+- [ ] **Test coverage**:
+  - [ ] Measure current coverage with `cargo tarpaulin`
+  - [ ] Identify uncovered paths
+  - [ ] Add unit tests for uncovered code
+  - [ ] Add error path tests
+  - [ ] **Target**: >80% line coverage
+
+- [ ] **Regression tests**:
+  - [ ] Benchmark regression detection (compare against Sprint 14 baseline)
+  - [ ] API compatibility tests (all public APIs stable)
+  - [ ] File format backward compatibility (can open databases from earlier sprints)
+
+- [ ] **CI/CD setup**:
+  - [ ] Create `.github/workflows/test.yml`
+  - [ ] Run all tests on every commit
+  - [ ] Run benchmarks on PR (with regression detection)
+  - [ ] Generate coverage reports (codecov.io or coveralls)
+  - [ ] Fail CI on test failures or regressions
+  - [ ] Add status badges to README
+
+- [ ] **Documentation**:
+  - [ ] Testing guide for contributors (how to run tests, add new tests)
+  - [ ] Benchmark results document (publish HotpotQA + LoCoMo results)
+  - [ ] CI/CD documentation (workflow, badges, regression thresholds)
+
+#### File Structure
+
+```
+tests/
+├── custom/                         # Custom test cases for differentiators
+│   ├── temporal_tests.rs           # 50 temporal query tests
+│   ├── causal_tests.rs             # 60 causal query tests
+│   ├── entity_tests.rs             # 35 entity query tests
+│   ├── intent_tests.rs             # 25 intent classification tests
+│   ├── fusion_tests.rs             # 10 fusion validation tests
+│   └── test_data.json              # Hand-crafted test fixtures
+│
+├── benchmarks/                     # Standard benchmark evaluations
+│   ├── hotpotqa_eval.rs            # HotpotQA evaluation pipeline
+│   ├── locomo_eval.rs              # LoCoMo evaluation pipeline
+│   ├── report_generator.rs         # Comparison reports
+│   └── fixtures/
+│       ├── hotpotqa_1k.json        # HotpotQA samples
+│       └── locomo_500.json         # LoCoMo samples
+│
+├── property_tests.rs               # Property-based tests (proptest)
+├── integration/                    # Integration tests (existing)
+│   └── ...
+└── regression/                     # Regression tests
+    ├── benchmark_regression.rs     # Performance regression detection
+    └── api_compatibility.rs        # API stability tests
+```
+
+#### Acceptance Criteria
+
+**Standard Benchmarks**:
+- ✅ HotpotQA: Recall@10 > 60% (competitive with DPR baseline)
+- ✅ LoCoMo: Session accuracy > 70%
+- ✅ Fusion improves over semantic-only baseline (measured improvement)
+- ✅ Results documented and published
+
+**Custom Test Cases**:
+- ✅ All 180 custom tests passing (100% pass rate)
+- ✅ Temporal: Intent detection + time range extraction working
+- ✅ Causal: Multi-hop chains found, confidence scores reasonable
+- ✅ Entity: Entity graph lookups working, entities extracted from queries
+- ✅ Intent: Primary + secondary intents detected correctly
+- ✅ Fusion: Weights adapt to intent, always sum to 1.0
+
+**Infrastructure**:
+- ✅ Property-based tests: All 50 properties hold (100 iterations each)
+- ✅ Test coverage: >80% line coverage (measured with tarpaulin)
+- ✅ CI/CD: Tests run on every commit, PRs blocked on failures
+- ✅ Regression: Performance regressions detected (vs Sprint 14 baseline)
+
+**Documentation**:
+- ✅ Testing guide published
+- ✅ Benchmark results documented
+- ✅ CI/CD workflows documented
+
+#### Sprint 15 Review
+
+- ✅ Standard benchmarks competitive with industry baselines
+- ✅ Custom tests validate all differentiators (temporal, causal, entity, intent)
 - ✅ Test coverage >80%
 - ✅ Property tests passing
 - ✅ CI/CD functional
+- ✅ Regression detection working
+- ✅ Ready for API freeze and 1.0 release
 
 ---
 
