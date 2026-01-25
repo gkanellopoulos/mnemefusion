@@ -1820,22 +1820,24 @@ tests/
 - ⏳ HotpotQA evaluation (~1,000 samples)
 - ⏳ LoCoMo evaluation (~500 samples)
 - ✅ Test coverage measurement (automated in CI/CD on Linux)
-- ✅ CI/CD setup (GitHub Actions workflows)
+- ✅ CI/CD setup (GitHub Actions workflows - all tests passing ✓)
 - ✅ CI/CD documentation (CI_CD.md)
+- ✅ All doc tests passing (48/48)
 
 **Sprint 15 Review** (To be completed):
 - ⏳ Standard benchmarks competitive with industry baselines
 - ✅ Custom tests validate all differentiators (temporal ✅, causal ✅, entity ✅, intent ✅, fusion ✅)
-- ⏳ Test coverage >80%
+- ⏳ Test coverage >80% (automated in CI/CD)
 - ✅ Property tests passing (48/48)
-- ⏳ CI/CD functional
-- ⏳ Regression detection working
+- ✅ CI/CD functional (GitHub Actions - formatting, clippy, tests, doc tests, coverage all passing)
+- ✅ Regression detection working (benchmark workflow on PRs)
 - ⏳ Ready for API freeze and 1.0 release
 
 **Current Status**:
-- Total tests: 480 passing (201 custom + 48 property + 231 legacy)
+- Total tests: 528 passing (201 custom + 48 property + 231 legacy + 48 doc tests)
 - All differentiators validated
 - Core invariants verified with property-based testing
+- CI/CD fully operational with automated testing on every push
 
 ---
 
