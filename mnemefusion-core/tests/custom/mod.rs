@@ -23,9 +23,10 @@ mod temporal_tests;
 #[cfg(test)]
 mod causal_tests;
 
+#[cfg(test)]
+mod entity_tests;
+
 // TODO: Uncomment as we implement each test module
-// #[cfg(test)]
-// mod entity_tests;
 //
 // #[cfg(test)]
 // mod intent_tests;
