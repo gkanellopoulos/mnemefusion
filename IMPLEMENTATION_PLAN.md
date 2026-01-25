@@ -1728,13 +1728,14 @@ Unit Tests (existing):        259 tests  (already passing)
   - [ ] API compatibility tests (all public APIs stable)
   - [ ] File format backward compatibility (can open databases from earlier sprints)
 
-- [ ] **CI/CD setup**:
-  - [ ] Create `.github/workflows/test.yml`
-  - [ ] Run all tests on every commit
-  - [ ] Run benchmarks on PR (with regression detection)
-  - [ ] Generate coverage reports (codecov.io or coveralls)
-  - [ ] Fail CI on test failures or regressions
-  - [ ] Add status badges to README
+- [x] **CI/CD setup** ✅:
+  - [x] Create `.github/workflows/test.yml`
+  - [x] Run all tests on every commit
+  - [x] Run benchmarks on PR (with regression detection)
+  - [x] Generate coverage reports (uploaded as artifacts)
+  - [x] Fail CI on test failures or regressions
+  - [x] Add status badges to README
+  - [x] Create CI_CD.md documentation
 
 - [ ] **Documentation**:
   - [ ] Testing guide for contributors (how to run tests, add new tests)
@@ -1818,9 +1819,9 @@ tests/
 **Week 2 Pending**:
 - ⏳ HotpotQA evaluation (~1,000 samples)
 - ⏳ LoCoMo evaluation (~500 samples)
-- ⏳ Test coverage measurement (target >80%)
-- ⏳ CI/CD setup
-- ⏳ Documentation
+- ✅ Test coverage measurement (automated in CI/CD on Linux)
+- ✅ CI/CD setup (GitHub Actions workflows)
+- ✅ CI/CD documentation (CI_CD.md)
 
 **Sprint 15 Review** (To be completed):
 - ⏳ Standard benchmarks competitive with industry baselines

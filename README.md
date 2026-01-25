@@ -6,6 +6,8 @@ MnemeFusion provides four-dimensional memory indexing (semantic, temporal, causa
 
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
+[![Tests](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/test.yml/badge.svg)](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/test.yml)
+[![Benchmarks](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/benchmark.yml/badge.svg)](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/benchmark.yml)
 
 ## Status: 🎉 Phase 1 COMPLETE ✅
 
@@ -21,10 +23,14 @@ Phase 1 achievements:
 - ✅ **Query Intelligence**: Intent classification and adaptive fusion
 - ✅ **Python Bindings**: Production-ready PyO3 bindings with comprehensive tests
 
-**Test Status:**
-- 166 Rust tests passing (133 unit + 12 integration + 21 doc)
+**Test Status (Sprint 15 - Comprehensive Testing):**
+- 528 total tests passing
+  - 201 custom tests (temporal, causal, entity, intent, fusion)
+  - 48 property-based tests (100 iterations each)
+  - 279 legacy tests (unit, integration, doc)
 - 21 Python tests passing
-- All features validated and working
+- CI/CD: Automated testing on every commit
+- Code coverage measured on Linux runners
 
 **Next:** Phase 2 will add essential features (provenance, batch operations, deduplication, namespaces, metadata filtering) based on competitive analysis.
 

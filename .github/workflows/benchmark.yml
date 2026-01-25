@@ -1,0 +1,71 @@
+name: Benchmarks
+
+on:
+  pull_request:
+    branches: [ main ]
+  # Allow manual trigger
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  benchmark:
+    name: Performance Benchmarks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout PR code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run benchmarks (PR branch)
+        run: |
+          cargo bench --bench core_operations -- --save-baseline pr
+          cargo bench --bench profiling -- --save-baseline pr
+
+      - name: Checkout main branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          clean: false
+
+      - name: Run benchmarks (main branch)
+        run: |
+          cargo bench --bench core_operations -- --baseline pr
+          cargo bench --bench profiling -- --baseline pr
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: target/criterion/
+
+      - name: Comment results on PR
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "Benchmark comparison complete. Check artifacts for detailed results."
+          echo "Any performance regressions > 10% should be investigated."
+
+  # Future: Add automatic regression detection and PR comments
+  # Can use: https://github.com/benchmark-action/github-action-benchmark
