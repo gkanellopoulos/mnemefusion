@@ -72,7 +72,6 @@ impl TemporalIndex {
         end: Timestamp,
         limit: usize,
     ) -> Result<Vec<TemporalResult>> {
-
         let read_txn = self.storage.db().begin_read()?;
         let table = read_txn.open_table(crate::storage::engine::TEMPORAL_INDEX)?;
 
@@ -125,7 +124,6 @@ impl TemporalIndex {
     /// }
     /// ```
     pub fn recent(&self, n: usize) -> Result<Vec<TemporalResult>> {
-
         let read_txn = self.storage.db().begin_read()?;
         let table = read_txn.open_table(crate::storage::engine::TEMPORAL_INDEX)?;
 
@@ -153,7 +151,6 @@ impl TemporalIndex {
     /// * `start` - Start of the time range (inclusive)
     /// * `end` - End of the time range (inclusive)
     pub fn count_range(&self, start: Timestamp, end: Timestamp) -> Result<usize> {
-
         let read_txn = self.storage.db().begin_read()?;
         let table = read_txn.open_table(crate::storage::engine::TEMPORAL_INDEX)?;
 
@@ -190,7 +187,6 @@ impl TemporalIndex {
     ///
     /// * `id` - The memory ID to remove
     pub fn remove(&self, id: &MemoryId) -> Result<()> {
-
         let write_txn = self.storage.db().begin_write()?;
         {
             // First, find the timestamp(s) associated with this memory
