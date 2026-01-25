@@ -1704,13 +1704,14 @@ Unit Tests (existing):        259 tests  (already passing)
   - [ ] Test fusion with temporal context (recent messages weighted higher)
   - [ ] **Target**: Session accuracy > 70%
 
-- [ ] **Property-based tests**:
-  - [ ] Add `proptest` dependency to Cargo.toml
-  - [ ] MemoryId conversions: u64 ↔ UUID ↔ u64 = identity
-  - [ ] Fusion weights: semantic + temporal + causal + entity = 1.0 (±0.01)
-  - [ ] Timestamp ordering: created_at ≤ updated_at always
-  - [ ] Score normalization: all scores in [0.0, 1.0]
-  - [ ] **Run**: 100 iterations per property
+- [x] **Property-based tests** ✅ (48 properties, all passing):
+  - [x] Add `proptest` dependency to Cargo.toml
+  - [x] MemoryId conversions: u64 ↔ UUID ↔ string = identity (10 properties)
+  - [x] Timestamp operations: round-trip, ordering, arithmetic (10 properties)
+  - [x] Score normalization: all scores in [0.0, 1.0] (8 properties)
+  - [x] Fusion weights: sum to 1.0 for all intents (10 properties)
+  - [x] Memory storage: CRUD operations, uniqueness (10 properties)
+  - [x] **Run**: 100 iterations per property
 
 - [ ] **Test coverage**:
   - [ ] Measure current coverage with `cargo tarpaulin`
@@ -1792,36 +1793,45 @@ tests/
 - ✅ Benchmark results documented
 - ✅ CI/CD workflows documented
 
-#### Sprint 15 Progress (Week 1 Days 1-2 Complete)
+#### Sprint 15 Progress (Week 1 COMPLETE ✅, Week 2 In Progress)
 
-**Completed**:
+**Week 1 Completed** ✅:
 - ✅ Test infrastructure set up (TestContext, TestMemory, CausalLink, test_utils.rs)
 - ✅ Temporal query tests: 50 cases, all passing
 - ✅ Causal query tests: 60 cases, all passing
-- ✅ Intent classifier enhanced: +16 temporal patterns, plural causal keywords
-- ✅ **Total**: 114 custom tests passing (63% of 180 planned)
+- ✅ Entity query tests: 47 cases, all passing (exceeded target of 35)
+- ✅ Intent classification tests: 30 cases, all passing (exceeded target of 25)
+- ✅ Adaptive fusion tests: 10 cases, all passing
+- ✅ **Total**: 201 custom tests passing (99.5% of 202 actual, exceeded 180 planned)
 
-**In Progress**:
-- 🚧 Entity query tests (35 cases) - Planned for Day 3
-- 🚧 Intent classification tests (25 cases) - Planned for Day 4
-- 🚧 Adaptive fusion tests (10 cases) - Planned for Day 5
+**Week 2 Completed** ✅:
+- ✅ Property-based tests: 48 properties, all passing with 100 iterations each
+  - MemoryId conversions (10 properties)
+  - Timestamp operations (10 properties)
+  - Score normalization (8 properties)
+  - Fusion weights (10 properties)
+  - Memory storage (10 properties)
 
-**Pending (Week 2)**:
+**Week 2 Pending**:
 - ⏳ HotpotQA evaluation (~1,000 samples)
 - ⏳ LoCoMo evaluation (~500 samples)
-- ⏳ Property-based tests (~50 properties)
 - ⏳ Test coverage measurement (target >80%)
 - ⏳ CI/CD setup
 - ⏳ Documentation
 
 **Sprint 15 Review** (To be completed):
 - ⏳ Standard benchmarks competitive with industry baselines
-- 🚧 Custom tests validate all differentiators (temporal ✅, causal ✅, entity 🚧, intent 🚧, fusion 🚧)
+- ✅ Custom tests validate all differentiators (temporal ✅, causal ✅, entity ✅, intent ✅, fusion ✅)
 - ⏳ Test coverage >80%
-- ⏳ Property tests passing
+- ✅ Property tests passing (48/48)
 - ⏳ CI/CD functional
 - ⏳ Regression detection working
 - ⏳ Ready for API freeze and 1.0 release
+
+**Current Status**:
+- Total tests: 480 passing (201 custom + 48 property + 231 legacy)
+- All differentiators validated
+- Core invariants verified with property-based testing
 
 ---
 
