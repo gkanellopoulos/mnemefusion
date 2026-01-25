@@ -1771,6 +1771,156 @@ Total: 3 benchmark suites .............................. ✅ COMPLETE
 
 ---
 
+## 📚 Post-Sprint 14: Language Support Documentation (January 24, 2026)
+
+**Status**: COMPLETE ✅
+
+Following Sprint 14 completion, comprehensive language support documentation was added to clarify multilingual capabilities and limitations.
+
+### What We Added
+
+**1. Comprehensive Language Support Guide**
+- Created `LANGUAGE_SUPPORT.md` (400+ lines)
+- Detailed analysis of language-agnostic vs English-only features
+- Multilingual usage examples (Chinese, mixed languages)
+- Recommended embedding models for 50-100+ languages
+- FAQ section addressing common questions
+- Future roadmap for multilingual improvements
+
+**2. README.md Updates**
+- Added "Multilingual Core" feature to main features list
+- Added comprehensive "Language Support" section
+- Feature comparison table (what works in all languages)
+- English-only features impact analysis
+- Python multilingual example with Chinese text
+- Configuration recommendations for non-English content
+
+**3. Config Validation Warnings**
+- Added runtime warning when `entity_extraction_enabled=true`
+- Warning printed to stderr during `config.validate()`
+- Informs users that entity extraction is English-only
+- Suggests disabling for non-English content
+- Added 2 new tests (all passing, 259 total tests)
+
+**4. Code Documentation**
+- Updated `config.rs` with language notes on entity extraction
+- Updated `intent.rs` module docs with English-only note
+- Added examples to `with_entity_extraction()` method
+- Improved field-level documentation
+
+### Key Findings
+
+**Language-Agnostic Features** (Work with ANY language):
+- ✅ Vector search (core value proposition)
+- ✅ Temporal indexing
+- ✅ Causal links
+- ✅ Metadata filtering
+- ✅ Namespaces
+- ✅ Deduplication
+- ✅ Batch operations
+- ✅ ACID transactions
+
+**English-Only Features** (Optional, can be disabled):
+- ⚠️ Entity extraction (uses English stop words, capitalization rules)
+- ⚠️ Intent classification (uses English regex patterns)
+
+**Impact for Non-English Users**:
+- ✅ Core semantic search works perfectly with multilingual embeddings
+- ⚠️ Entity extraction disabled → No entity graph, but semantic search compensates
+- ⚠️ Intent classification falls back to Factual intent → Suboptimal fusion weights but still functional
+
+### Configuration Warning Example
+
+```rust
+// Default config (entity extraction enabled)
+let config = Config::default();
+config.validate()?; // Prints warning to stderr
+
+// Output:
+// Warning: Entity extraction is enabled. This feature currently supports English only.
+//          For non-English content, consider disabling with .with_entity_extraction(false)
+//          See documentation for multilingual usage: https://github.com/gkanellopoulos/mnemefusion
+```
+
+### Multilingual Usage Example
+
+```python
+from sentence_transformers import SentenceTransformer
+import mnemefusion
+
+# Use multilingual model
+model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
+
+# Configure for non-English
+config = mnemefusion.Config()
+config.entity_extraction_enabled = False
+memory = mnemefusion.Memory("brain.mfdb", config)
+
+# Add Chinese memory
+text = "我今天学习了机器学习算法"
+memory.add(text, model.encode(text).tolist())
+
+# Search in Chinese - works perfectly!
+results = memory.search(model.encode("机器学习").tolist(), top_k=10)
+```
+
+### Files Created/Modified
+
+**New Files:**
+```
+LANGUAGE_SUPPORT.md             # Comprehensive multilingual guide (400+ lines)
+```
+
+**Modified Files:**
+```
+README.md                       # Added Language Support section
+mnemefusion-core/src/config.rs  # Added warnings and documentation
+mnemefusion-core/src/query/intent.rs  # Added language notes
+```
+
+### Test Results
+
+```
+All 259 tests passing ✅
+  Including 2 new tests:
+  - test_entity_extraction_warning
+  - test_entity_extraction_disabled_no_warning
+```
+
+### Git Commit
+
+- Message: docs: add language support documentation and config validation warnings
+- Hash: 4be4596
+- Files changed: 4 files, +423 insertions
+- Impact: Non-breaking, informational
+
+### User Impact
+
+**Before**:
+- Users may not realize entity extraction is English-only
+- No guidance for non-English use cases
+- Silent behavior (no warnings)
+
+**After**:
+- ✅ Clear documentation of language support
+- ✅ Runtime warnings for English-only features
+- ✅ Multilingual usage examples provided
+- ✅ Recommended embedding models listed
+- ✅ Users can make informed decisions
+
+### Outcome
+
+MnemeFusion is now **explicitly multilingual-friendly**:
+- Core functionality works with any language via multilingual embeddings
+- Optional English-only features clearly documented
+- Users guided through multilingual setup
+- Runtime warnings prevent confusion
+- Clear path forward for future multilingual improvements
+
+**Status**: Documentation complete, library ready for multilingual users ✅
+
+---
+
 ## 🎉 Phase 1 Complete!
 
 ### Phase 1 Summary: Core Engine (Sprints 1-8)

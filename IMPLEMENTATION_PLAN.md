@@ -1498,6 +1498,61 @@ Eager Save Pattern chosen over Write-Ahead Log:
 
 ---
 
+### 📚 Post-Sprint 14 Enhancement: Language Support Documentation
+
+**Date**: January 24, 2026 (immediately following Sprint 14 completion)
+**Status**: COMPLETE ✅
+
+**What Was Added**:
+
+Following Sprint 14 completion, comprehensive language support documentation was added to address user questions about multilingual capabilities.
+
+**Deliverables**:
+1. ✅ **LANGUAGE_SUPPORT.md** (400+ lines) - Comprehensive guide covering:
+   - Language-agnostic features (vector search, temporal, metadata, etc.)
+   - English-only features (entity extraction, intent classification)
+   - Impact analysis for non-English use cases
+   - Multilingual usage examples (Chinese, Python code)
+   - Recommended embedding models (HuggingFace, OpenAI)
+   - FAQ and future roadmap
+
+2. ✅ **README.md updates** - Added Language Support section with:
+   - Feature comparison table
+   - Multilingual usage example
+   - Configuration recommendations
+
+3. ✅ **Config validation warnings** - Runtime warnings for English-only features:
+   - Warning when `entity_extraction_enabled=true`
+   - Printed to stderr during `config.validate()`
+   - User-friendly guidance for non-English content
+   - 2 new tests added (259 total tests passing)
+
+4. ✅ **Code documentation** - Enhanced inline documentation:
+   - Language notes in `config.rs`
+   - Language notes in `query/intent.rs`
+   - Examples for multilingual configuration
+
+**Key Findings**:
+- ✅ Core vector search works with ANY language (multilingual embeddings)
+- ⚠️ Entity extraction is English-only (optional, can be disabled)
+- ⚠️ Intent classification is English-only (degrades gracefully to semantic search)
+- ✅ 7 of 9 major features are language-agnostic
+
+**Git Commit**:
+- Hash: 4be4596
+- Message: docs: add language support documentation and config validation warnings
+- Files: 4 changed, +423 insertions
+
+**Impact**:
+- Users now have clear guidance for non-English use cases
+- Runtime warnings prevent confusion
+- Library explicitly positions as multilingual-friendly
+- Basis for future multilingual improvements (Phase 4)
+
+**Note**: This work completed part of Sprint 16's documentation tasks early. See Sprint 16 documentation section for items marked as complete.
+
+---
+
 ## Phase 3: Testing, Documentation & Release
 
 **Goal**: Comprehensive testing, stable API, and production release
@@ -1609,6 +1664,11 @@ Eager Save Pattern chosen over Write-Ahead Log:
 - [ ] Add architecture deep-dive
 - [ ] Create FAQ
 - [ ] Add troubleshooting guide
+- ✅ **Language support documentation** (completed early, post-Sprint 14):
+  - LANGUAGE_SUPPORT.md (400+ lines)
+  - README.md multilingual section
+  - Config validation warnings
+  - Multilingual usage examples
 
 **Python Type Stubs**
 - [ ] Generate .pyi files for type checking
