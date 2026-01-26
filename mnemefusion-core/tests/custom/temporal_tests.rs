@@ -30,7 +30,8 @@ fn hours_ago(hours: u64) -> Timestamp {
 
 #[test]
 fn test_temporal_recency_001_recent() {
-    let mut ctx = TestContext::new(Config::default());
+    let config = Config::default().with_fusion_semantic_threshold(0.0);
+    let mut ctx = TestContext::new(config);
 
     // Add memories at different times
     ctx.add_memory(&TestMemory {
@@ -76,7 +77,8 @@ fn test_temporal_recency_001_recent() {
 
 #[test]
 fn test_temporal_recency_002_latest() {
-    let mut ctx = TestContext::new(Config::default());
+    let config = Config::default().with_fusion_semantic_threshold(0.0);
+    let mut ctx = TestContext::new(config);
 
     ctx.add_memory(&TestMemory {
         id: None,
@@ -109,7 +111,8 @@ fn test_temporal_recency_002_latest() {
 
 #[test]
 fn test_temporal_recency_003_newest() {
-    let mut ctx = TestContext::new(Config::default());
+    let config = Config::default().with_fusion_semantic_threshold(0.0);
+    let mut ctx = TestContext::new(config);
 
     ctx.add_memory(&TestMemory {
         id: None,
@@ -142,7 +145,8 @@ fn test_temporal_recency_003_newest() {
 
 #[test]
 fn test_temporal_recency_004_yesterday() {
-    let mut ctx = TestContext::new(Config::default());
+    let config = Config::default().with_fusion_semantic_threshold(0.0);
+    let mut ctx = TestContext::new(config);
 
     ctx.add_memory(&TestMemory {
         id: None,
@@ -164,7 +168,8 @@ fn test_temporal_recency_004_yesterday() {
 
 #[test]
 fn test_temporal_recency_005_today() {
-    let mut ctx = TestContext::new(Config::default());
+    let config = Config::default().with_fusion_semantic_threshold(0.0);
+    let mut ctx = TestContext::new(config);
 
     ctx.add_memory(&TestMemory {
         id: None,
@@ -303,7 +308,8 @@ fn test_temporal_recency_013_multiple_temporal_keywords() {
 
 #[test]
 fn test_temporal_recency_014_ordering() {
-    let mut ctx = TestContext::new(Config::default());
+    let config = Config::default().with_fusion_semantic_threshold(0.0);
+    let mut ctx = TestContext::new(config);
 
     // Add 5 memories at different times
     for i in 0..5 {
@@ -335,7 +341,8 @@ fn test_temporal_recency_014_ordering() {
 
 #[test]
 fn test_temporal_recency_015_temporal_score_decreasing() {
-    let mut ctx = TestContext::new(Config::default());
+    let config = Config::default().with_fusion_semantic_threshold(0.0);
+    let mut ctx = TestContext::new(config);
 
     for i in 0..3 {
         ctx.add_memory(&TestMemory {
@@ -394,7 +401,8 @@ fn test_temporal_range_002_next_week() {
 
 #[test]
 fn test_temporal_range_003_this_month() {
-    let mut ctx = TestContext::new(Config::default());
+    let config = Config::default().with_fusion_semantic_threshold(0.0);
+    let mut ctx = TestContext::new(config);
 
     // Add memory from this month
     ctx.add_memory(&TestMemory {
@@ -533,7 +541,8 @@ fn test_temporal_range_008_specific_date() {
 
 #[test]
 fn test_temporal_range_009_between_dates() {
-    let mut ctx = TestContext::new(Config::default());
+    let config = Config::default().with_fusion_semantic_threshold(0.0);
+    let mut ctx = TestContext::new(config);
 
     ctx.add_memory(&TestMemory {
         id: None,
@@ -563,7 +572,8 @@ fn test_temporal_range_009_between_dates() {
 
 #[test]
 fn test_temporal_range_010_past_7_days() {
-    let mut ctx = TestContext::new(Config::default());
+    let config = Config::default().with_fusion_semantic_threshold(0.0);
+    let mut ctx = TestContext::new(config);
 
     ctx.add_memory(&TestMemory {
         id: None,
@@ -605,7 +615,8 @@ fn test_temporal_range_011_past_30_days() {
 
 #[test]
 fn test_temporal_range_012_exact_range() {
-    let mut ctx = TestContext::new(Config::default());
+    let config = Config::default().with_fusion_semantic_threshold(0.0);
+    let mut ctx = TestContext::new(config);
 
     let start = days_ago(10);
     let end = days_ago(5);
@@ -644,7 +655,8 @@ fn test_temporal_range_012_exact_range() {
 
 #[test]
 fn test_temporal_range_013_empty_range() {
-    let mut ctx = TestContext::new(Config::default());
+    let config = Config::default().with_fusion_semantic_threshold(0.0);
+    let mut ctx = TestContext::new(config);
 
     ctx.add_memory(&TestMemory {
         id: None,
@@ -664,7 +676,8 @@ fn test_temporal_range_013_empty_range() {
 
 #[test]
 fn test_temporal_range_014_overlapping_ranges() {
-    let mut ctx = TestContext::new(Config::default());
+    let config = Config::default().with_fusion_semantic_threshold(0.0);
+    let mut ctx = TestContext::new(config);
 
     ctx.add_memory(&TestMemory {
         id: None,
@@ -699,7 +712,8 @@ fn test_temporal_range_014_overlapping_ranges() {
 
 #[test]
 fn test_temporal_range_015_boundary_conditions() {
-    let mut ctx = TestContext::new(Config::default());
+    let config = Config::default().with_fusion_semantic_threshold(0.0);
+    let mut ctx = TestContext::new(config);
 
     let boundary_time = days_ago(7);
 
@@ -871,7 +885,8 @@ fn test_temporal_relative_010_mixed_relative() {
 
 #[test]
 fn test_temporal_edge_001_oldest() {
-    let mut ctx = TestContext::new(Config::default());
+    let config = Config::default().with_fusion_semantic_threshold(0.0);
+    let mut ctx = TestContext::new(config);
 
     ctx.add_memory(&TestMemory {
         id: None,
@@ -914,7 +929,8 @@ fn test_temporal_edge_002_empty_database() {
 
 #[test]
 fn test_temporal_edge_003_future_timestamp() {
-    let mut ctx = TestContext::new(Config::default());
+    let config = Config::default().with_fusion_semantic_threshold(0.0);
+    let mut ctx = TestContext::new(config);
 
     // Add memory with future timestamp
     let future_micros = now_timestamp().as_micros() + (24 * 60 * 60 * 1_000_000); // 1 day from now
@@ -939,7 +955,8 @@ fn test_temporal_edge_003_future_timestamp() {
 
 #[test]
 fn test_temporal_edge_004_exact_now() {
-    let mut ctx = TestContext::new(Config::default());
+    let config = Config::default().with_fusion_semantic_threshold(0.0);
+    let mut ctx = TestContext::new(config);
 
     let now = now_timestamp();
     ctx.add_memory(&TestMemory {
@@ -971,7 +988,8 @@ fn test_temporal_edge_005_negative_range() {
 
 #[test]
 fn test_temporal_edge_006_very_old_memory() {
-    let mut ctx = TestContext::new(Config::default());
+    let config = Config::default().with_fusion_semantic_threshold(0.0);
+    let mut ctx = TestContext::new(config);
 
     // Memory from 10 years ago
     let very_old_micros = now_timestamp()
@@ -996,7 +1014,8 @@ fn test_temporal_edge_006_very_old_memory() {
 
 #[test]
 fn test_temporal_edge_007_single_memory() {
-    let mut ctx = TestContext::new(Config::default());
+    let config = Config::default().with_fusion_semantic_threshold(0.0);
+    let mut ctx = TestContext::new(config);
 
     ctx.add_memory(&TestMemory {
         id: None,
@@ -1019,7 +1038,8 @@ fn test_temporal_edge_007_single_memory() {
 
 #[test]
 fn test_temporal_edge_008_all_same_timestamp() {
-    let mut ctx = TestContext::new(Config::default());
+    let config = Config::default().with_fusion_semantic_threshold(0.0);
+    let mut ctx = TestContext::new(config);
 
     let base_time = now_timestamp();
     // Add 3 memories with timestamps 1 microsecond apart
@@ -1060,7 +1080,8 @@ fn test_temporal_edge_008_all_same_timestamp() {
 
 #[test]
 fn test_temporal_edge_009_limit_exceeded() {
-    let mut ctx = TestContext::new(Config::default());
+    let config = Config::default().with_fusion_semantic_threshold(0.0);
+    let mut ctx = TestContext::new(config);
 
     // Add 100 memories
     for i in 0..100 {
@@ -1088,7 +1109,8 @@ fn test_temporal_edge_009_limit_exceeded() {
 
 #[test]
 fn test_temporal_edge_010_zero_limit() {
-    let mut ctx = TestContext::new(Config::default());
+    let config = Config::default().with_fusion_semantic_threshold(0.0);
+    let mut ctx = TestContext::new(config);
 
     ctx.add_memory(&TestMemory {
         id: None,

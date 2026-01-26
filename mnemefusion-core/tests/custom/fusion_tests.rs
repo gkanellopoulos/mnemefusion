@@ -22,18 +22,19 @@ fn test_fusion_improvement_001_temporal_ranking() {
     let mut ctx = TestContext::new(Config::default());
 
     // Add memories with varying recency
+    // Include temporal expressions in content for content-based temporal matching
     let old_relevant = ctx.add_memory(&TestMemory {
         id: None,
-        content: "Important project meeting discussion".to_string(),
-        embedding: generate_test_embedding("meeting project", 384),
+        content: "Important project meeting discussion from last month".to_string(),
+        embedding: generate_test_embedding("meeting project month", 384),
         timestamp: Some(days_ago(30)),
         metadata: HashMap::new(),
     });
 
     let recent_relevant = ctx.add_memory(&TestMemory {
         id: None,
-        content: "Project meeting notes".to_string(),
-        embedding: generate_test_embedding("meeting project notes", 384),
+        content: "Project meeting notes from yesterday".to_string(),
+        embedding: generate_test_embedding("meeting project notes yesterday", 384),
         timestamp: Some(days_ago(1)),
         metadata: HashMap::new(),
     });

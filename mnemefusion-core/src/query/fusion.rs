@@ -87,19 +87,45 @@ pub struct FusedResult {
 /// Fusion engine for combining multi-dimensional search results
 pub struct FusionEngine {
     config: AdaptiveWeightConfig,
+    /// Minimum semantic threshold (0.0 to 1.0)
+    /// Memories with semantic_score below this threshold are excluded from results
+    /// Default: 0.15 (15% minimum semantic relevance)
+    semantic_threshold: f32,
 }
 
 impl FusionEngine {
-    /// Create a new fusion engine with default weights
+    /// Create a new fusion engine with default weights and semantic threshold
     pub fn new() -> Self {
         Self {
             config: AdaptiveWeightConfig::default(),
+            semantic_threshold: 0.15, // 15% minimum semantic relevance
         }
     }
 
-    /// Create a fusion engine with custom weight configuration
+    /// Create a fusion engine with custom weight configuration and default semantic threshold
     pub fn with_config(config: AdaptiveWeightConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            semantic_threshold: 0.15,
+        }
+    }
+
+    /// Set the minimum semantic threshold
+    ///
+    /// Memories with semantic_score below this threshold are excluded from fusion results.
+    /// This ensures that semantic relevance is mandatory - other dimensions can only boost
+    /// already-relevant memories, not surface irrelevant ones.
+    ///
+    /// # Arguments
+    ///
+    /// * `threshold` - Minimum semantic score (0.0 to 1.0). Recommended: 0.10 to 0.20
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining
+    pub fn with_semantic_threshold(mut self, threshold: f32) -> Self {
+        self.semantic_threshold = threshold.clamp(0.0, 1.0);
+        self
     }
 
     /// Get weights for a specific intent
@@ -146,10 +172,20 @@ impl FusionEngine {
         all_ids.extend(entity_results.keys());
 
         // Compute fused scores
+        // IMPORTANT: Filter out memories with very low semantic relevance
+        // This ensures semantic relevance is mandatory - other dimensions can only boost
+        // already-relevant memories, not surface irrelevant ones
         let mut results: Vec<FusedResult> = all_ids
             .into_iter()
-            .map(|id| {
+            .filter_map(|id| {
                 let semantic_score = *semantic_results.get(id).unwrap_or(&0.0);
+
+                // FILTER: Require minimum semantic relevance
+                // Exclude memories that are not semantically relevant to the query
+                if semantic_score < self.semantic_threshold {
+                    return None;
+                }
+
                 let temporal_score = *temporal_results.get(id).unwrap_or(&0.0);
                 let causal_score = *causal_results.get(id).unwrap_or(&0.0);
                 let entity_score = *entity_results.get(id).unwrap_or(&0.0);
@@ -160,14 +196,14 @@ impl FusionEngine {
                     + causal_score * weights.causal
                     + entity_score * weights.entity;
 
-                FusedResult {
+                Some(FusedResult {
                     id: id.clone(),
                     semantic_score,
                     temporal_score,
                     causal_score,
                     entity_score,
                     fused_score,
-                }
+                })
             })
             .collect();
 
@@ -318,7 +354,8 @@ mod tests {
             &entity,
         );
 
-        assert_eq!(results.len(), 3);
+        // Memory 3 is excluded because it has no semantic score (0.0 < threshold 0.15)
+        assert_eq!(results.len(), 2);
         // ID 1 should rank highest (has both semantic and temporal)
         assert_eq!(results[0].id, make_memory_id(1));
     }
@@ -373,5 +410,104 @@ mod tests {
         );
 
         assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_semantic_threshold_filter() {
+        // Test that memories with semantic score below threshold are excluded
+        let engine = FusionEngine::new().with_semantic_threshold(0.15);
+
+        let mut semantic = HashMap::new();
+        semantic.insert(make_memory_id(1), 0.5); // Above threshold
+        semantic.insert(make_memory_id(2), 0.2); // Above threshold
+        semantic.insert(make_memory_id(3), 0.1); // Below threshold (excluded)
+
+        let mut temporal = HashMap::new();
+        temporal.insert(make_memory_id(1), 0.3);
+        temporal.insert(make_memory_id(2), 0.8);
+        temporal.insert(make_memory_id(3), 1.0); // High temporal, but low semantic
+        temporal.insert(make_memory_id(4), 1.0); // Only in temporal (no semantic score)
+
+        let results = engine.fuse(
+            QueryIntent::Temporal,
+            &semantic,
+            &temporal,
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+
+        // Should only include memories with semantic_score >= 0.15
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|r| r.semantic_score >= 0.15));
+
+        // Memory 3 should be excluded (semantic_score = 0.1 < threshold)
+        assert!(!results.iter().any(|r| r.id == make_memory_id(3)));
+
+        // Memory 4 should be excluded (semantic_score = 0.0 < threshold)
+        assert!(!results.iter().any(|r| r.id == make_memory_id(4)));
+    }
+
+    #[test]
+    fn test_semantic_threshold_prevents_keyword_flooding() {
+        // Test the specific bug: memories with high temporal/entity/causal
+        // but zero semantic score should be excluded
+        let engine = FusionEngine::new().with_semantic_threshold(0.15);
+
+        let mut semantic = HashMap::new();
+        semantic.insert(make_memory_id(1), 0.5450); // Semantically relevant
+
+        let mut temporal = HashMap::new();
+        temporal.insert(make_memory_id(1), 0.0); // Not temporal
+        temporal.insert(make_memory_id(2), 1.0); // Highly temporal BUT semantically irrelevant
+
+        let results = engine.fuse(
+            QueryIntent::Temporal,
+            &semantic,
+            &temporal,
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+
+        // Should only return memory 1 (has semantic score above threshold)
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, make_memory_id(1));
+
+        // Memory 2 should be excluded despite high temporal score
+        // because semantic_score = 0.0 < threshold
+        assert!(!results.iter().any(|r| r.id == make_memory_id(2)));
+    }
+
+    #[test]
+    fn test_semantic_threshold_configurable() {
+        // Test that semantic threshold can be configured
+        let engine1 = FusionEngine::new().with_semantic_threshold(0.1);
+        let engine2 = FusionEngine::new().with_semantic_threshold(0.3);
+
+        let mut semantic = HashMap::new();
+        semantic.insert(make_memory_id(1), 0.5);
+        semantic.insert(make_memory_id(2), 0.2);
+
+        let results1 = engine1.fuse(
+            QueryIntent::Factual,
+            &semantic,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+
+        let results2 = engine2.fuse(
+            QueryIntent::Factual,
+            &semantic,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+
+        // Lower threshold (0.1) should include both memories
+        assert_eq!(results1.len(), 2);
+
+        // Higher threshold (0.3) should exclude memory 2 (score = 0.2)
+        assert_eq!(results2.len(), 1);
+        assert_eq!(results2[0].id, make_memory_id(1));
     }
 }

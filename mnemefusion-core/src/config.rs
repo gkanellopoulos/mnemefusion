@@ -43,6 +43,21 @@ pub struct Config {
     /// These fields will have dedicated indexes for fast lookup
     /// Example: vec!["type".to_string(), "category".to_string(), "priority".to_string()]
     pub indexed_metadata: Vec<String>,
+
+    /// Minimum semantic similarity threshold for fusion results (0.0 to 1.0)
+    ///
+    /// Memories with semantic_score below this threshold are excluded from 4D fusion results.
+    /// This ensures that semantic relevance is mandatory - other dimensions (temporal, entity,
+    /// causal) can only boost already-relevant memories, not surface irrelevant ones.
+    ///
+    /// Default: 0.15 (15% minimum semantic relevance)
+    /// Recommended range: 0.10 to 0.20
+    ///
+    /// Lower values (e.g., 0.05): More permissive, may include weakly relevant memories
+    /// Higher values (e.g., 0.30): Stricter, only strongly relevant memories
+    ///
+    /// Set to 0.0 to disable the filter (not recommended for production)
+    pub fusion_semantic_threshold: f32,
 }
 
 impl Default for Config {
@@ -57,6 +72,7 @@ impl Default for Config {
             hnsw_ef_construction: 128,
             hnsw_ef_search: 64,
             indexed_metadata: Vec::new(), // No indexed fields by default
+            fusion_semantic_threshold: 0.15, // 15% minimum semantic relevance
         }
     }
 }
@@ -124,6 +140,34 @@ impl Config {
     /// Add a metadata field to the indexed set
     pub fn add_indexed_field(mut self, field: impl Into<String>) -> Self {
         self.indexed_metadata.push(field.into());
+        self
+    }
+
+    /// Set the minimum semantic similarity threshold for fusion results
+    ///
+    /// Memories with semantic_score below this threshold are excluded from 4D fusion results.
+    /// This ensures that semantic relevance is mandatory.
+    ///
+    /// # Arguments
+    ///
+    /// * `threshold` - Minimum semantic score (0.0 to 1.0). Default: 0.15
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mnemefusion_core::Config;
+    ///
+    /// // Strict filter (only highly relevant memories)
+    /// let config = Config::default().with_fusion_semantic_threshold(0.30);
+    ///
+    /// // Permissive filter (allow weakly relevant memories)
+    /// let config = Config::default().with_fusion_semantic_threshold(0.05);
+    ///
+    /// // Disable filter (not recommended for production)
+    /// let config = Config::default().with_fusion_semantic_threshold(0.0);
+    /// ```
+    pub fn with_fusion_semantic_threshold(mut self, threshold: f32) -> Self {
+        self.fusion_semantic_threshold = threshold.clamp(0.0, 1.0);
         self
     }
 

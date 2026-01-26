@@ -103,6 +103,7 @@ impl MemoryEngine {
             Arc::clone(&vector_index),
             Arc::clone(&temporal_index),
             Arc::clone(&graph_manager),
+            config.fusion_semantic_threshold,
         );
 
         Ok(Self {
@@ -2217,7 +2218,9 @@ mod tests {
     fn test_query_with_metadata_filters() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.mfdb");
-        let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+        // Disable semantic threshold for test (simple test embeddings)
+        let config = Config::default().with_fusion_semantic_threshold(0.0);
+        let engine = MemoryEngine::open(&path, config).unwrap();
 
         // Add memories with different metadata
         let mut mem1 = Memory::new("Important meeting".to_string(), vec![0.1; 384]);

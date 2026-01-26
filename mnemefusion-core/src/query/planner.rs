@@ -35,6 +35,7 @@ impl QueryPlanner {
         vector_index: Arc<RwLock<VectorIndex>>,
         temporal_index: Arc<TemporalIndex>,
         graph_manager: Arc<RwLock<GraphManager>>,
+        fusion_semantic_threshold: f32,
     ) -> Self {
         Self {
             storage,
@@ -42,7 +43,7 @@ impl QueryPlanner {
             temporal_index,
             graph_manager,
             intent_classifier: IntentClassifier::new(),
-            fusion_engine: FusionEngine::new(),
+            fusion_engine: FusionEngine::new().with_semantic_threshold(fusion_semantic_threshold),
         }
     }
 
@@ -586,7 +587,8 @@ mod tests {
         let temporal_index = Arc::new(TemporalIndex::new(Arc::clone(&storage)));
         let graph_manager = Arc::new(RwLock::new(GraphManager::new()));
 
-        let planner = QueryPlanner::new(storage, vector_index, temporal_index, graph_manager);
+        // Use 0.0 threshold for tests to avoid filtering test results
+        let planner = QueryPlanner::new(storage, vector_index, temporal_index, graph_manager, 0.0);
 
         (planner, dir)
     }
