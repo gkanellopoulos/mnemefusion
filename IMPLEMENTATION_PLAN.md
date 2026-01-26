@@ -1680,29 +1680,38 @@ Unit Tests (existing):        259 tests  (already passing)
 
 *Goal: Industry credibility and semantic search validation*
 
-- [ ] **HotpotQA evaluation** (~1,000 samples):
-  - [ ] Download HotpotQA dataset
-  - [ ] Create evaluation pipeline:
-    - [ ] Load questions + supporting facts
-    - [ ] Generate embeddings (use sentence-transformers)
-    - [ ] Build test database with supporting facts as memories
+- [ ] **HotpotQA evaluation**:
+  - [ ] **Phase 1: Pipeline Validation (10 samples)** - REQUIRED FIRST
+    - [ ] Download HotpotQA dataset
+    - [ ] Create evaluation pipeline (`tests/benchmarks/hotpotqa_eval.py`)
+    - [ ] Generate embeddings using bge-base-en-v1.5 (768 dims, GPU-accelerated)
+    - [ ] Build MnemeFusion test database
     - [ ] Run search queries
     - [ ] Calculate Recall@10, MRR, P@10
-  - [ ] Run baseline (semantic-only, no fusion)
-  - [ ] Run with fusion enabled
-  - [ ] Generate comparison report
-  - [ ] **Target**: Recall@10 > 60% (competitive with DPR)
+    - [ ] Verify pipeline works end-to-end
+    - [ ] **Purpose**: Validate infrastructure before full evaluation
+  - [ ] **Phase 2: Full Evaluation (~1,000 samples)** - SPRINT 15 COMPLETION REQUIREMENT
+    - [ ] Run full evaluation on 1,000 validation samples
+    - [ ] Generate comparison report
+    - [ ] Document results
+    - [ ] **Target**: Recall@10 > 60% (competitive with DPR baseline)
 
-- [ ] **LoCoMo evaluation** (~500 samples):
-  - [ ] Download LoCoMo dataset
-  - [ ] Create conversational evaluation pipeline:
-    - [ ] Load conversation sessions
-    - [ ] Build memory databases per session
-    - [ ] Run queries with conversational context
+- [ ] **LoCoMo evaluation**:
+  - [ ] **Phase 1: Pipeline Validation (10 samples)** - REQUIRED FIRST
+    - [ ] Download LoCoMo dataset
+    - [ ] Create conversational evaluation pipeline (`tests/benchmarks/locomo_eval.py`)
+    - [ ] Generate embeddings using bge-base-en-v1.5
+    - [ ] Build MnemeFusion session databases
+    - [ ] Run conversational queries
     - [ ] Measure session accuracy
-  - [ ] Test intent classification on conversational queries
-  - [ ] Test fusion with temporal context (recent messages weighted higher)
-  - [ ] **Target**: Session accuracy > 70%
+    - [ ] Verify pipeline works end-to-end
+    - [ ] **Purpose**: Validate infrastructure before full evaluation
+  - [ ] **Phase 2: Full Evaluation (~500 samples)** - SPRINT 15 COMPLETION REQUIREMENT
+    - [ ] Run full evaluation on 500 conversation samples
+    - [ ] Test intent classification on conversational queries
+    - [ ] Test fusion with temporal context (recent messages weighted higher)
+    - [ ] Document results
+    - [ ] **Target**: Session accuracy > 70%
 
 - [x] **Property-based tests** ✅ (48 properties, all passing):
   - [x] Add `proptest` dependency to Cargo.toml
