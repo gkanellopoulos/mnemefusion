@@ -12,11 +12,12 @@ Multi-hop question answering benchmark with diverse, explainable questions requi
 - **Metric**: Recall@10 (target: >60%, competitive with DPR baseline)
 
 ### LoCoMo
-Conversational memory retrieval benchmark for testing intent classification and temporal context.
+Long-term conversational memory retrieval benchmark for testing multi-session dialogue understanding.
 
-- **Dataset**: LoCoMo (Long-term Conversational Memory)
-- **Samples**: 500 samples (Phase 2)
-- **Metric**: Session accuracy (target: >70%)
+- **Dataset**: [LoCoMo](https://github.com/snap-research/locomo) (Long-term Conversational Memory)
+- **Conversations**: 10 conversations (300-600 turns each, ~9K tokens, up to 35 sessions)
+- **QA Pairs**: Multiple questions per conversation covering single-hop, multi-hop, temporal reasoning
+- **Metric**: Recall@10 (target: >70%)
 
 ## Setup
 
@@ -87,7 +88,54 @@ python hotpotqa_eval.py --samples 1000 --output my_results.json
 
 ### LoCoMo Evaluation
 
-**Coming soon** - Implementation pending after HotpotQA completion.
+#### Phase 1: Pipeline Validation (1 conversation)
+
+Quick validation to ensure the pipeline works correctly:
+
+```bash
+python locomo_eval.py --samples 1
+```
+
+**Purpose**: Validate end-to-end pipeline before running full evaluation
+**Time**: ~1-2 minutes with GPU
+**Output**: `locomo_phase1_results.json`
+
+#### Phase 2: Full Evaluation (10 conversations)
+
+Full benchmark evaluation:
+
+```bash
+python locomo_eval.py --samples 10
+```
+
+**Purpose**: Official benchmark results for Sprint 15 completion
+**Time**: ~5-10 minutes with GPU
+**Output**: `locomo_phase2_results.json`
+
+#### Options
+
+```bash
+# Custom dataset path
+python locomo_eval.py --samples 10 --dataset path/to/locomo10.json
+
+# Custom top-k retrieval
+python locomo_eval.py --samples 10 --top-k 20
+
+# Disable GPU (use CPU)
+python locomo_eval.py --samples 1 --no-gpu
+
+# Custom output file
+python locomo_eval.py --samples 10 --output my_results.json
+```
+
+**Note**: You need to download the LoCoMo dataset first:
+```bash
+# Clone the repository
+git clone https://github.com/snap-research/locomo.git
+
+# Copy dataset to fixtures
+cp locomo/data/locomo10.json tests/benchmarks/fixtures/
+```
 
 ## Embedding Model
 
@@ -132,8 +180,8 @@ Based on Sprint 15 acceptance criteria:
 
 | Benchmark | Metric | Target | Status |
 |-----------|--------|--------|--------|
-| HotpotQA | Recall@10 | >60% | ⏳ Pending |
-| LoCoMo | Session Accuracy | >70% | ⏳ Pending |
+| HotpotQA | Recall@10 | >60% | 🚧 Phase 2 Running |
+| LoCoMo | Recall@10 | >70% | ⏳ Pending |
 
 ## Troubleshooting
 

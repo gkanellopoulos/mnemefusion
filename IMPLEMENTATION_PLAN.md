@@ -1698,21 +1698,22 @@ Unit Tests (existing):        259 tests  (already passing)
     - [ ] **Target**: Recall@10 > 60% (competitive with DPR baseline)
 
 - [ ] **LoCoMo evaluation**:
-  - [ ] **Phase 1: Pipeline Validation (10 samples)** - REQUIRED FIRST
-    - [ ] Download LoCoMo dataset
+  - [ ] **Phase 1: Pipeline Validation (1 conversation)** - REQUIRED FIRST
+    - [ ] Download LoCoMo dataset (https://github.com/snap-research/locomo)
     - [ ] Create conversational evaluation pipeline (`tests/benchmarks/locomo_eval.py`)
     - [ ] Generate embeddings using bge-base-en-v1.5
-    - [ ] Build MnemeFusion session databases
-    - [ ] Run conversational queries
-    - [ ] Measure session accuracy
+    - [ ] Build MnemeFusion database with conversation turns
+    - [ ] Run QA retrieval evaluation
+    - [ ] Calculate Recall@10, MRR, P@10
     - [ ] Verify pipeline works end-to-end
     - [ ] **Purpose**: Validate infrastructure before full evaluation
-  - [ ] **Phase 2: Full Evaluation (~500 samples)** - SPRINT 15 COMPLETION REQUIREMENT
-    - [ ] Run full evaluation on 500 conversation samples
-    - [ ] Test intent classification on conversational queries
-    - [ ] Test fusion with temporal context (recent messages weighted higher)
-    - [ ] Document results
-    - [ ] **Target**: Session accuracy > 70%
+  - [ ] **Phase 2: Full Evaluation (10 conversations)** - SPRINT 15 COMPLETION REQUIREMENT
+    - [ ] Run full evaluation on all 10 conversations (~300-600 turns each)
+    - [ ] Evaluate QA pairs covering single-hop, multi-hop, temporal reasoning
+    - [ ] Test retrieval across long conversational contexts
+    - [ ] Document results with per-category breakdown
+    - [ ] **Target**: Recall@10 > 70%
+    - [ ] **Note**: LoCoMo has 10 conversations with multiple QA pairs each, not 500 samples
 
 - [x] **Property-based tests** ✅ (48 properties, all passing):
   - [x] Add `proptest` dependency to Cargo.toml

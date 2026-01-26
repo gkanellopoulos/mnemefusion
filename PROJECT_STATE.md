@@ -2230,10 +2230,10 @@ get_entity_memories("Alice") → 2 memories (engineer involvement)
 - ⏳ Adaptive fusion tests (10 cases, minus 4 already in test_utils)
 
 **Week 2 Tasks:**
-- ⏳ HotpotQA evaluation (~1,000 samples)
-- ⏳ LoCoMo evaluation (~500 samples)
-- ⏳ Property-based tests (~50 properties)
-- ⏳ Test coverage measurement (target >80%)
+- 🚧 HotpotQA evaluation (~1,000 samples) - Phase 1 ✅, Phase 2 running 🚧
+- ⏳ LoCoMo evaluation (10 conversations) - Script ready, dataset pending ⏳
+- ✅ Property-based tests (48 properties) - COMPLETE ✅
+- ✅ Test coverage measurement - Automated in CI ✅
 - ⏳ CI/CD setup
 
 ### Progress Metrics
@@ -2519,10 +2519,10 @@ Sprint 15 Total Progress: 100% (249/249 planned tests)
 
 ### Next Steps (Remaining from Sprint 15)
 
-**Standard Benchmarks (Pending):**
-- ⏳ HotpotQA evaluation (~1,000 samples) - requires dataset download
-- ⏳ LoCoMo evaluation (~500 samples) - requires dataset download
-- ⏳ Regression tests (API compatibility verification)
+**Standard Benchmarks:**
+- 🚧 HotpotQA evaluation (1,000 samples) - Phase 1 ✅, Phase 2 running 🚧
+- ⏳ LoCoMo evaluation (10 conversations) - Script created, awaiting dataset download ⏳
+- ✅ CI/CD regression detection - Automated benchmark checks ✅
 
 **Sprint 15 Review Criteria:**
 - ✅ Custom tests validate all differentiators (temporal ✅, causal ✅, entity ✅, intent ✅, fusion ✅)
