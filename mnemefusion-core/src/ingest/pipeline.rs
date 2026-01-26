@@ -631,6 +631,19 @@ impl IngestionPipeline {
             .filter(|name| seen.insert(name.to_lowercase()))
             .collect();
 
+        // Store entity names in memory metadata for content-based matching
+        if !unique_entities.is_empty() {
+            let entity_names_json: Vec<String> =
+                unique_entities.iter().map(|s| s.to_string()).collect();
+            let json_string = serde_json::to_string(&entity_names_json).unwrap_or_default();
+
+            // Update memory metadata with entity names
+            if let Some(mut memory) = self.storage.get_memory(memory_id)? {
+                memory.set_metadata("entity_names".to_string(), json_string);
+                self.storage.store_memory(&memory)?;
+            }
+        }
+
         // Process each unique extracted entity
         for entity_name in unique_entities {
             // Check if entity already exists

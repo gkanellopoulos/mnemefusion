@@ -7,7 +7,7 @@ use crate::{
     error::Result,
     graph::GraphManager,
     index::{TemporalIndex, VectorIndex},
-    ingest::get_temporal_extractor,
+    ingest::{get_temporal_extractor, EntityExtractor, SimpleEntityExtractor},
     query::{
         fusion::{FusedResult, FusionEngine},
         intent::{IntentClassification, IntentClassifier},
@@ -231,43 +231,115 @@ impl QueryPlanner {
         Ok(scores)
     }
 
-    /// Perform entity-based search
+    /// Perform entity-based search using content matching
+    ///
+    /// Extracts entities from query using SimpleEntityExtractor (with stop word filtering)
+    /// and matches them to entities in memory content. Returns empty if query has no entities.
     fn entity_search(&self, query_text: &str, limit: usize) -> Result<HashMap<MemoryId, f32>> {
+        let entity_extractor = SimpleEntityExtractor::new();
+
+        // Extract entities from query (with stop word filtering)
+        let query_entities = entity_extractor.extract(query_text)?;
+
+        // If query has no entities, return empty (no entity scoring)
+        if query_entities.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // Convert query entities to lowercase set for case-insensitive matching
+        let query_entity_set: std::collections::HashSet<String> =
+            query_entities.iter().map(|e| e.to_lowercase()).collect();
+
+        // Get recent memories to check their entity metadata
+        // Fetch more to find matches
+        let recent_memories = self.temporal_index.recent(limit * 10)?;
+
         let mut scores = HashMap::new();
 
-        // Extract potential entity names from query (simple capitalized word extraction)
-        let potential_entities: Vec<&str> = query_text
-            .split_whitespace()
-            .filter(|word| {
-                word.chars().next().map_or(false, |c| c.is_uppercase()) && word.len() > 1
-            })
-            .collect();
+        for temporal_result in recent_memories {
+            // Load memory to access metadata
+            if let Some(memory) = self.storage.get_memory(&temporal_result.id)? {
+                // Get entity names from memory metadata
+                if let Some(entities_json) = memory.get_metadata("entity_names") {
+                    // Parse JSON array of entity names
+                    if let Ok(memory_entities) = serde_json::from_str::<Vec<String>>(entities_json)
+                    {
+                        // Calculate overlap score
+                        let overlap_score =
+                            Self::calculate_entity_overlap(&query_entity_set, &memory_entities);
 
-        // For each potential entity, find related memories
-        for entity_name in potential_entities {
-            if let Ok(Some(entity)) = self.storage.find_entity_by_name(entity_name) {
-                // Get memories that mention this entity
-                let graph = self.graph_manager.read().unwrap();
-                let query_result = graph.get_entity_memories(&entity.id);
+                        if overlap_score > 0.0 {
+                            scores.insert(temporal_result.id, overlap_score);
+                        }
+                    }
+                }
+            }
 
-                // Score based on entity mention count (popularity)
-                let base_score = (entity.mention_count as f32).min(10.0) / 10.0;
+            // Stop once we have enough scored results
+            if scores.len() >= limit * 2 {
+                break;
+            }
+        }
 
-                for memory_id in &query_result.memories {
-                    *scores.entry(memory_id.clone()).or_insert(0.0) += base_score;
+        // If we found entity matches, return them
+        if !scores.is_empty() {
+            // Normalize scores to 0.0-1.0 range
+            FusionEngine::normalize_scores(&mut scores);
+
+            // Take top results by score
+            let mut score_vec: Vec<_> = scores.into_iter().collect();
+            score_vec.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+            score_vec.truncate(limit);
+
+            Ok(score_vec.into_iter().collect())
+        } else {
+            // No entity matches found
+            Ok(HashMap::new())
+        }
+    }
+
+    /// Calculate entity overlap score between query and memory entities
+    ///
+    /// Returns score from 0.0 to 1.0 based on:
+    /// - Exact matches (case-insensitive): 1.0 per match
+    /// - Partial matches (substring): 0.5 per match
+    /// - Average across query entities
+    fn calculate_entity_overlap(
+        query_entity_set: &std::collections::HashSet<String>,
+        memory_entities: &[String],
+    ) -> f32 {
+        if query_entity_set.is_empty() || memory_entities.is_empty() {
+            return 0.0;
+        }
+
+        let mut total_score = 0.0;
+
+        // Convert memory entities to lowercase for comparison
+        let memory_entity_set: std::collections::HashSet<String> =
+            memory_entities.iter().map(|e| e.to_lowercase()).collect();
+
+        for query_entity in query_entity_set {
+            // Check for exact match (case-insensitive)
+            if memory_entity_set.contains(query_entity) {
+                total_score += 1.0;
+            } else {
+                // Check for partial match (substring)
+                for memory_entity in &memory_entity_set {
+                    if memory_entity.contains(query_entity) || query_entity.contains(memory_entity)
+                    {
+                        total_score += 0.5;
+                        break;
+                    }
                 }
             }
         }
 
-        // Normalize scores
-        FusionEngine::normalize_scores(&mut scores);
-
-        // Take top results
-        let mut score_vec: Vec<_> = scores.into_iter().collect();
-        score_vec.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        score_vec.truncate(limit);
-
-        Ok(score_vec.into_iter().collect())
+        // Average score across query entities
+        if query_entity_set.len() > 0 {
+            total_score / query_entity_set.len() as f32
+        } else {
+            0.0
+        }
     }
 
     /// Perform temporal range search
@@ -1090,6 +1162,192 @@ mod tests {
         assert!(
             score1 >= score2,
             "Memory with matching month should score higher or equal to non-matching month"
+        );
+    }
+
+    #[test]
+    fn test_entity_content_matching() {
+        use crate::ingest::IngestionPipeline;
+
+        let (planner, _dir) = create_test_planner();
+
+        // Create ingestion pipeline with entity extraction enabled
+        let pipeline = IngestionPipeline::new(
+            Arc::clone(&planner.storage),
+            Arc::clone(&planner.vector_index),
+            Arc::clone(&planner.temporal_index),
+            Arc::clone(&planner.graph_manager),
+            true, // Enable entity extraction
+        );
+
+        // Add memories with entities
+        let mem1 = Memory::new(
+            "Alice presented Project Alpha at the conference".to_string(),
+            vec![0.1; 384],
+        );
+        let mem1_id = mem1.id.clone();
+        pipeline.add(mem1).unwrap();
+
+        let mem2 = Memory::new(
+            "Bob worked on Project Beta for Acme Corp".to_string(),
+            vec![0.2; 384],
+        );
+        let mem2_id = mem2.id.clone();
+        pipeline.add(mem2).unwrap();
+
+        let mem3 = Memory::new(
+            "Machine learning is fascinating".to_string(), // No proper entities
+            vec![0.3; 384],
+        );
+        let mem3_id = mem3.id.clone();
+        pipeline.add(mem3).unwrap();
+
+        // Query with entity matching mem1
+        let scores = planner
+            .entity_search("Tell me about Alice and Project Alpha", 10)
+            .unwrap();
+
+        // Should find mem1 (has Alice and Project Alpha)
+        assert!(
+            scores.contains_key(&mem1_id),
+            "Should find memory with matching entities"
+        );
+
+        // mem1 should have higher score than mem3 (no entities)
+        let score1 = scores.get(&mem1_id).unwrap_or(&0.0);
+        let score3 = scores.get(&mem3_id).unwrap_or(&0.0);
+        assert!(
+            score1 > score3,
+            "Memory with matching entities should score higher than non-entity memory"
+        );
+    }
+
+    #[test]
+    fn test_entity_search_filters_stop_words() {
+        use crate::ingest::IngestionPipeline;
+
+        let (planner, _dir) = create_test_planner();
+
+        let pipeline = IngestionPipeline::new(
+            Arc::clone(&planner.storage),
+            Arc::clone(&planner.vector_index),
+            Arc::clone(&planner.temporal_index),
+            Arc::clone(&planner.graph_manager),
+            true,
+        );
+
+        // Add memory with entities
+        let mem1 = Memory::new(
+            "Alice met Bob at Building C".to_string(),
+            vec![0.1; 384],
+        );
+        let mem1_id = mem1.id.clone();
+        pipeline.add(mem1).unwrap();
+
+        // Query with stop words - should filter them out
+        // "The" and "What" are stop words and shouldn't match
+        let scores = planner
+            .entity_search("What about Alice and The meeting?", 10)
+            .unwrap();
+
+        // Should find mem1 (Alice is a real entity)
+        // Stop words "What" and "The" should be filtered out during extraction
+        assert!(
+            scores.contains_key(&mem1_id),
+            "Should find memory with Alice, ignoring stop words"
+        );
+    }
+
+    #[test]
+    fn test_entity_search_empty_when_no_entities() {
+        let (planner, _dir) = create_test_planner();
+
+        // Query without entities (all lowercase, no proper nouns)
+        let scores = planner
+            .entity_search("tell me about machine learning", 10)
+            .unwrap();
+
+        // Should return empty (no entities in query)
+        assert_eq!(
+            scores.len(),
+            0,
+            "Should return empty when query has no entities"
+        );
+    }
+
+    #[test]
+    fn test_entity_search_partial_match() {
+        use crate::ingest::IngestionPipeline;
+
+        let (planner, _dir) = create_test_planner();
+
+        let pipeline = IngestionPipeline::new(
+            Arc::clone(&planner.storage),
+            Arc::clone(&planner.vector_index),
+            Arc::clone(&planner.temporal_index),
+            Arc::clone(&planner.graph_manager),
+            true,
+        );
+
+        // Add memory with multi-word entity
+        let mem1 = Memory::new(
+            "Project Alpha is managed by the team".to_string(),
+            vec![0.1; 384],
+        );
+        let mem1_id = mem1.id.clone();
+        pipeline.add(mem1).unwrap();
+
+        // Query with partial entity match
+        let scores = planner.entity_search("What is Project doing?", 10).unwrap();
+
+        // Should find mem1 (partial match: "Project" in "Project Alpha")
+        assert!(
+            scores.contains_key(&mem1_id),
+            "Should find memory with partial entity match"
+        );
+    }
+
+    #[test]
+    fn test_entity_overlap_calculation() {
+        // Test exact match
+        let query_set: std::collections::HashSet<String> =
+            vec!["alice".to_string(), "bob".to_string()]
+                .into_iter()
+                .collect();
+
+        let memory_entities = vec!["Alice".to_string(), "Bob".to_string()];
+
+        let score =
+            QueryPlanner::calculate_entity_overlap(&query_set, &memory_entities);
+
+        // Both entities match exactly (case-insensitive)
+        assert!((score - 1.0).abs() < 0.01, "Exact match should score 1.0");
+
+        // Test partial match
+        let query_set2: std::collections::HashSet<String> =
+            vec!["alice".to_string()].into_iter().collect();
+
+        let memory_entities2 = vec!["Bob".to_string()];
+
+        let score2 =
+            QueryPlanner::calculate_entity_overlap(&query_set2, &memory_entities2);
+
+        // No match
+        assert_eq!(score2, 0.0, "No match should score 0.0");
+
+        // Test substring match
+        let query_set3: std::collections::HashSet<String> =
+            vec!["project".to_string()].into_iter().collect();
+
+        let memory_entities3 = vec!["Project Alpha".to_string()];
+
+        let score3 =
+            QueryPlanner::calculate_entity_overlap(&query_set3, &memory_entities3);
+
+        // Substring match should score 0.5
+        assert!(
+            (score3 - 0.5).abs() < 0.01,
+            "Substring match should score 0.5"
         );
     }
 }
