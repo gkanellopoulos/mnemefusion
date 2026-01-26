@@ -7,6 +7,7 @@ use crate::{
     error::Result,
     graph::GraphManager,
     index::{TemporalIndex, VectorIndex},
+    ingest::get_temporal_extractor,
     query::{
         fusion::{FusedResult, FusionEngine},
         intent::{IntentClassification, IntentClassifier},
@@ -78,7 +79,7 @@ impl QueryPlanner {
         let fetch_multiplier = if needs_filtering { 5 } else { 3 };
         let mut semantic_scores =
             self.semantic_search(query_embedding, limit * fetch_multiplier)?;
-        let mut temporal_scores = self.temporal_search(limit * fetch_multiplier)?;
+        let mut temporal_scores = self.temporal_search(query_text, limit * fetch_multiplier)?;
         let causal_scores = HashMap::new(); // TODO: Implement causal search
         let mut entity_scores = self.entity_search(query_text, limit * fetch_multiplier)?;
 
@@ -130,21 +131,99 @@ impl QueryPlanner {
         Ok(scores)
     }
 
-    /// Perform temporal search (recent memories)
-    fn temporal_search(&self, limit: usize) -> Result<HashMap<MemoryId, f32>> {
+    /// Perform temporal search based on temporal content matching
+    ///
+    /// Extracts temporal expressions from query and matches them to temporal expressions
+    /// in memory content. Falls back to weak recency signal if query has no temporal context.
+    fn temporal_search(&self, query_text: &str, limit: usize) -> Result<HashMap<MemoryId, f32>> {
+        let temporal_extractor = get_temporal_extractor();
+
+        // Extract temporal expressions from query
+        let query_temporal_expressions = temporal_extractor.extract(query_text);
+
+        // If query has no temporal context, use weak recency signal
+        if query_temporal_expressions.is_empty() {
+            return self.temporal_search_recency_fallback(limit);
+        }
+
+        // Get all memories (we need to check their temporal metadata)
+        // Fetch more to find matches, then score based on temporal overlap
+        let recent_memories = self.temporal_index.recent(limit * 10)?;
+
+        let mut scores = HashMap::new();
+
+        for temporal_result in recent_memories {
+            // Load memory to access metadata
+            if let Some(memory) = self.storage.get_memory(&temporal_result.id)? {
+                // Get temporal expressions from memory metadata
+                if let Some(expressions_json) = memory.get_metadata("temporal_expressions") {
+                    // Parse JSON array of temporal expressions
+                    if let Ok(memory_expressions) =
+                        serde_json::from_str::<Vec<String>>(expressions_json)
+                    {
+                        // Convert strings back to TemporalExpression for matching
+                        let memory_temporal_expressions: Vec<crate::ingest::TemporalExpression> =
+                            memory_expressions
+                                .iter()
+                                .map(|s| {
+                                    // Simple heuristic: assume Relative for common patterns
+                                    crate::ingest::TemporalExpression::Relative(s.clone())
+                                })
+                                .collect();
+
+                        // Calculate overlap score
+                        let overlap_score = temporal_extractor.calculate_overlap(
+                            &query_temporal_expressions,
+                            &memory_temporal_expressions,
+                        );
+
+                        if overlap_score > 0.0 {
+                            scores.insert(temporal_result.id, overlap_score);
+                        }
+                    }
+                }
+            }
+
+            // Stop once we have enough scored results
+            if scores.len() >= limit * 2 {
+                break;
+            }
+        }
+
+        // If we found temporal matches, return them
+        if !scores.is_empty() {
+            // Normalize scores to 0.0-1.0 range
+            FusionEngine::normalize_scores(&mut scores);
+
+            // Take top results by score
+            let mut score_vec: Vec<_> = scores.into_iter().collect();
+            score_vec.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+            score_vec.truncate(limit);
+
+            Ok(score_vec.into_iter().collect())
+        } else {
+            // No temporal matches found - fall back to weak recency signal
+            self.temporal_search_recency_fallback(limit)
+        }
+    }
+
+    /// Fallback temporal search using weak recency signal
+    ///
+    /// Used when query has no temporal context or no temporal matches found.
+    /// Provides a weak signal (scores scaled down to 0.0-0.3 range) to avoid
+    /// biasing non-temporal queries toward recent memories.
+    fn temporal_search_recency_fallback(&self, limit: usize) -> Result<HashMap<MemoryId, f32>> {
         let results = self.temporal_index.recent(limit)?;
 
-        // Calculate temporal scores based on recency
-        // Most recent = 1.0, oldest in results = 0.0
         let mut scores = HashMap::new();
         let count = results.len();
 
         for (i, result) in results.into_iter().enumerate() {
-            // Linear decay from 1.0 to 0.0
+            // Linear decay from 0.3 to 0.0 (weak signal)
             let score = if count > 1 {
-                1.0 - (i as f32 / (count - 1) as f32)
+                0.3 * (1.0 - (i as f32 / (count - 1) as f32))
             } else {
-                1.0
+                0.3
             };
             scores.insert(result.id, score);
         }
@@ -416,11 +495,11 @@ mod tests {
             .add(&mem2.id, mem2.created_at)
             .unwrap();
 
-        // Search
-        let scores = planner.temporal_search(10).unwrap();
+        // Search with query text (no temporal expressions = fallback to recency)
+        let scores = planner.temporal_search("test query", 10).unwrap();
         assert_eq!(scores.len(), 2);
 
-        // Most recent should have higher score
+        // With fallback, most recent should have higher score (but weak signal)
         let score1 = scores[&mem1.id];
         let score2 = scores[&mem2.id];
         assert!(score2 >= score1); // mem2 was added later
@@ -853,5 +932,164 @@ mod tests {
             MetadataFilter::eq("priority", "low"),
         ];
         assert!(!QueryPlanner::memory_matches_filters(&memory, &filters));
+    }
+
+    #[test]
+    fn test_temporal_content_matching() {
+        use crate::ingest::IngestionPipeline;
+
+        let (planner, _dir) = create_test_planner();
+
+        // Create ingestion pipeline to extract temporal expressions
+        let pipeline = IngestionPipeline::new(
+            Arc::clone(&planner.storage),
+            Arc::clone(&planner.vector_index),
+            Arc::clone(&planner.temporal_index),
+            Arc::clone(&planner.graph_manager),
+            false, // Disable entity extraction for this test
+        );
+
+        // Add memories with temporal expressions
+        let mem1 = Memory::new(
+            "We had a meeting yesterday about the project".to_string(),
+            vec![0.1; 384],
+        );
+        let mem1_id = mem1.id.clone();
+        pipeline.add(mem1).unwrap();
+
+        let mem2 = Memory::new(
+            "The conference was on June 15th, 2023".to_string(),
+            vec![0.2; 384],
+        );
+        let mem2_id = mem2.id.clone();
+        pipeline.add(mem2).unwrap();
+
+        let mem3 = Memory::new(
+            "Machine learning is a fascinating field".to_string(), // No temporal expression
+            vec![0.3; 384],
+        );
+        let mem3_id = mem3.id.clone();
+        pipeline.add(mem3).unwrap();
+
+        // Query with temporal expression matching mem1
+        let scores = planner
+            .temporal_search("What happened yesterday?", 10)
+            .unwrap();
+
+        // Should find mem1 (has "yesterday")
+        assert!(scores.contains_key(&mem1_id), "Should find memory with 'yesterday'");
+
+        // mem1 should have higher score than mem3 (no temporal expression)
+        let score1 = scores.get(&mem1_id).unwrap_or(&0.0);
+        let score3 = scores.get(&mem3_id).unwrap_or(&0.0);
+        assert!(
+            score1 > score3,
+            "Memory with matching temporal expression should score higher than non-temporal memory"
+        );
+    }
+
+    #[test]
+    fn test_temporal_fallback_to_recency() {
+        use crate::ingest::IngestionPipeline;
+
+        let (planner, _dir) = create_test_planner();
+
+        let pipeline = IngestionPipeline::new(
+            Arc::clone(&planner.storage),
+            Arc::clone(&planner.vector_index),
+            Arc::clone(&planner.temporal_index),
+            Arc::clone(&planner.graph_manager),
+            false,
+        );
+
+        // Add memories without temporal expressions
+        let mem1 = Memory::new(
+            "Machine learning techniques".to_string(),
+            vec![0.1; 384],
+        );
+        let mem1_id = mem1.id.clone();
+        pipeline.add(mem1).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        let mem2 = Memory::new(
+            "Deep learning models".to_string(),
+            vec![0.2; 384],
+        );
+        let mem2_id = mem2.id.clone();
+        pipeline.add(mem2).unwrap();
+
+        // Query without temporal expression
+        let scores = planner
+            .temporal_search("Tell me about AI", 10)
+            .unwrap();
+
+        // Should fall back to weak recency signal
+        // Both memories should have scores (recency fallback)
+        assert!(scores.contains_key(&mem1_id));
+        assert!(scores.contains_key(&mem2_id));
+
+        // Scores should be weak (0.0-0.3 range)
+        let score1 = scores.get(&mem1_id).unwrap();
+        let score2 = scores.get(&mem2_id).unwrap();
+        assert!(
+            *score1 <= 0.31 && *score2 <= 0.31,
+            "Fallback scores should be weak (≤ 0.3)"
+        );
+
+        // More recent memory should have slightly higher score
+        assert!(
+            score2 >= score1,
+            "More recent memory should have higher fallback score"
+        );
+    }
+
+    #[test]
+    fn test_temporal_content_matching_absolute_dates() {
+        use crate::ingest::IngestionPipeline;
+
+        let (planner, _dir) = create_test_planner();
+
+        let pipeline = IngestionPipeline::new(
+            Arc::clone(&planner.storage),
+            Arc::clone(&planner.vector_index),
+            Arc::clone(&planner.temporal_index),
+            Arc::clone(&planner.graph_manager),
+            false,
+        );
+
+        // Add memory with absolute date
+        let mem1 = Memory::new(
+            "The conference was scheduled for June 15th, 2023".to_string(),
+            vec![0.1; 384],
+        );
+        let mem1_id = mem1.id.clone();
+        pipeline.add(mem1).unwrap();
+
+        let mem2 = Memory::new(
+            "We met in May 2024 to discuss plans".to_string(),
+            vec![0.2; 384],
+        );
+        let mem2_id = mem2.id.clone();
+        pipeline.add(mem2).unwrap();
+
+        // Query with date reference
+        let scores = planner
+            .temporal_search("When was the June conference?", 10)
+            .unwrap();
+
+        // Should find mem1 (has "June")
+        assert!(
+            scores.contains_key(&mem1_id),
+            "Should find memory with June date"
+        );
+
+        // mem1 should score higher than mem2 (different month)
+        let score1 = scores.get(&mem1_id).unwrap_or(&0.0);
+        let score2 = scores.get(&mem2_id).unwrap_or(&0.0);
+        assert!(
+            score1 >= score2,
+            "Memory with matching month should score higher or equal to non-matching month"
+        );
     }
 }

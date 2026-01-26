@@ -54,13 +54,14 @@ impl IntentWeights {
 impl Default for AdaptiveWeightConfig {
     fn default() -> Self {
         Self {
-            // Temporal queries: prioritize time, then semantic
-            temporal: IntentWeights::new(0.3, 0.5, 0.1, 0.1),
-            // Causal queries: prioritize causal links, then semantic
-            causal: IntentWeights::new(0.3, 0.1, 0.5, 0.1),
-            // Entity queries: prioritize entity links, then semantic
-            entity: IntentWeights::new(0.3, 0.1, 0.1, 0.5),
-            // Factual queries: pure semantic search
+            // Temporal queries: balance semantic with temporal (was 0.3/0.5)
+            // Semantic floor prevents temporal from dominating weak signals
+            temporal: IntentWeights::new(0.5, 0.35, 0.08, 0.07),
+            // Causal queries: balance semantic with causal (was 0.3/0.5)
+            causal: IntentWeights::new(0.5, 0.08, 0.35, 0.07),
+            // Entity queries: balance semantic with entity (was 0.3/0.5)
+            entity: IntentWeights::new(0.5, 0.08, 0.07, 0.35),
+            // Factual queries: heavily semantic (keep as is)
             factual: IntentWeights::new(0.8, 0.1, 0.05, 0.05),
         }
     }
@@ -231,8 +232,9 @@ mod tests {
         let engine = FusionEngine::new();
         let weights = engine.get_weights(QueryIntent::Temporal);
 
-        // Temporal queries should weight temporal dimension highest
-        assert!(weights.temporal > weights.semantic);
+        // Temporal queries: semantic floor (50%) with temporal boost (35%)
+        assert!(weights.semantic >= 0.49); // ~50% semantic floor
+        assert!(weights.temporal >= 0.30); // ~35% temporal
         assert!(weights.temporal > weights.causal);
         assert!(weights.temporal > weights.entity);
     }
@@ -242,8 +244,9 @@ mod tests {
         let engine = FusionEngine::new();
         let weights = engine.get_weights(QueryIntent::Causal);
 
-        // Causal queries should weight causal dimension highest
-        assert!(weights.causal > weights.semantic);
+        // Causal queries: semantic floor (50%) with causal boost (35%)
+        assert!(weights.semantic >= 0.49); // ~50% semantic floor
+        assert!(weights.causal >= 0.30); // ~35% causal
         assert!(weights.causal > weights.temporal);
         assert!(weights.causal > weights.entity);
     }
@@ -253,8 +256,9 @@ mod tests {
         let engine = FusionEngine::new();
         let weights = engine.get_weights(QueryIntent::Entity);
 
-        // Entity queries should weight entity dimension highest
-        assert!(weights.entity > weights.semantic);
+        // Entity queries: semantic floor (50%) with entity boost (35%)
+        assert!(weights.semantic >= 0.49); // ~50% semantic floor
+        assert!(weights.entity >= 0.30); // ~35% entity
         assert!(weights.entity > weights.temporal);
         assert!(weights.entity > weights.causal);
     }

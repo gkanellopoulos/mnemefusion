@@ -247,6 +247,9 @@ class HotpotQAEvaluator:
         mrr_scores = []
         precision_at_k_scores = []
 
+        # Track intent distribution
+        intent_counts = {}
+
         # BGE instruction for queries
         query_instruction = "Represent this sentence for searching relevant passages: "
 
@@ -255,13 +258,18 @@ class HotpotQAEvaluator:
             query = sample['question']
             query_embedding = self.generate_embeddings([query], instruction=query_instruction)[0]
 
-            # Search in MnemeFusion
-            results = engine.search(
+            # Use 4D fusion query instead of semantic-only search
+            intent, results = engine.query(
+                query_text=query,  # Natural language question for intent classification
                 query_embedding=query_embedding.tolist(),
-                top_k=top_k,
+                limit=top_k,
                 namespace=None,
                 filters=None
             )
+
+            # Track intent distribution
+            intent_type = intent['intent']
+            intent_counts[intent_type] = intent_counts.get(intent_type, 0) + 1
 
             # Get supporting facts (ground truth)
             # HotpotQA format: supporting_facts = {'title': [list of titles], 'sent_id': [list of sent_ids]}
@@ -270,10 +278,11 @@ class HotpotQAEvaluator:
 
             # Check which retrieved documents are relevant
             retrieved_titles = []
-            for memory, score in results:
+            for memory, scores in results:  # Changed: scores is now dict, not float
                 # Extract title from metadata (memory is a dict)
                 title = memory['metadata'].get('title', '')
                 retrieved_titles.append(title)
+                # scores['fused_score'] is the final weighted score
 
             # Calculate metrics
             relevant_retrieved = [title for title in retrieved_titles if title in supporting_titles]
@@ -304,7 +313,10 @@ class HotpotQAEvaluator:
             'recall_at_k': np.mean(recall_at_k_scores),
             'mrr': np.mean(mrr_scores),
             'precision_at_k': np.mean(precision_at_k_scores),
-            'top_k': top_k
+            'top_k': top_k,
+            'intent_distribution': {
+                intent: count / total_queries for intent, count in intent_counts.items()
+            }
         }
 
         return metrics
@@ -320,6 +332,13 @@ class HotpotQAEvaluator:
         print(f"  Recall@{metrics['top_k']:>2}:         {metrics['recall_at_k']:.3f} ({metrics['recall_at_k']*100:.1f}%)")
         print(f"  MRR:                {metrics['mrr']:.3f}")
         print(f"  Precision@{metrics['top_k']:>2}:      {metrics['precision_at_k']:.3f} ({metrics['precision_at_k']*100:.1f}%)")
+
+        # Print intent distribution
+        if metrics.get('intent_distribution'):
+            print(f"\nIntent Distribution:")
+            for intent, pct in sorted(metrics['intent_distribution'].items(), key=lambda x: -x[1]):
+                print(f"  {intent}: {pct*100:.1f}%")
+
         print("\n" + "="*60)
 
         if phase == "2":

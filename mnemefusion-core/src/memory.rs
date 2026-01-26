@@ -770,10 +770,13 @@ impl MemoryEngine {
             self.query_planner
                 .query(query_text, query_embedding, limit, namespace, filters)?;
 
-        // Retrieve full memory records
+        // Retrieve full memory records using u64 key lookup
+        // Note: Vector index returns partial MemoryIds (first 8 bytes only),
+        // so we use get_memory_by_u64 which looks up the full UUID from the index table
         let mut results = Vec::with_capacity(fused_results.len());
         for fused_result in fused_results {
-            if let Some(memory) = self.storage.get_memory(&fused_result.id)? {
+            let key = fused_result.id.to_u64();
+            if let Some(memory) = self.storage.get_memory_by_u64(key)? {
                 results.push((memory, fused_result));
             }
         }

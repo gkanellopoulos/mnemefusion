@@ -5,6 +5,8 @@
 
 pub mod entity_extractor;
 pub mod pipeline;
+pub mod temporal_extractor;
 
 pub use entity_extractor::{EntityExtractor, SimpleEntityExtractor};
 pub use pipeline::IngestionPipeline;
+pub use temporal_extractor::{get_temporal_extractor, TemporalExpression, TemporalExtractor};

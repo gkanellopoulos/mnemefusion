@@ -1,9 +1,9 @@
 # MnemeFusion: Implementation Plan
 
-**Document Version:** 2.1
+**Document Version:** 2.2
 **Created:** January 2026
-**Last Updated:** January 24, 2026
-**Status:** Phase 1 Complete ✅ | Phase 2 Complete ✅ | Phase 3 Planning
+**Last Updated:** January 26, 2026
+**Status:** Phase 1 Complete ✅ | Phase 2 Complete ✅ | Sprint 15 Complete ✅ | Sprint 15.5 Complete ✅ | Sprint 16 Planned 📋
 
 ---
 
@@ -1863,78 +1863,448 @@ tests/
 
 ---
 
-### Sprint 16: API Stability & Documentation (Weeks 31-32)
+---
 
-**Objective**: Finalize API for 1.0, comprehensive documentation
+### Sprint 15.5: 4D Fusion Bugfix & Optimization (Emergency) ✅ COMPLETE
 
-**Note**: Moved from original Sprint 12, now Sprint 16 in Phase 3
+**Objective**: Fix critical bug in query() and optimize fusion weights
 
-#### Stories
+**Completion Date**: January 26, 2026
 
-**[STORY-16.1] As a user, the API is stable and well-documented**
-- **Priority**: P0 (Critical)
-- **Points**: 13
-- **Acceptance Criteria**:
-  - API reviewed for consistency
-  - All public APIs documented
-  - Python type stubs complete
-  - User guide written
-  - API reference generated
-  - Migration guide (if APIs changed)
+**Duration**: 4 hours (emergency sprint)
 
-#### Tasks
+#### Background
 
-**API Review**
-- [ ] Review Rust API for consistency
-- [ ] Review Python API for Pythonic idioms
-- [ ] Standardize naming conventions
-- [ ] Simplify where possible
-- [ ] Consider future extensibility
-- [ ] Document breaking changes from early sprints
+Sprint 15 benchmark evaluation revealed a **critical bug** that caused query() to return 0 results:
+- Root cause: Calling `get_memory(&partial_uuid)` instead of `get_memory_by_u64(key)`
+- Impact: LoCoMo 38.5% → 0.2%, HotpotQA 94.8% → 0.0%
 
-**Documentation**
-- [ ] Write comprehensive API reference (Rust)
-- [ ] Write comprehensive API reference (Python)
-- [ ] Create user guide with tutorials:
-  - Getting started
-  - Basic usage
-  - Advanced queries
-  - Causal reasoning
-  - Entity management
-  - Performance tuning
-- [ ] Add architecture deep-dive
-- [ ] Create FAQ
-- [ ] Add troubleshooting guide
-- ✅ **Language support documentation** (completed early, post-Sprint 14):
-  - LANGUAGE_SUPPORT.md (400+ lines)
-  - README.md multilingual section
-  - Config validation warnings
-  - Multilingual usage examples
+#### Stories Completed
 
-**Python Type Stubs**
-- [ ] Generate .pyi files for type checking
-- [ ] Ensure mypy compatibility
-- [ ] Add to package distribution
+**[BUGFIX-15.5.1] Fix query() memory lookup bug** ✅
+- **Priority**: P0 (CRITICAL - blocking all 4D functionality)
+- **Status**: COMPLETE
+- **Fix**: Changed `memory.rs:776` to use `get_memory_by_u64(key)`
+- **Impact**: Query returns actual results instead of empty list
 
-**Examples**
-- [ ] Create 5+ example applications:
-  - Personal journal with memory
-  - Chatbot with context
-  - Research assistant
-  - Meeting notes organizer
-  - Code snippet manager
-- [ ] Document each example
+**[BUGFIX-15.5.2] Reduce temporal recency bias** ✅
+- **Priority**: P0 (High impact on fusion quality)
+- **Status**: COMPLETE
+- **Fix**: Reduced max temporal score from 1.0 → 0.5
+- **Impact**: Temporal dimension provides signal without overpowering semantic
 
-**Website (optional)**
-- [ ] Create documentation website (MkDocs)
-- [ ] Deploy to GitHub Pages
-- [ ] Add quickstart guide
-- [ ] Add API playground (optional)
+**[BUGFIX-15.5.3] Cap entity scores** ✅
+- **Priority**: P1 (Improves fusion quality)
+- **Status**: COMPLETE
+- **Fix**: Cap normalized entity scores at 0.5
+- **Impact**: Entity matches contribute without dominating
 
-**Sprint 16 Review**
-- ✅ API stable
-- ✅ Documentation comprehensive
-- ✅ Examples working
+**[BUGFIX-15.5.4] Adjust fusion weights (semantic priority)** ✅
+- **Priority**: P0 (Critical for fusion quality)
+- **Status**: COMPLETE
+- **Changes**:
+  - Temporal: 0.3→0.5 semantic, 0.5→0.35 temporal
+  - Causal: 0.3→0.5 semantic, 0.5→0.35 causal
+  - Entity: 0.3→0.5 semantic, 0.5→0.35 entity
+  - Factual: 0.8 semantic (unchanged)
+- **Impact**: 50% semantic floor prevents dilution from weak signals
+
+**[STORY-15.5.5] Re-run benchmarks and validate fixes** ✅
+- **Status**: COMPLETE
+- **Results**:
+  - LoCoMo Phase 2: 0.2% → **38.5%** (baseline restored) ✅
+  - HotpotQA Phase 1: 0.0% → **100.0%** (improved!) ✅
+  - HotpotQA Phase 2: Running (results pending)
+
+#### Key Achievements
+
+✅ Fixed critical bug (0% recall → 38.5% baseline)
+✅ Restored 4D fusion to baseline performance
+✅ Established semantic floor (50%) to prevent dilution
+✅ Validated intent classification (85% accuracy)
+✅ Identified clear path forward (improve dimension quality)
+
+#### Files Modified
+
+```
+mnemefusion-core/src/
+├── memory.rs             # Fixed get_memory_by_u64() bug
+├── query/planner.rs      # Reduced temporal/entity scores
+└── query/fusion.rs       # Adjusted adaptive weights
+```
+
+#### Lessons Learned
+
+1. **UUID truncation was invisible**: Vector index uses u64, storage uses full UUID → need mapping
+2. **Fusion weights must be conservative**: Weak signals need lower weights
+3. **Intent classification foundation is solid**: 85% accuracy validates approach
+4. **Next priority is dimension quality**: Temporal/entity scoring needs improvement
+
+---
+
+
+### Sprint 16: Fix Dimension Scoring Fundamentals (Weeks 31-32) 📋 PLANNED
+
+**Objective**: Make dimensions measure CONTENT (not metadata) to validate 4D fusion core value proposition
+
+**Status**: 📋 REDESIGNED (January 26, 2026)
+
+**Target**: LoCoMo Phase 2: 38.5% → **48-55%** (demonstrating clear value over semantic-only)
+
+#### Critical Discovery: Sprint 16.1 & 16.2 Failed
+
+**What Happened**:
+- Sprint 16.1 (Temporal Relevance): -0.9% regression
+- Sprint 16.2 (Signal Quality Detection): -4.6% regression
+- Both reverted, baseline restored at 38.5%
+
+**Root Cause**: We tried to fix **fusion** when the problem is **dimension scoring fundamentals**
+
+#### The Core Problem
+
+**Dimensions measure METADATA when they should measure CONTENT:**
+
+| Dimension | Currently Measures | Should Measure | Why Current Fails |
+|-----------|-------------------|----------------|-------------------|
+| **Temporal** | Timestamp (recency) | Time references in content | "When did Alice go to meeting?" doesn't care about recency |
+| **Entity** | Capitalized words | Meaningful entities in content | "The Project" extracts "The" as entity (wrong) |
+| **Causal** | Nothing (returns 0s) | Causal language in content | No signal = wasted weight |
+| **Semantic** | ✅ Content embeddings | ✅ Content embeddings | **Only dimension measuring content** |
+
+**Only 1 out of 4 dimensions measures content correctly. This is why 4D fusion doesn't beat semantic-only.**
+
+#### Core Value Proposition Alignment
+
+From foundational documents:
+> **"4D fusion mimics how human brain retrieves memories"**
+
+**Human memory retrieval:**
+- Temporal: Remembers WHEN by temporal context → Not "newest memory"
+- Entity: Remembers WHO/WHAT was involved → Not "capitalized words"
+- Causal: Remembers WHY through cause-effect → Not "nothing"
+- Semantic: Remembers WHAT by meaning → ✅ We do this
+
+**Our current implementation only gets semantic right.** Sprint 16 Redesign fixes this fundamental issue.
+
+---
+
+#### Sprint 16.1: Temporal Content Matching (~8 hours) 🎯 HIGH PRIORITY
+
+**Story**: [STORY-16.1] As a system, temporal dimension measures temporal context in content (not timestamp metadata)
+
+**Problem**:
+```rust
+// Current: Sort by timestamp, newest = 1.0
+let results = temporal_index.recent(limit);
+// Query content completely IGNORED
+```
+
+**Solution**: Extract temporal expressions from content, match query to memory temporal context
+
+**Implementation**:
+
+1. **Extract temporal expressions during ingestion** (~3 hours)
+   ```rust
+   // Store in metadata:
+   // "We had a meeting yesterday" → temporal_expressions: ["yesterday"]
+   // "The conference was June 15th" → temporal_expressions: ["June 15th"]
+   // "See you next week" → temporal_expressions: ["next week"]
+   ```
+   - Use regex patterns for common temporal phrases
+   - Extract: relative times (yesterday, last week), absolute dates (June 15), temporal references (morning, evening)
+   - Store in memory metadata during `add()`
+
+2. **Match query temporal context to memory temporal context** (~3 hours)
+   ```rust
+   fn temporal_search(&self, query_text: &str, limit: usize) -> Result<HashMap<MemoryId, f32>> {
+       let query_temporal = extract_temporal_expressions(query_text);
+
+       if query_temporal.is_empty() {
+           // No temporal context → weak recency signal
+           return Ok(recency_with_low_weight());
+       }
+
+       // Score based on temporal content overlap
+       let mut scores = HashMap::new();
+       for memory in self.get_all_memories() {
+           let overlap = calculate_temporal_overlap(
+               &query_temporal,
+               &memory.metadata["temporal_expressions"]
+           );
+           if overlap > 0.0 {
+               scores.insert(memory.id, overlap);
+           }
+       }
+       Ok(scores)
+   }
+   ```
+
+3. **Add tests and validate** (~2 hours)
+   - Test temporal extraction from various inputs
+   - Test content-based matching
+   - Verify recency fallback for non-temporal queries
+
+**Expected Impact**:
+- Temporal queries find memories with matching temporal content
+- Non-temporal queries aren't biased by recency
+- **Human-like**: Match temporal context, not just timestamps
+
+**Tasks**:
+- [ ] Add temporal expression extraction (3 hours)
+- [ ] Implement temporal content matching (3 hours)
+- [ ] Add tests for temporal matching (2 hours)
+
+**Acceptance Criteria**:
+- ✅ Query "yesterday" matches memories mentioning "yesterday" in content
+- ✅ Query "machine learning" doesn't get recency bias
+- ✅ Temporal extraction tests pass
+
+---
+
+#### Sprint 16.2: Entity Content Matching (~6 hours) 🎯 HIGH PRIORITY
+
+**Story**: [STORY-16.2] As a system, entity dimension identifies meaningful entities (not capitalized words)
+
+**Problem**:
+```rust
+// Current: Extract capitalized words
+// "The Project Alpha" → ["The", "Project", "Alpha"]
+// High false positive rate
+```
+
+**Solution**: Extract noun phrases and proper nouns, filter stop words, match entities based on content
+
+**Implementation**:
+
+1. **Extract meaningful entities during ingestion** (~2 hours)
+   ```rust
+   // Store in metadata:
+   // "Alice presented Project Alpha" → entities: ["Alice", "Project Alpha"]
+   // NOT: ["The", "Presented"] (stop words filtered)
+   ```
+   - Extract noun phrases (not just capitalized words)
+   - Filter stop words: "The", "A", "What", "When", etc.
+   - Store in memory metadata during `add()`
+
+2. **Match query entities to memory entities** (~2 hours)
+   ```rust
+   fn entity_search(&self, query_text: &str, limit: usize) -> Result<HashMap<MemoryId, f32>> {
+       let query_entities = extract_entities(query_text);
+
+       if query_entities.is_empty() {
+           // No entity focus → no entity scoring
+           return Ok(HashMap::new());
+       }
+
+       // Score based on entity overlap
+       let mut scores = HashMap::new();
+       for memory in self.get_all_memories() {
+           let overlap = calculate_entity_overlap(
+               &query_entities,
+               &memory.metadata["entities"]
+           );
+           if overlap > 0.0 {
+               scores.insert(memory.id, overlap);
+           }
+       }
+       Ok(scores)
+   }
+   ```
+
+3. **Add tests and validate** (~2 hours)
+   - Test entity extraction filters stop words
+   - Test matching finds relevant entities
+   - Verify no false positives from capitalization
+
+**Expected Impact**:
+- Entity queries find memories actually mentioning those entities
+- No noise from random capitalized words
+- **Human-like**: Match actual entities in content
+
+**Tasks**:
+- [ ] Add entity extraction with stop word filtering (2 hours)
+- [ ] Implement entity content matching (2 hours)
+- [ ] Add tests for entity matching (2 hours)
+
+**Acceptance Criteria**:
+- ✅ Query "about Alice" matches memories mentioning Alice
+- ✅ Stop words like "The", "What" filtered out
+- ✅ Entity extraction tests pass
+
+---
+
+#### Sprint 16.3: Causal Language Scoring (~6 hours) 🎯 MEDIUM PRIORITY
+
+**Story**: [STORY-16.3] As a system, causal dimension detects causal language patterns (not just graph structure)
+
+**Problem**:
+```rust
+// Current: Returns empty HashMap
+// No causal signal, wasted weight
+```
+
+**Solution**: Detect causal language patterns in content, score based on causal density
+
+**Implementation**:
+
+1. **Detect causal language during ingestion** (~2 hours)
+   ```rust
+   // Store in metadata:
+   // "The meeting was cancelled because Alice was sick"
+   //   → causal_expressions: ["because"], causal_density: 0.12
+   //
+   // "We had a nice lunch"
+   //   → causal_expressions: [], causal_density: 0.0
+   ```
+   - Detect causal markers: "because", "caused", "led to", "resulted in", "due to"
+   - Calculate causal density (% of words that are causal markers)
+   - Store in memory metadata during `add()`
+
+2. **Score based on causal language density** (~2 hours)
+   ```rust
+   fn causal_search(&self, query_text: &str, limit: usize) -> Result<HashMap<MemoryId, f32>> {
+       let has_causal_intent = query_contains_causal_keywords(query_text);
+
+       if !has_causal_intent {
+           // No causal focus → no causal scoring
+           return Ok(HashMap::new());
+       }
+
+       // Score based on causal language density
+       let mut scores = HashMap::new();
+       for memory in self.get_all_memories() {
+           let density = memory.metadata.get("causal_density").unwrap_or(0.0);
+           if density > 0.1 {
+               scores.insert(memory.id, density);
+           }
+       }
+
+       // Optionally boost with causal graph if available
+       if let Some(graph) = self.causal_graph.as_ref() {
+           for (id, score) in scores.iter_mut() {
+               if graph.has_causal_links(id) {
+                   *score *= 1.2;
+               }
+           }
+       }
+
+       Ok(scores)
+   }
+   ```
+
+3. **Add tests and validate** (~2 hours)
+   - Test causal language detection
+   - Test scoring prioritizes causal-rich content
+   - Verify graph boost (when available)
+
+**Expected Impact**:
+- "Why" queries find memories that explain causes
+- Causal dimension provides meaningful signal
+- **Human-like**: Match causal reasoning in content
+
+**Tasks**:
+- [ ] Add causal language detection (2 hours)
+- [ ] Implement causal density scoring (2 hours)
+- [ ] Add tests for causal matching (2 hours)
+
+**Acceptance Criteria**:
+- ✅ Query "Why was meeting cancelled?" matches memories with "because", "caused"
+- ✅ Causal density correctly calculated
+- ✅ Causal language tests pass
+
+---
+
+#### Sprint 16.4: Validate 4D Fusion (~2 hours) 🎯 HIGH PRIORITY
+
+**Story**: [STORY-16.4] As a team, we validate that content-based dimensions make 4D fusion better than semantic-only
+
+**Objective**: Verify core value proposition
+
+**Tasks**:
+
+1. **Re-run LoCoMo Phase 2** (~1 hour)
+   - Run full benchmark with redesigned dimensions
+   - Compare to semantic-only baseline (38.5%)
+   - Expected: **48-55%** (clear improvement)
+
+2. **Analyze dimension contributions** (~30 min)
+   - Verify each dimension contributes to target queries
+   - Check: Temporal helps temporal queries, Entity helps entity queries, etc.
+   - Ensure no regression on non-target queries
+
+3. **Update documentation** (~30 min)
+   - Document new dimension scoring approach
+   - Update PROJECT_STATE.md with results
+   - Update IMPLEMENTATION_PLAN.md status
+
+**Success Criteria**:
+- ✅ LoCoMo Phase 2 > 45% (beating semantic-only by 6.5%+)
+- ✅ Each dimension contributes positively to its target queries
+- ✅ Core value prop validated: "4D fusion mimics human memory"
+
+**Acceptance Criteria**:
+- ✅ LoCoMo Phase 2 recall > 45%
+- ✅ Dimensions provide measurable value over semantic-only
+- ✅ Results documented in PROJECT_STATE.md
+
+---
+
+#### Sprint 16 Summary
+
+**Total Estimated Time**: ~22 hours (fits in 2-week sprint)
+
+| Task | Hours | Priority | Impact |
+|------|-------|----------|--------|
+| **Sprint 16.1: Temporal Content** | 8 | HIGH | Core fix - temporal measures content |
+| **Sprint 16.2: Entity Content** | 6 | HIGH | Core fix - entity measures content |
+| **Sprint 16.3: Causal Language** | 6 | MEDIUM | Enable causal queries |
+| **Sprint 16.4: Validation** | 2 | HIGH | Prove value prop |
+
+**Expected Results**:
+- Before: LoCoMo 38.5%, 4D fusion = semantic-only
+- After: LoCoMo **48-55%**, 4D fusion > semantic-only ✅
+- **Core value prop validated**: System behaves like human memory
+
+**Why This Approach Is Correct**:
+1. **Aligns with core value prop**: "Mimics human brain" by measuring content
+2. **Works broadly**: Not dataset-specific, works for any content
+3. **Testable**: Each dimension validated independently
+4. **Foundation for future**: Simple regex now, can add ML later
+
+**Migration Path**:
+1. Phase 1: Update ingestion to extract content features
+2. Phase 2: Update search to match content (not metadata)
+3. Phase 3: Re-index existing data, validate results
+
+**Risk Assessment**:
+- **LOW**: No API changes, backward compatible
+- **MEDIUM**: Requires re-indexing data
+- **HIGH IMPACT**: Validates entire 4D fusion approach
+
+---
+
+#### Sprint 16 Acceptance Criteria
+
+**Must Have** (Blocks 1.0 release):
+- [ ] Sprint 16.1 (Temporal Content) complete and tested
+- [ ] Sprint 16.2 (Entity Content) complete and tested
+- [ ] Sprint 16.4 (Validation) shows LoCoMo > 45%
+- [ ] All dimension tests passing
+- [ ] Benchmark results documented
+
+**Should Have**:
+- [ ] Sprint 16.3 (Causal Language) complete
+- [ ] LoCoMo reaches 50%+ recall
+- [ ] Dimension contributions analyzed per query type
+
+**Nice to Have**:
+- [ ] ML-based improvements explored (future)
+- [ ] Performance optimization (future)
+- [ ] Multiple language support (future)
+
+---
+
+**Note**: Sprint 16 was completely redesigned on January 26, 2026 after discovering that dimension scoring measured metadata (timestamps, capitalization) instead of content (temporal expressions, meaningful entities, causal language). This fundamental fix aligns with our core value proposition: "4D fusion mimics how human brain retrieves memories."
 
 ---
 

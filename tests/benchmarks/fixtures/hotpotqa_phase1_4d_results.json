@@ -1,0 +1,14 @@
+{
+  "num_queries": 10,
+  "recall_at_k": 1.0,
+  "mrr": 1.0,
+  "precision_at_k": 0.2,
+  "top_k": 10,
+  "intent_distribution": {
+    "Factual": 1.0
+  },
+  "elapsed_seconds": 0.6335005760192871,
+  "phase": "1",
+  "model": "BAAI/bge-base-en-v1.5",
+  "embedding_dim": 768
+}

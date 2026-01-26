@@ -281,6 +281,7 @@ class LoCoMoEvaluator:
 
         # Track by category
         category_metrics = {}
+        category_intents = {}  # Track intent distribution by category
 
         # BGE instruction for queries
         query_instruction = "Represent this sentence for searching relevant passages: "
@@ -290,23 +291,32 @@ class LoCoMoEvaluator:
             query = qa['question']
             query_embedding = self.generate_embeddings([query], instruction=query_instruction)[0]
 
-            # Search in MnemeFusion
-            results = engine.search(
+            # Use 4D fusion query instead of semantic-only search
+            intent, results = engine.query(
+                query_text=query,  # Natural language question for intent classification
                 query_embedding=query_embedding.tolist(),
-                top_k=top_k,
+                limit=top_k,
                 namespace=None,
                 filters=None
             )
+
+            # Track intent distribution for analysis
+            category = qa['category']
+            if category not in category_intents:
+                category_intents[category] = []
+            category_intents[category].append(intent['intent'])
 
             # Get evidence dialog IDs (ground truth)
             evidence_ids = set(qa['evidence_dialog_ids'])
 
             # Check which retrieved documents are relevant
             retrieved_ids = []
-            for memory, score in results:
+            for memory, scores in results:  # Changed: scores is now dict, not float
                 # Extract dialog_id from metadata
                 dialog_id = memory['metadata'].get('dialog_id', '')
                 retrieved_ids.append(dialog_id)
+                # scores['fused_score'] is the final weighted score
+                # scores['semantic_score'], scores['temporal_score'], etc. available
 
             # Calculate metrics
             relevant_retrieved = [id for id in retrieved_ids if id in evidence_ids]
@@ -358,6 +368,15 @@ class LoCoMoEvaluator:
                 'count': len(scores['recall'])
             }
 
+        # Add intent distribution by category
+        from collections import Counter
+        metrics['intent_distribution'] = {}
+        for category, intents in category_intents.items():
+            intent_counts = Counter(intents)
+            metrics['intent_distribution'][category] = {
+                intent: count / len(intents) for intent, count in intent_counts.items()
+            }
+
         return metrics
 
     def print_results(self, metrics: Dict, phase: str = "1"):
@@ -378,6 +397,14 @@ class LoCoMoEvaluator:
                 print(f"  {category} ({scores['count']} queries):")
                 print(f"    Recall@{metrics['top_k']}: {scores['recall_at_k']:.3f}")
                 print(f"    MRR:        {scores['mrr']:.3f}")
+
+        # Print intent distribution
+        if metrics.get('intent_distribution'):
+            print(f"\nIntent Distribution by Category:")
+            for category, intents in sorted(metrics['intent_distribution'].items()):
+                print(f"  {category}:")
+                for intent, pct in sorted(intents.items(), key=lambda x: -x[1]):
+                    print(f"    {intent}: {pct*100:.1f}%")
 
         print("\n" + "="*60)
 

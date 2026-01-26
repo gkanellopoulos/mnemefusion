@@ -8,7 +8,7 @@ use crate::{
     error::Result,
     graph::GraphManager,
     index::{TemporalIndex, VectorIndex},
-    ingest::{EntityExtractor, SimpleEntityExtractor},
+    ingest::{get_temporal_extractor, EntityExtractor, SimpleEntityExtractor},
     storage::StorageEngine,
     types::{
         AddResult, BatchError, BatchResult, Entity, Memory, MemoryId, MemoryInput, UpsertResult,
@@ -87,9 +87,20 @@ impl IngestionPipeline {
     ///
     /// Returns error if any indexing step fails. The database state will be
     /// consistent - no partial indexing will occur.
-    pub fn add(&self, memory: Memory) -> Result<MemoryId> {
+    pub fn add(&self, mut memory: Memory) -> Result<MemoryId> {
         let id = memory.id.clone();
         let timestamp = memory.created_at;
+
+        // Step 0: Extract temporal expressions from content and store in metadata
+        let temporal_extractor = get_temporal_extractor();
+        let temporal_expressions = temporal_extractor.extract(&memory.content);
+        if !temporal_expressions.is_empty() {
+            // Store temporal expressions as JSON array in metadata
+            let expressions_json: Vec<String> =
+                temporal_expressions.iter().map(|e| e.text().to_string()).collect();
+            let json_string = serde_json::to_string(&expressions_json).unwrap_or_default();
+            memory.set_metadata("temporal_expressions".to_string(), json_string);
+        }
 
         // Step 1: Store memory (if this fails, nothing else happens)
         self.storage.store_memory(&memory)?;
@@ -276,8 +287,25 @@ impl IngestionPipeline {
         let mut result = BatchResult::new();
         let total = inputs.len();
 
-        // Convert inputs to memories
-        let memories: Vec<Memory> = inputs.iter().map(|input| input.to_memory()).collect();
+        // Convert inputs to memories and extract temporal expressions
+        let temporal_extractor = get_temporal_extractor();
+        let memories: Vec<Memory> = inputs
+            .iter()
+            .map(|input| {
+                let mut memory = input.to_memory();
+
+                // Extract temporal expressions from content
+                let temporal_expressions = temporal_extractor.extract(&memory.content);
+                if !temporal_expressions.is_empty() {
+                    let expressions_json: Vec<String> =
+                        temporal_expressions.iter().map(|e| e.text().to_string()).collect();
+                    let json_string = serde_json::to_string(&expressions_json).unwrap_or_default();
+                    memory.set_metadata("temporal_expressions".to_string(), json_string);
+                }
+
+                memory
+            })
+            .collect();
 
         // Lock vector index once for the entire batch
         let mut vector_index = self.vector_index.write().unwrap();

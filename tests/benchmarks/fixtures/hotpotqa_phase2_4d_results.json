@@ -1,0 +1,17 @@
+{
+  "num_queries": 1000,
+  "recall_at_k": 0.8165,
+  "mrr": 0.7869115079365079,
+  "precision_at_k": 0.1633,
+  "top_k": 10,
+  "intent_distribution": {
+    "Factual": 0.818,
+    "Entity": 0.069,
+    "Temporal": 0.107,
+    "Causal": 0.006
+  },
+  "elapsed_seconds": 48.77018141746521,
+  "phase": "2",
+  "model": "BAAI/bge-base-en-v1.5",
+  "embedding_dim": 768
+}
