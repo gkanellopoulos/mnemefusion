@@ -7,7 +7,7 @@ use crate::{
     error::Result,
     graph::GraphManager,
     index::{TemporalIndex, VectorIndex},
-    ingest::{get_temporal_extractor, EntityExtractor, SimpleEntityExtractor},
+    ingest::{get_causal_extractor, get_temporal_extractor, EntityExtractor, SimpleEntityExtractor},
     query::{
         fusion::{FusedResult, FusionEngine},
         intent::{IntentClassification, IntentClassifier},
@@ -80,13 +80,14 @@ impl QueryPlanner {
         let mut semantic_scores =
             self.semantic_search(query_embedding, limit * fetch_multiplier)?;
         let mut temporal_scores = self.temporal_search(query_text, limit * fetch_multiplier)?;
-        let causal_scores = HashMap::new(); // TODO: Implement causal search
+        let mut causal_scores = self.causal_search(query_text, limit * fetch_multiplier)?;
         let mut entity_scores = self.entity_search(query_text, limit * fetch_multiplier)?;
 
         // Step 2.5: Filter by namespace if provided
         if let Some(ns) = namespace {
             self.filter_by_namespace(&mut semantic_scores, ns)?;
             self.filter_by_namespace(&mut temporal_scores, ns)?;
+            self.filter_by_namespace(&mut causal_scores, ns)?;
             self.filter_by_namespace(&mut entity_scores, ns)?;
         }
 
@@ -95,6 +96,7 @@ impl QueryPlanner {
             if !filter_list.is_empty() {
                 self.filter_by_metadata(&mut semantic_scores, filter_list)?;
                 self.filter_by_metadata(&mut temporal_scores, filter_list)?;
+                self.filter_by_metadata(&mut causal_scores, filter_list)?;
                 self.filter_by_metadata(&mut entity_scores, filter_list)?;
             }
         }
@@ -339,6 +341,75 @@ impl QueryPlanner {
             total_score / query_entity_set.len() as f32
         } else {
             0.0
+        }
+    }
+
+    /// Perform causal language-based search
+    ///
+    /// Checks if query has causal intent. If yes, scores memories based on
+    /// causal language density. If no, returns empty (no causal scoring).
+    fn causal_search(&self, query_text: &str, limit: usize) -> Result<HashMap<MemoryId, f32>> {
+        let causal_extractor = get_causal_extractor();
+
+        // Check if query has causal intent
+        if !causal_extractor.has_causal_intent(query_text) {
+            // No causal focus → no causal scoring
+            return Ok(HashMap::new());
+        }
+
+        // Get recent memories to check their causal metadata
+        // Fetch more to find matches
+        let recent_memories = self.temporal_index.recent(limit * 10)?;
+
+        let mut scores = HashMap::new();
+
+        for temporal_result in recent_memories {
+            // Load memory to access metadata
+            if let Some(memory) = self.storage.get_memory(&temporal_result.id)? {
+                // Get causal density from memory metadata
+                if let Some(density_str) = memory.get_metadata("causal_density") {
+                    if let Ok(causal_density) = density_str.parse::<f32>() {
+                        // Only score memories with significant causal density (> 0.1)
+                        if causal_density > 0.1 {
+                            // Check if memory has causal graph links for boost
+                            let has_graph_links = {
+                                let graph = self.graph_manager.read().unwrap();
+                                graph.get_causes(&temporal_result.id, 1).ok().map_or(false, |r| !r.paths.is_empty())
+                                    || graph.get_effects(&temporal_result.id, 1).ok().map_or(false, |r| !r.paths.is_empty())
+                            };
+
+                            // Calculate relevance score with optional graph boost
+                            let score =
+                                causal_extractor.calculate_relevance_score(causal_density, has_graph_links);
+
+                            if score > 0.0 {
+                                scores.insert(temporal_result.id, score);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Stop once we have enough scored results
+            if scores.len() >= limit * 2 {
+                break;
+            }
+        }
+
+        // If we found causal matches, return them
+        if !scores.is_empty() {
+            // Normalize scores to 0.0-1.0 range
+            FusionEngine::normalize_scores(&mut scores);
+
+            // Take top results by score
+            let mut score_vec: Vec<_> = scores.into_iter().collect();
+            score_vec.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+            score_vec.truncate(limit);
+
+            Ok(score_vec.into_iter().collect())
+        } else {
+            // No causal matches found
+            Ok(HashMap::new())
         }
     }
 
@@ -1348,6 +1419,154 @@ mod tests {
         assert!(
             (score3 - 0.5).abs() < 0.01,
             "Substring match should score 0.5"
+        );
+    }
+
+    #[test]
+    fn test_causal_content_matching() {
+        use crate::ingest::IngestionPipeline;
+
+        let (planner, _dir) = create_test_planner();
+
+        let pipeline = IngestionPipeline::new(
+            Arc::clone(&planner.storage),
+            Arc::clone(&planner.vector_index),
+            Arc::clone(&planner.temporal_index),
+            Arc::clone(&planner.graph_manager),
+            false,
+        );
+
+        // Add memory with causal language
+        let mem1 = Memory::new(
+            "The meeting was cancelled because Alice was sick".to_string(),
+            vec![0.1; 384],
+        );
+        let mem1_id = mem1.id.clone();
+        pipeline.add(mem1).unwrap();
+
+        // Add memory with high causal density
+        let mem2 = Memory::new(
+            "The bug was caused by a race condition which led to crashes".to_string(),
+            vec![0.2; 384],
+        );
+        let mem2_id = mem2.id.clone();
+        pipeline.add(mem2).unwrap();
+
+        // Add memory without causal language
+        let mem3 = Memory::new(
+            "We had a nice lunch today".to_string(),
+            vec![0.3; 384],
+        );
+        let mem3_id = mem3.id.clone();
+        pipeline.add(mem3).unwrap();
+
+        // Query with causal intent
+        let scores = planner
+            .causal_search("Why was the meeting cancelled?", 10)
+            .unwrap();
+
+        // Should find mem1 and mem2 (have causal language)
+        assert!(
+            scores.contains_key(&mem1_id) || scores.contains_key(&mem2_id),
+            "Should find memories with causal language"
+        );
+
+        // mem3 should not be in results (no causal language)
+        assert!(
+            !scores.contains_key(&mem3_id) || scores.get(&mem3_id).unwrap_or(&1.0) < &0.01,
+            "Should not score non-causal memory highly"
+        );
+    }
+
+    #[test]
+    fn test_causal_search_empty_when_no_intent() {
+        let (planner, _dir) = create_test_planner();
+
+        // Query without causal intent
+        let scores = planner
+            .causal_search("Tell me about machine learning", 10)
+            .unwrap();
+
+        // Should return empty (no causal intent)
+        assert_eq!(
+            scores.len(),
+            0,
+            "Should return empty when query has no causal intent"
+        );
+    }
+
+    #[test]
+    fn test_causal_search_with_causal_intent() {
+        use crate::ingest::IngestionPipeline;
+
+        let (planner, _dir) = create_test_planner();
+
+        let pipeline = IngestionPipeline::new(
+            Arc::clone(&planner.storage),
+            Arc::clone(&planner.vector_index),
+            Arc::clone(&planner.temporal_index),
+            Arc::clone(&planner.graph_manager),
+            false,
+        );
+
+        // Add memory with causal explanation
+        let mem1 = Memory::new(
+            "The server crashed because of a memory leak. This was caused by unclosed connections.".to_string(),
+            vec![0.1; 384],
+        );
+        let mem1_id = mem1.id.clone();
+        pipeline.add(mem1).unwrap();
+
+        // Query with "why" - clear causal intent
+        let scores = planner
+            .causal_search("Why did the server crash?", 10)
+            .unwrap();
+
+        // Should find mem1 (has causal explanation)
+        assert!(
+            scores.contains_key(&mem1_id),
+            "Should find memory with causal explanation for 'why' question"
+        );
+
+        // Score should be significant
+        let score = scores.get(&mem1_id).unwrap();
+        assert!(
+            *score > 0.0,
+            "Causal memory should have positive score"
+        );
+    }
+
+    #[test]
+    fn test_causal_search_density_threshold() {
+        use crate::ingest::IngestionPipeline;
+
+        let (planner, _dir) = create_test_planner();
+
+        let pipeline = IngestionPipeline::new(
+            Arc::clone(&planner.storage),
+            Arc::clone(&planner.vector_index),
+            Arc::clone(&planner.temporal_index),
+            Arc::clone(&planner.graph_manager),
+            false,
+        );
+
+        // Add memory with very low causal density (one marker in long text)
+        let mem1 = Memory::new(
+            "This is a very long memory with lots of words that do not have causal markers except for this one because word.".to_string(),
+            vec![0.1; 384],
+        );
+        let mem1_id = mem1.id.clone();
+        pipeline.add(mem1).unwrap();
+
+        // Query with causal intent
+        let scores = planner
+            .causal_search("Why did this happen?", 10)
+            .unwrap();
+
+        // Should not find mem1 (causal density too low, < 0.1 threshold)
+        assert!(
+            !scores.contains_key(&mem1_id),
+            "Should filter out memories with very low causal density"
         );
     }
 }
