@@ -53,12 +53,12 @@ class HotpotQAEvaluator:
                 import torch
                 if torch.cuda.is_available():
                     self.model.to('cuda')
-                    print(f"✓ Using GPU: {torch.cuda.get_device_name(0)}")
+                    print(f"[OK] Using GPU: {torch.cuda.get_device_name(0)}")
                     print(f"  GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
                 else:
-                    print("⚠ GPU requested but not available, using CPU")
+                    print("[WARNING] GPU requested but not available, using CPU")
             except ImportError:
-                print("⚠ PyTorch not found, using CPU")
+                print("[WARNING] PyTorch not found, using CPU")
         else:
             print("Using CPU for embeddings")
 
@@ -106,7 +106,7 @@ class HotpotQAEvaluator:
                     'type': item['type']  # 'bridge' or 'comparison'
                 })
 
-            print(f"✓ Downloaded {len(samples)} samples")
+            print(f"[OK] Downloaded {len(samples)} samples")
             return samples
 
         except ImportError:
@@ -148,7 +148,7 @@ class HotpotQAEvaluator:
 
                 documents.append((doc_id, content, metadata))
 
-        print(f"✓ Prepared {len(documents)} documents from {len(samples)} questions")
+        print(f"[OK] Prepared {len(documents)} documents from {len(samples)} questions")
         return documents
 
     def generate_embeddings(self, texts: List[str], instruction: str = None) -> np.ndarray:
@@ -192,12 +192,11 @@ class HotpotQAEvaluator:
             print("Install with: cd mnemefusion-python && maturin develop")
             sys.exit(1)
 
-        # Create config with correct embedding dimension
-        config = mnemefusion.Config()
-        config.embedding_dim = self.embedding_dim
+        # Create config dict with correct embedding dimension
+        config = {"embedding_dim": self.embedding_dim}
 
         # Open/create database
-        engine = mnemefusion.Memory(db_path, config)
+        engine = mnemefusion.Memory(db_path, config=config)
 
         # Generate embeddings for all documents
         print("Generating embeddings for documents...")
@@ -222,7 +221,7 @@ class HotpotQAEvaluator:
             if (i + 1) % 100 == 0:
                 print(f"  Added {i + 1}/{len(documents)} documents")
 
-        print(f"✓ Database built with {len(documents)} documents")
+        print(f"[OK] Database built with {len(documents)} documents")
         return engine
 
     def evaluate(self, samples: List[Dict], engine, top_k: int = 10) -> Dict:
@@ -261,13 +260,15 @@ class HotpotQAEvaluator:
             )
 
             # Get supporting facts (ground truth)
-            supporting_titles = set(fact['title'] for fact in sample['supporting_facts'])
+            # HotpotQA format: supporting_facts = {'title': [list of titles], 'sent_id': [list of sent_ids]}
+            supporting_facts = sample['supporting_facts']
+            supporting_titles = set(supporting_facts['title']) if isinstance(supporting_facts, dict) else set()
 
             # Check which retrieved documents are relevant
             retrieved_titles = []
             for memory, score in results:
-                # Extract title from metadata
-                title = memory.metadata.get('title', '')
+                # Extract title from metadata (memory is a dict)
+                title = memory['metadata'].get('title', '')
                 retrieved_titles.append(title)
 
             # Calculate metrics
@@ -320,16 +321,16 @@ class HotpotQAEvaluator:
         if phase == "2":
             target_recall = 0.60
             if metrics['recall_at_k'] >= target_recall:
-                print(f"✓ SUCCESS: Recall@10 ({metrics['recall_at_k']:.3f}) >= target ({target_recall:.3f})")
+                print(f"[SUCCESS] Recall@10 ({metrics['recall_at_k']:.3f}) >= target ({target_recall:.3f})")
             else:
-                print(f"✗ BELOW TARGET: Recall@10 ({metrics['recall_at_k']:.3f}) < target ({target_recall:.3f})")
+                print(f"[BELOW TARGET] Recall@10 ({metrics['recall_at_k']:.3f}) < target ({target_recall:.3f})")
             print("="*60)
 
     def save_results(self, metrics: Dict, output_path: str):
         """Save results to JSON file"""
         with open(output_path, 'w') as f:
             json.dump(metrics, f, indent=2)
-        print(f"\n✓ Results saved to: {output_path}")
+        print(f"\n[OK] Results saved to: {output_path}")
 
 
 def main():
