@@ -1557,11 +1557,11 @@ Following Sprint 14 completion, comprehensive language support documentation was
 
 **Goal**: Comprehensive testing, stable API, and production release
 
-### Sprint 15: Comprehensive Testing (Weeks 29-30) ✅ COMPLETE
+### Sprint 15: Comprehensive Testing (Weeks 29-30) 🚧 IN PROGRESS
 
 **Objective**: Validate quality with standard benchmarks + custom tests for differentiators
 
-**Status**: COMPLETE ✅ (528 tests passing - 201 custom + 48 property + 48 doc + 231 legacy | CI/CD operational)
+**Status**: Week 1 COMPLETE ✅ | Week 2 PARTIAL ⚠️ (Property tests ✅, CI/CD ✅, Doc tests ✅ | Benchmarks pending ⏳)
 
 **Started**: January 25, 2026
 
@@ -1772,11 +1772,11 @@ tests/
 
 #### Acceptance Criteria
 
-**Standard Benchmarks** (Deferred to post-1.0):
-- ⏳ HotpotQA: Recall@10 > 60% (competitive with DPR baseline) - deferred
-- ⏳ LoCoMo: Session accuracy > 70% - deferred
-- ⏳ Fusion improves over semantic-only baseline (measured improvement) - deferred
-- ⏳ Results documented and published - deferred
+**Standard Benchmarks** ⏳ PENDING:
+- ⏳ HotpotQA: Recall@10 > 60% (competitive with DPR baseline) - NOT STARTED
+- ⏳ LoCoMo: Session accuracy > 70% - NOT STARTED
+- ⏳ Fusion improves over semantic-only baseline (measured improvement) - NOT STARTED
+- ⏳ Results documented and published - PENDING
 
 **Custom Test Cases** ✅:
 - ✅ All 201 custom tests passing (99.5% pass rate - exceeded 180 target)
@@ -1792,12 +1792,12 @@ tests/
 - ✅ CI/CD: Tests run on every commit, PRs blocked on failures (GitHub Actions operational)
 - ✅ Regression: Performance regressions detected via benchmark workflow
 
-**Documentation** ✅:
+**Documentation** ⚠️ PARTIAL:
 - ✅ CI/CD workflows documented (CI_CD.md created)
-- ⏳ Testing guide for contributors - deferred to Sprint 16
-- ⏳ Benchmark results documented - deferred (no benchmarks run yet)
+- ⏳ Testing guide for contributors - NOT STARTED
+- ⏳ Benchmark results documented - PENDING (depends on running benchmarks)
 
-#### Sprint 15 Progress Summary (Week 1 COMPLETE ✅, Week 2 COMPLETE ✅)
+#### Sprint 15 Progress Summary (Week 1 COMPLETE ✅, Week 2 PARTIAL ⚠️)
 
 **Week 1 Completed** ✅:
 - ✅ Test infrastructure set up (TestContext, TestMemory, CausalLink, test_utils.rs)
@@ -1816,24 +1816,27 @@ tests/
   - Fusion weights (10 properties)
   - Memory storage (10 properties)
 
-**Week 2 Additional Completions** ✅:
+**Week 2 Completed** ✅:
+- ✅ Property-based tests: 48 properties, all passing with 100 iterations each
 - ✅ All doc tests passing (48/48)
 - ✅ CI/CD setup (GitHub Actions workflows - all tests passing)
 - ✅ CI/CD documentation (CI_CD.md)
 - ✅ Test coverage measurement (automated in CI/CD on Linux runners)
 
-**Week 2 Deferred** (not blocking 1.0 release):
-- ⏳ HotpotQA evaluation (~1,000 samples) - deferred to post-1.0
-- ⏳ LoCoMo evaluation (~500 samples) - deferred to post-1.0
+**Week 2 Remaining** ⏳:
+- ⏳ HotpotQA evaluation (~1,000 samples) - NOT STARTED
+- ⏳ LoCoMo evaluation (~500 samples) - NOT STARTED
+- ⏳ Testing guide for contributors - NOT STARTED
+- ⏳ Benchmark results documentation - PENDING (depends on benchmarks)
 
-**Sprint 15 Review** ✅ COMPLETE:
-- ⏳ Standard benchmarks competitive with industry baselines (deferred to post-1.0)
+**Sprint 15 Review** ⚠️ IN PROGRESS:
+- ⏳ Standard benchmarks competitive with industry baselines - PENDING (HotpotQA & LoCoMo not started)
 - ✅ Custom tests validate all differentiators (temporal ✅, causal ✅, entity ✅, intent ✅, fusion ✅)
 - ✅ Test coverage >80% (automated in CI/CD, 528 tests passing)
 - ✅ Property tests passing (48/48)
 - ✅ CI/CD functional (GitHub Actions - formatting, clippy, tests, doc tests, coverage all passing)
 - ✅ Regression detection working (benchmark workflow on PRs)
-- ✅ Ready for Sprint 16 (API Stability & Documentation)
+- ⏳ Ready for API freeze and 1.0 release - BLOCKED (need benchmark validation first)
 
 **Current Status**:
 - Total tests: 528 passing (201 custom + 48 property + 231 legacy + 48 doc tests)
