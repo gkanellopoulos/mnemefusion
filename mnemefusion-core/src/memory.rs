@@ -614,6 +614,27 @@ impl MemoryEngine {
         &self.config
     }
 
+    /// Reserve capacity in the vector index for future insertions
+    ///
+    /// This is useful when you know you'll be adding many memories
+    /// and want to avoid repeated reallocations, improving performance.
+    ///
+    /// # Arguments
+    ///
+    /// * `capacity` - Number of vectors to reserve space for
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mnemefusion_core::{MemoryEngine, Config};
+    /// # let mut engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
+    /// // Reserve space for 10,000 memories before bulk insertion
+    /// engine.reserve_capacity(10_000).unwrap();
+    /// ```
+    pub fn reserve_capacity(&self, capacity: usize) -> Result<()> {
+        self.pipeline.reserve_capacity(capacity)
+    }
+
     /// Search for memories by semantic similarity
     ///
     /// # Arguments

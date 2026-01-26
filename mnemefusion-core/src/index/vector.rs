@@ -97,6 +97,24 @@ impl VectorIndex {
         })
     }
 
+    /// Reserve capacity for future insertions
+    ///
+    /// This is useful when you know you'll be adding many vectors
+    /// and want to avoid repeated reallocations.
+    ///
+    /// # Arguments
+    ///
+    /// * `capacity` - Number of vectors to reserve space for
+    ///
+    /// # Errors
+    ///
+    /// Returns error if reserve operation fails
+    pub fn reserve(&mut self, capacity: usize) -> Result<()> {
+        self.index
+            .reserve(capacity)
+            .map_err(|e| Error::VectorIndex(format!("Failed to reserve capacity: {}", e)))
+    }
+
     /// Add a vector to the index
     ///
     /// # Arguments

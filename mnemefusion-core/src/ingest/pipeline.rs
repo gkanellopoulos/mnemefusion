@@ -58,6 +58,18 @@ impl IngestionPipeline {
         }
     }
 
+    /// Reserve capacity in the vector index for future insertions
+    ///
+    /// This improves performance when adding many memories by avoiding
+    /// repeated reallocations.
+    ///
+    /// # Arguments
+    ///
+    /// * `capacity` - Number of vectors to reserve space for
+    pub fn reserve_capacity(&self, capacity: usize) -> Result<()> {
+        self.vector_index.write().unwrap().reserve(capacity)
+    }
+
     /// Add a memory and index it across all dimensions
     ///
     /// This operation is atomic - if any indexing step fails, all changes

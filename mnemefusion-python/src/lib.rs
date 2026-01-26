@@ -811,6 +811,25 @@ impl PyMemory {
             .map_err(|e| PyIOError::new_err(format!("Failed to count memories: {}", e)))
     }
 
+    /// Reserve capacity in the vector index for future insertions
+    ///
+    /// This improves performance when adding many memories by avoiding
+    /// repeated reallocations. Call this before bulk insertions.
+    ///
+    /// Args:
+    ///     capacity: Number of vectors to reserve space for
+    ///
+    /// Example:
+    ///     >>> memory = Memory("brain.mfdb")
+    ///     >>> memory.reserve_capacity(10000)  # Reserve for 10k memories
+    ///     >>> # Now add memories efficiently
+    fn reserve_capacity(&self, capacity: usize) -> PyResult<()> {
+        let engine = self.get_engine()?;
+        engine
+            .reserve_capacity(capacity)
+            .map_err(|e| PyIOError::new_err(format!("Failed to reserve capacity: {}", e)))
+    }
+
     /// Add a causal link between two memories
     ///
     /// Args:

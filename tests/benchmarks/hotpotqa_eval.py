@@ -198,6 +198,10 @@ class HotpotQAEvaluator:
         # Open/create database
         engine = mnemefusion.Memory(db_path, config=config)
 
+        # Reserve capacity for all documents (improves performance)
+        print(f"Reserving capacity for {len(documents)} documents...")
+        engine.reserve_capacity(len(documents))
+
         # Generate embeddings for all documents
         print("Generating embeddings for documents...")
         contents = [doc[1] for doc in documents]
