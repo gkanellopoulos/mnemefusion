@@ -1,0 +1,44 @@
+{
+  "num_queries": 199,
+  "recall_at_k": 0.5192629815745394,
+  "mrr": 0.2533799952141661,
+  "precision_at_k": 0.05427135678391958,
+  "top_k": 10,
+  "category_metrics": {
+    "2": {
+      "recall_at_k": 0.6756756756756757,
+      "mrr": 0.2499141999141999,
+      "precision_at_k": 0.06756756756756759,
+      "count": 37
+    },
+    "3": {
+      "recall_at_k": 0.11538461538461539,
+      "mrr": 0.025,
+      "precision_at_k": 0.015384615384615385,
+      "count": 13
+    },
+    "1": {
+      "recall_at_k": 0.08854166666666666,
+      "mrr": 0.025297619047619048,
+      "precision_at_k": 0.015625,
+      "count": 32
+    },
+    "4": {
+      "recall_at_k": 0.6142857142857143,
+      "mrr": 0.30077097505668937,
+      "precision_at_k": 0.06285714285714283,
+      "count": 70
+    },
+    "5": {
+      "recall_at_k": 0.6595744680851063,
+      "mrr": 0.4039851401553529,
+      "precision_at_k": 0.06808510638297874,
+      "count": 47
+    }
+  },
+  "elapsed_seconds": 10.225659370422363,
+  "phase": "1",
+  "model": "BAAI/bge-base-en-v1.5",
+  "embedding_dim": 768,
+  "num_conversations": 1
+}

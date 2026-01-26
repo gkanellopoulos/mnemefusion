@@ -111,23 +111,30 @@ class LoCoMoEvaluator:
 
         for conv_idx, conversation in enumerate(conversations):
             sample_id = conversation.get('sample_id', f'conv_{conv_idx}')
-            sessions = conversation.get('conversation', [])
+            conv_data = conversation.get('conversation', {})
 
-            # Flatten all turns from all sessions into documents
-            turn_count = 0
-            for session_idx, session in enumerate(sessions):
-                session_date = session.get('date', f'session_{session_idx}')
-                turns = session.get('turns', [])
+            # Extract speaker names
+            speaker_a = conv_data.get('speaker_a', 'Speaker_A')
+            speaker_b = conv_data.get('speaker_b', 'Speaker_B')
+
+            # Iterate through sessions (session_1, session_2, etc.)
+            session_idx = 1
+            while f'session_{session_idx}' in conv_data:
+                session_key = f'session_{session_idx}'
+                session_date_key = f'session_{session_idx}_date_time'
+
+                turns = conv_data.get(session_key, [])
+                session_date = conv_data.get(session_date_key, f'session_{session_idx}')
 
                 for turn_idx, turn in enumerate(turns):
                     speaker = turn.get('speaker', 'unknown')
                     text = turn.get('text', '')
-                    dialog_id = turn.get('dialog_id', f'{sample_id}_s{session_idx}_t{turn_idx}')
+                    dialog_id = turn.get('dia_id', f'{sample_id}_s{session_idx}_t{turn_idx}')
 
                     if not text:
                         continue
 
-                    # Create document ID
+                    # Create document ID (use dia_id from dataset)
                     doc_id = dialog_id
 
                     # Metadata
@@ -141,7 +148,8 @@ class LoCoMoEvaluator:
                     }
 
                     documents.append((doc_id, text, metadata))
-                    turn_count += 1
+
+                session_idx += 1
 
         print(f"[OK] Prepared {len(documents)} conversation turns from {len(conversations)} conversations")
         return documents
@@ -168,7 +176,7 @@ class LoCoMoEvaluator:
                     'conversation_id': sample_id,
                     'question': qa.get('question', ''),
                     'answer': qa.get('answer', ''),
-                    'evidence_dialog_ids': qa.get('evidence_dialog_ids', []),
+                    'evidence_dialog_ids': qa.get('evidence', []),  # Dataset uses 'evidence' key
                     'category': qa.get('category', 'unknown')
                 })
 

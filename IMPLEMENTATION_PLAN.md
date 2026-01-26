@@ -1699,23 +1699,27 @@ Unit Tests (existing):        259 tests  (already passing)
     - [x] **Results**: Recall@10=94.8%, MRR=0.935, P@10=19.0% (1,000 samples, 50.5s query time)
     - [x] **Performance**: 58% above target! Excellent semantic retrieval quality
 
-- [ ] **LoCoMo evaluation**:
-  - [ ] **Phase 1: Pipeline Validation (1 conversation)** - REQUIRED FIRST
-    - [ ] Download LoCoMo dataset (https://github.com/snap-research/locomo)
-    - [ ] Create conversational evaluation pipeline (`tests/benchmarks/locomo_eval.py`)
-    - [ ] Generate embeddings using bge-base-en-v1.5
-    - [ ] Build MnemeFusion database with conversation turns
-    - [ ] Run QA retrieval evaluation
-    - [ ] Calculate Recall@10, MRR, P@10
-    - [ ] Verify pipeline works end-to-end
-    - [ ] **Purpose**: Validate infrastructure before full evaluation
-  - [ ] **Phase 2: Full Evaluation (10 conversations)** - SPRINT 15 COMPLETION REQUIREMENT
-    - [ ] Run full evaluation on all 10 conversations (~300-600 turns each)
-    - [ ] Evaluate QA pairs covering single-hop, multi-hop, temporal reasoning
-    - [ ] Test retrieval across long conversational contexts
-    - [ ] Document results with per-category breakdown
-    - [ ] **Target**: Recall@10 > 70%
-    - [ ] **Note**: LoCoMo has 10 conversations with multiple QA pairs each, not 500 samples
+- [x] **LoCoMo evaluation**: ✅ COMPLETE
+  - [x] **Phase 1: Pipeline Validation (1 conversation)** ✅ COMPLETE
+    - [x] Download LoCoMo dataset (https://github.com/snap-research/locomo)
+    - [x] Create conversational evaluation pipeline (`tests/benchmarks/locomo_eval.py`)
+    - [x] Generate embeddings using bge-base-en-v1.5
+    - [x] Build MnemeFusion database with conversation turns
+    - [x] Run QA retrieval evaluation
+    - [x] Calculate Recall@10, MRR, P@10
+    - [x] Verify pipeline works end-to-end
+    - [x] **Purpose**: Validate infrastructure before full evaluation
+    - [x] **Results**: Recall@10=51.9%, MRR=0.253, P@10=5.4% (199 queries, ~30s)
+  - [x] **Phase 2: Full Evaluation (10 conversations)** ✅ COMPLETE
+    - [x] Run full evaluation on all 10 conversations (~300-600 turns each)
+    - [x] Evaluate QA pairs covering single-hop, multi-hop, temporal reasoning
+    - [x] Test retrieval across long conversational contexts
+    - [x] Document results with per-category breakdown
+    - [x] **Target**: Recall@10 > 70%
+    - [x] **Results**: Recall@10=38.5%, MRR=0.219, P@10=4.4% (1,986 queries, 5,882 turns, 104.8s)
+    - [x] **Performance**: ❌ BELOW target by 31.5% - semantic-only retrieval insufficient for conversational memory
+    - [x] **Key Finding**: Category variation extreme (12%-49%); needs temporal/entity/causal features
+    - [x] **Note**: LoCoMo has 10 conversations with multiple QA pairs each, not 500 samples
 
 - [x] **Property-based tests** ✅ (48 properties, all passing):
   - [x] Add `proptest` dependency to Cargo.toml
