@@ -9,9 +9,15 @@ MnemeFusion provides four-dimensional memory indexing (semantic, temporal, causa
 [![Tests](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/test.yml/badge.svg)](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/test.yml)
 [![Benchmarks](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/benchmark.yml/badge.svg)](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/benchmark.yml)
 
-## Status: 🎉 Phase 1 COMPLETE ✅
+## Status: 🚀 Sprint 17 IN PROGRESS
 
-**All 8 sprints of Phase 1 finished!** (January 21, 2026)
+**Sprint 17.1 + 17.2 COMPLETE!** (January 27, 2026)
+
+Recent achievements:
+- ✅ **BM25 Keyword Search**: Exact term matching for names, dates, technical terms
+- ✅ **Reciprocal Rank Fusion**: 5-pathway RRF fusion (Hindsight's approach)
+- ✅ **319 tests passing**: All tests green including 14 new RRF/BM25 tests
+- 🎯 **Next**: LoCoMo benchmark to validate accuracy improvement
 
 Phase 1 achievements:
 - ✅ **Storage Layer**: redb-based single-file database with ACID guarantees
@@ -20,28 +26,24 @@ Phase 1 achievements:
 - ✅ **Causal Graph**: Multi-hop causal relationship traversal
 - ✅ **Entity Graph**: Automatic entity extraction and entity-memory linking
 - ✅ **Ingestion Pipeline**: Atomic operations across all dimensions
-- ✅ **Query Intelligence**: Intent classification and adaptive fusion
+- ✅ **Query Intelligence**: Intent classification with RRF fusion
 - ✅ **Python Bindings**: Production-ready PyO3 bindings with comprehensive tests
 
-**Test Status (Sprint 15 - Comprehensive Testing):**
-- 528 total tests passing
-  - 201 custom tests (temporal, causal, entity, intent, fusion)
-  - 48 property-based tests (100 iterations each)
-  - 279 legacy tests (unit, integration, doc)
-- 21 Python tests passing
-- CI/CD: Automated testing on every commit
-- Code coverage measured on Linux runners
-
-**Next:** Phase 2 will add essential features (provenance, batch operations, deduplication, namespaces, metadata filtering) based on competitive analysis.
+**Sprint 17 Progress:**
+- Tasks 17.1-17.2: ✅ COMPLETE (BM25 + RRF)
+- Tasks 17.3-17.5: 📋 PLANNED (Reranking, policy traversal, entity consolidation)
+- Task 17.6: 🎯 NEXT (LoCoMo benchmark validation)
+- Target: 70% LoCoMo Recall@10 (currently 38.5% baseline)
 
 ## Features
 
+- **Five Retrieval Pathways**: Semantic, BM25 keyword, temporal, causal, entity ✅
+- **Reciprocal Rank Fusion**: Proven RRF algorithm from Hindsight (85.7% accuracy) ✅
+- **BM25 Keyword Search**: Exact term matching (names, dates, technical terms) ✅
 - **Single File Storage**: All data in one portable `.mfdb` file
 - **ACID Transactions**: Built on redb for reliability
-- **Four Dimensions**: Semantic, temporal, causal, and entity indexing ✅
 - **Intent Classification**: Automatic query type detection (temporal, causal, entity, factual)
-- **Adaptive Fusion**: Smart weighting of dimensions based on intent
-- **Zero Dependencies**: Embedded library, no servers to deploy
+- **Zero Dependencies**: Embedded library, no servers, no LLMs required
 - **Rust Core**: Memory-safe, high-performance implementation
 - **Python Bindings**: First-class Python API with PyO3 ✅
 - **Multilingual Core**: Vector search works with any language (see [Language Support](#language-support))
