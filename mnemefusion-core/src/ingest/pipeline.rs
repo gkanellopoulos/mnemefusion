@@ -7,7 +7,7 @@
 use crate::{
     error::Result,
     graph::GraphManager,
-    index::{TemporalIndex, VectorIndex},
+    index::{BM25Index, TemporalIndex, VectorIndex},
     ingest::{get_causal_extractor, get_temporal_extractor, EntityExtractor, SimpleEntityExtractor},
     storage::StorageEngine,
     types::{
@@ -25,6 +25,7 @@ use std::sync::{Arc, RwLock};
 pub struct IngestionPipeline {
     storage: Arc<StorageEngine>,
     vector_index: Arc<RwLock<VectorIndex>>,
+    bm25_index: Arc<BM25Index>,
     temporal_index: Arc<TemporalIndex>,
     graph_manager: Arc<RwLock<GraphManager>>,
     entity_extractor: SimpleEntityExtractor,
@@ -38,12 +39,14 @@ impl IngestionPipeline {
     ///
     /// * `storage` - Storage engine for persistent data
     /// * `vector_index` - Vector index for semantic similarity
+    /// * `bm25_index` - BM25 index for keyword search
     /// * `temporal_index` - Temporal index for time-based queries
     /// * `graph_manager` - Graph manager for causal and entity relationships
     /// * `entity_extraction_enabled` - Whether to automatically extract entities
     pub fn new(
         storage: Arc<StorageEngine>,
         vector_index: Arc<RwLock<VectorIndex>>,
+        bm25_index: Arc<BM25Index>,
         temporal_index: Arc<TemporalIndex>,
         graph_manager: Arc<RwLock<GraphManager>>,
         entity_extraction_enabled: bool,
@@ -51,6 +54,7 @@ impl IngestionPipeline {
         Self {
             storage,
             vector_index,
+            bm25_index,
             temporal_index,
             graph_manager,
             entity_extractor: SimpleEntityExtractor::new(),
@@ -133,12 +137,21 @@ impl IngestionPipeline {
             return Err(e);
         }
 
-        // Step 3: Add to temporal index (rollback: delete from storage + vector)
-        // Note: Temporal index uses redb storage, so it's already durable
-        if let Err(e) = self.temporal_index.add(&id, timestamp) {
+        // Step 2c: Add to BM25 index (rollback: delete from storage + vector)
+        if let Err(e) = self.bm25_index.add(&id, &memory.content) {
             // Rollback: remove from storage and vector index
             let _ = self.storage.delete_memory(&id);
             let _ = self.remove_from_vector_index(&id);
+            return Err(e);
+        }
+
+        // Step 3: Add to temporal index (rollback: delete from storage + vector + BM25)
+        // Note: Temporal index uses redb storage, so it's already durable
+        if let Err(e) = self.temporal_index.add(&id, timestamp) {
+            // Rollback: remove from storage, vector index, and BM25 index
+            let _ = self.storage.delete_memory(&id);
+            let _ = self.remove_from_vector_index(&id);
+            let _ = self.bm25_index.remove(&id);
             // Note: Vector index already saved, but we're rolling back the entry
             // The save will be overwritten on next successful operation
             return Err(e);
@@ -150,6 +163,7 @@ impl IngestionPipeline {
                 // Rollback: remove from all indexes
                 let _ = self.storage.delete_memory(&id);
                 let _ = self.remove_from_vector_index(&id);
+                let _ = self.bm25_index.remove(&id);
                 let _ = self.temporal_index.remove(&id);
                 return Err(e);
             }
@@ -160,6 +174,7 @@ impl IngestionPipeline {
                 // Rollback: remove from all indexes and clean up entities
                 let _ = self.storage.delete_memory(&id);
                 let _ = self.remove_from_vector_index(&id);
+                let _ = self.bm25_index.remove(&id);
                 let _ = self.temporal_index.remove(&id);
                 // Note: Entity cleanup is complex, for now we leave stale entities
                 // They will be cleaned up on next delete operation
@@ -213,11 +228,15 @@ impl IngestionPipeline {
         // Ignore errors - index might not have the entry
         let _ = self.remove_from_vector_index(id);
 
-        // Step 3: Remove from temporal index
+        // Step 3: Remove from BM25 index
+        // Ignore errors - index might not have the entry
+        let _ = self.bm25_index.remove(id);
+
+        // Step 4: Remove from temporal index
         // Ignore errors - index might not have the entry
         let _ = self.temporal_index.remove(id);
 
-        // Step 4: Remove from entity graph and clean up orphaned entities
+        // Step 5: Remove from entity graph and clean up orphaned entities
         {
             let mut graph = self.graph_manager.write().unwrap();
             graph.remove_memory_from_entity_graph(id);
@@ -739,12 +758,18 @@ mod tests {
             VectorIndex::new(vector_config, Arc::clone(&storage)).unwrap(),
         ));
 
+        let bm25_index = Arc::new(crate::index::BM25Index::new(
+            Arc::clone(&storage),
+            crate::index::BM25Config::default(),
+        ));
+
         let temporal_index = Arc::new(TemporalIndex::new(Arc::clone(&storage)));
         let graph_manager = Arc::new(RwLock::new(GraphManager::new()));
 
         let pipeline = IngestionPipeline::new(
             storage,
             vector_index,
+            bm25_index,
             temporal_index,
             graph_manager,
             true, // Enable entity extraction
