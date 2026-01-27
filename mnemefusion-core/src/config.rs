@@ -2,6 +2,8 @@
 //!
 //! This module defines configuration options for the memory engine.
 
+use crate::query::FusionStrategy;
+
 /// Configuration for the MnemeFusion memory engine
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -58,6 +60,19 @@ pub struct Config {
     ///
     /// Set to 0.0 to disable the filter (not recommended for production)
     pub fusion_semantic_threshold: f32,
+
+    /// Fusion strategy (Weighted or ReciprocalRank)
+    ///
+    /// - Weighted: Uses intent-adaptive weights (original approach)
+    /// - ReciprocalRank: Uses RRF formula (Hindsight's approach, proven to work better)
+    ///
+    /// Default: ReciprocalRank
+    pub fusion_strategy: FusionStrategy,
+
+    /// RRF k parameter (only used when fusion_strategy is ReciprocalRank)
+    ///
+    /// Default: 60 (from Cormack et al. 2009 RRF paper)
+    pub rrf_k: f32,
 }
 
 impl Default for Config {
@@ -73,6 +88,8 @@ impl Default for Config {
             hnsw_ef_search: 64,
             indexed_metadata: Vec::new(), // No indexed fields by default
             fusion_semantic_threshold: 0.15, // 15% minimum semantic relevance
+            fusion_strategy: FusionStrategy::default(), // RRF by default
+            rrf_k: 60.0, // From RRF paper
         }
     }
 }
@@ -168,6 +185,52 @@ impl Config {
     /// ```
     pub fn with_fusion_semantic_threshold(mut self, threshold: f32) -> Self {
         self.fusion_semantic_threshold = threshold.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Set the fusion strategy
+    ///
+    /// # Arguments
+    ///
+    /// * `strategy` - Either Weighted or ReciprocalRank
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mnemefusion_core::{Config, query::FusionStrategy};
+    ///
+    /// // Use RRF (default, recommended)
+    /// let config = Config::default().with_fusion_strategy(FusionStrategy::ReciprocalRank);
+    ///
+    /// // Use weighted fusion (original approach)
+    /// let config = Config::default().with_fusion_strategy(FusionStrategy::Weighted);
+    /// ```
+    pub fn with_fusion_strategy(mut self, strategy: FusionStrategy) -> Self {
+        self.fusion_strategy = strategy;
+        self
+    }
+
+    /// Set the RRF k parameter
+    ///
+    /// Only used when fusion_strategy is ReciprocalRank.
+    ///
+    /// # Arguments
+    ///
+    /// * `k` - RRF constant (typically 60). Default: 60
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mnemefusion_core::Config;
+    ///
+    /// // Default k=60 (from RRF paper)
+    /// let config = Config::default();
+    ///
+    /// // Custom k value
+    /// let config = Config::default().with_rrf_k(100.0);
+    /// ```
+    pub fn with_rrf_k(mut self, k: f32) -> Self {
+        self.rrf_k = k.max(1.0);
         self
     }
 

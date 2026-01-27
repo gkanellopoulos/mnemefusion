@@ -7,7 +7,7 @@ use crate::{
     config::Config,
     error::{Error, Result},
     graph::{CausalTraversalResult, GraphManager},
-    index::{TemporalIndex, VectorIndex, VectorIndexConfig},
+    index::{BM25Config, BM25Index, TemporalIndex, VectorIndex, VectorIndexConfig},
     ingest::IngestionPipeline,
     query::{FusedResult, IntentClassification, QueryPlanner},
     storage::StorageEngine,
@@ -27,6 +27,7 @@ use std::sync::{Arc, RwLock};
 pub struct MemoryEngine {
     storage: Arc<StorageEngine>,
     vector_index: Arc<RwLock<VectorIndex>>,
+    bm25_index: Arc<BM25Index>,
     temporal_index: Arc<TemporalIndex>,
     graph_manager: Arc<RwLock<GraphManager>>,
     pipeline: IngestionPipeline,
@@ -80,6 +81,10 @@ impl MemoryEngine {
         vector_index.load()?;
         let vector_index = Arc::new(RwLock::new(vector_index));
 
+        // Create BM25 index
+        let bm25_config = BM25Config::default();
+        let bm25_index = Arc::new(BM25Index::new(Arc::clone(&storage), bm25_config));
+
         // Create temporal index
         let temporal_index = Arc::new(TemporalIndex::new(Arc::clone(&storage)));
 
@@ -92,6 +97,7 @@ impl MemoryEngine {
         let pipeline = IngestionPipeline::new(
             Arc::clone(&storage),
             Arc::clone(&vector_index),
+            Arc::clone(&bm25_index),
             Arc::clone(&temporal_index),
             Arc::clone(&graph_manager),
             config.entity_extraction_enabled,
@@ -101,14 +107,18 @@ impl MemoryEngine {
         let query_planner = QueryPlanner::new(
             Arc::clone(&storage),
             Arc::clone(&vector_index),
+            Arc::clone(&bm25_index),
             Arc::clone(&temporal_index),
             Arc::clone(&graph_manager),
             config.fusion_semantic_threshold,
+            config.fusion_strategy,
+            config.rrf_k,
         );
 
         Ok(Self {
             storage,
             vector_index,
+            bm25_index,
             temporal_index,
             graph_manager,
             pipeline,

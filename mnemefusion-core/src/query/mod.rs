@@ -10,6 +10,8 @@ pub mod fusion;
 pub mod intent;
 pub mod planner;
 
-pub use fusion::{AdaptiveWeightConfig, FusedResult, FusionEngine, IntentWeights};
+pub use fusion::{
+    AdaptiveWeightConfig, FusedResult, FusionEngine, FusionStrategy, IntentWeights,
+};
 pub use intent::{IntentClassification, IntentClassifier, QueryIntent};
 pub use planner::QueryPlanner;

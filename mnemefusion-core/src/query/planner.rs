@@ -20,10 +20,11 @@ use std::sync::{Arc, RwLock};
 
 /// Query planner that coordinates multi-dimensional retrieval
 pub struct QueryPlanner {
-    storage: Arc<StorageEngine>,
-    vector_index: Arc<RwLock<VectorIndex>>,
-    temporal_index: Arc<TemporalIndex>,
-    graph_manager: Arc<RwLock<GraphManager>>,
+    pub(crate) storage: Arc<StorageEngine>,
+    pub(crate) vector_index: Arc<RwLock<VectorIndex>>,
+    pub(crate) bm25_index: Arc<crate::index::BM25Index>,
+    pub(crate) temporal_index: Arc<TemporalIndex>,
+    pub(crate) graph_manager: Arc<RwLock<GraphManager>>,
     intent_classifier: IntentClassifier,
     fusion_engine: FusionEngine,
 }
@@ -33,17 +34,24 @@ impl QueryPlanner {
     pub fn new(
         storage: Arc<StorageEngine>,
         vector_index: Arc<RwLock<VectorIndex>>,
+        bm25_index: Arc<crate::index::BM25Index>,
         temporal_index: Arc<TemporalIndex>,
         graph_manager: Arc<RwLock<GraphManager>>,
         fusion_semantic_threshold: f32,
+        fusion_strategy: crate::query::FusionStrategy,
+        rrf_k: f32,
     ) -> Self {
         Self {
             storage,
             vector_index,
+            bm25_index,
             temporal_index,
             graph_manager,
             intent_classifier: IntentClassifier::new(),
-            fusion_engine: FusionEngine::new().with_semantic_threshold(fusion_semantic_threshold),
+            fusion_engine: FusionEngine::new()
+                .with_semantic_threshold(fusion_semantic_threshold)
+                .with_strategy(fusion_strategy)
+                .with_rrf_k(rrf_k),
         }
     }
 
@@ -80,6 +88,7 @@ impl QueryPlanner {
         let fetch_multiplier = if needs_filtering { 5 } else { 3 };
         let mut semantic_scores =
             self.semantic_search(query_embedding, limit * fetch_multiplier)?;
+        let mut bm25_scores = self.bm25_search(query_text, limit * fetch_multiplier)?;
         let mut temporal_scores = self.temporal_search(query_text, limit * fetch_multiplier)?;
         let mut causal_scores = self.causal_search(query_text, limit * fetch_multiplier)?;
         let mut entity_scores = self.entity_search(query_text, limit * fetch_multiplier)?;
@@ -87,6 +96,7 @@ impl QueryPlanner {
         // Step 2.5: Filter by namespace if provided
         if let Some(ns) = namespace {
             self.filter_by_namespace(&mut semantic_scores, ns)?;
+            self.filter_by_namespace(&mut bm25_scores, ns)?;
             self.filter_by_namespace(&mut temporal_scores, ns)?;
             self.filter_by_namespace(&mut causal_scores, ns)?;
             self.filter_by_namespace(&mut entity_scores, ns)?;
@@ -96,6 +106,7 @@ impl QueryPlanner {
         if let Some(filter_list) = filters {
             if !filter_list.is_empty() {
                 self.filter_by_metadata(&mut semantic_scores, filter_list)?;
+                self.filter_by_metadata(&mut bm25_scores, filter_list)?;
                 self.filter_by_metadata(&mut temporal_scores, filter_list)?;
                 self.filter_by_metadata(&mut causal_scores, filter_list)?;
                 self.filter_by_metadata(&mut entity_scores, filter_list)?;
@@ -106,6 +117,7 @@ impl QueryPlanner {
         let mut fused_results = self.fusion_engine.fuse(
             intent.intent,
             &semantic_scores,
+            &bm25_scores,
             &temporal_scores,
             &causal_scores,
             &entity_scores,
@@ -130,6 +142,24 @@ impl QueryPlanner {
         for result in results {
             scores.insert(result.id, result.similarity);
         }
+
+        Ok(scores)
+    }
+
+    /// Perform BM25 keyword search
+    ///
+    /// Searches using BM25 algorithm for exact term matching.
+    /// Returns empty if query has no valid terms (too short or all stopwords).
+    fn bm25_search(&self, query_text: &str, limit: usize) -> Result<HashMap<MemoryId, f32>> {
+        let results = self.bm25_index.search(query_text, limit)?;
+
+        let mut scores = HashMap::new();
+        for result in results {
+            scores.insert(result.memory_id, result.score);
+        }
+
+        // Normalize scores to 0.0-1.0 range
+        FusionEngine::normalize_scores(&mut scores);
 
         Ok(scores)
     }
@@ -465,6 +495,7 @@ impl QueryPlanner {
             fused.push(FusedResult {
                 id: result.id,
                 semantic_score: 0.0,
+                bm25_score: 0.0,
                 temporal_score,
                 causal_score: 0.0,
                 entity_score: 0.0,
@@ -584,11 +615,26 @@ mod tests {
             VectorIndex::new(vector_config, Arc::clone(&storage)).unwrap(),
         ));
 
+        let bm25_index = Arc::new(crate::index::BM25Index::new(
+            Arc::clone(&storage),
+            crate::index::BM25Config::default(),
+        ));
+
         let temporal_index = Arc::new(TemporalIndex::new(Arc::clone(&storage)));
         let graph_manager = Arc::new(RwLock::new(GraphManager::new()));
 
         // Use 0.0 threshold for tests to avoid filtering test results
-        let planner = QueryPlanner::new(storage, vector_index, temporal_index, graph_manager, 0.0);
+        // Use Weighted strategy for tests to maintain existing test expectations
+        let planner = QueryPlanner::new(
+            storage,
+            vector_index,
+            bm25_index,
+            temporal_index,
+            graph_manager,
+            0.0, // threshold
+            crate::query::FusionStrategy::Weighted, // strategy (weighted for backward compat in tests)
+            60.0, // rrf_k (not used with Weighted strategy)
+        );
 
         (planner, dir)
     }
@@ -1089,6 +1135,7 @@ mod tests {
         let pipeline = IngestionPipeline::new(
             Arc::clone(&planner.storage),
             Arc::clone(&planner.vector_index),
+            Arc::clone(&planner.bm25_index),
             Arc::clone(&planner.temporal_index),
             Arc::clone(&planner.graph_manager),
             false, // Disable entity extraction for this test
@@ -1142,6 +1189,7 @@ mod tests {
         let pipeline = IngestionPipeline::new(
             Arc::clone(&planner.storage),
             Arc::clone(&planner.vector_index),
+            Arc::clone(&planner.bm25_index),
             Arc::clone(&planner.temporal_index),
             Arc::clone(&planner.graph_manager),
             false,
@@ -1198,6 +1246,7 @@ mod tests {
         let pipeline = IngestionPipeline::new(
             Arc::clone(&planner.storage),
             Arc::clone(&planner.vector_index),
+            Arc::clone(&planner.bm25_index),
             Arc::clone(&planner.temporal_index),
             Arc::clone(&planner.graph_manager),
             false,
@@ -1248,6 +1297,7 @@ mod tests {
         let pipeline = IngestionPipeline::new(
             Arc::clone(&planner.storage),
             Arc::clone(&planner.vector_index),
+            Arc::clone(&planner.bm25_index),
             Arc::clone(&planner.temporal_index),
             Arc::clone(&planner.graph_manager),
             true, // Enable entity extraction
@@ -1304,6 +1354,7 @@ mod tests {
         let pipeline = IngestionPipeline::new(
             Arc::clone(&planner.storage),
             Arc::clone(&planner.vector_index),
+            Arc::clone(&planner.bm25_index),
             Arc::clone(&planner.temporal_index),
             Arc::clone(&planner.graph_manager),
             true,
@@ -1357,6 +1408,7 @@ mod tests {
         let pipeline = IngestionPipeline::new(
             Arc::clone(&planner.storage),
             Arc::clone(&planner.vector_index),
+            Arc::clone(&planner.bm25_index),
             Arc::clone(&planner.temporal_index),
             Arc::clone(&planner.graph_manager),
             true,
@@ -1433,6 +1485,7 @@ mod tests {
         let pipeline = IngestionPipeline::new(
             Arc::clone(&planner.storage),
             Arc::clone(&planner.vector_index),
+            Arc::clone(&planner.bm25_index),
             Arc::clone(&planner.temporal_index),
             Arc::clone(&planner.graph_manager),
             false,
@@ -1506,6 +1559,7 @@ mod tests {
         let pipeline = IngestionPipeline::new(
             Arc::clone(&planner.storage),
             Arc::clone(&planner.vector_index),
+            Arc::clone(&planner.bm25_index),
             Arc::clone(&planner.temporal_index),
             Arc::clone(&planner.graph_manager),
             false,
@@ -1547,6 +1601,7 @@ mod tests {
         let pipeline = IngestionPipeline::new(
             Arc::clone(&planner.storage),
             Arc::clone(&planner.vector_index),
+            Arc::clone(&planner.bm25_index),
             Arc::clone(&planner.temporal_index),
             Arc::clone(&planner.graph_manager),
             false,
