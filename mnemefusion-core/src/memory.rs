@@ -111,6 +111,7 @@ impl MemoryEngine {
             Arc::clone(&temporal_index),
             Arc::clone(&graph_manager),
             config.fusion_semantic_threshold,
+            config.semantic_prefilter_threshold,
             config.fusion_strategy,
             config.rrf_k,
         );

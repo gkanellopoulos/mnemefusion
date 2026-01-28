@@ -61,6 +61,18 @@ pub struct Config {
     /// Set to 0.0 to disable the filter (not recommended for production)
     pub fusion_semantic_threshold: f32,
 
+    /// Pre-fusion semantic filtering threshold (0.0 to 1.0)
+    ///
+    /// Semantic search results below this threshold are filtered OUT before fusion.
+    /// This is stricter than fusion_semantic_threshold and reduces noise in the semantic pathway.
+    ///
+    /// Default: 0.3 (30% minimum cosine similarity)
+    /// Recommended range: 0.20 to 0.40
+    ///
+    /// This helps improve precision by removing low-quality semantic matches early.
+    /// Set to 0.0 to disable pre-fusion filtering (uses only fusion_semantic_threshold).
+    pub semantic_prefilter_threshold: f32,
+
     /// Fusion strategy (Weighted or ReciprocalRank)
     ///
     /// - Weighted: Uses intent-adaptive weights (original approach)
@@ -88,6 +100,7 @@ impl Default for Config {
             hnsw_ef_search: 64,
             indexed_metadata: Vec::new(), // No indexed fields by default
             fusion_semantic_threshold: 0.15, // 15% minimum semantic relevance
+            semantic_prefilter_threshold: 0.3, // 30% pre-fusion filter (Sprint 18)
             fusion_strategy: FusionStrategy::default(), // RRF by default
             rrf_k: 60.0, // From RRF paper
         }
@@ -231,6 +244,34 @@ impl Config {
     /// ```
     pub fn with_rrf_k(mut self, k: f32) -> Self {
         self.rrf_k = k.max(1.0);
+        self
+    }
+
+    /// Set the pre-fusion semantic filter threshold
+    ///
+    /// Semantic search results below this threshold are filtered out before fusion.
+    /// This is stricter than fusion_semantic_threshold and helps improve precision.
+    ///
+    /// # Arguments
+    ///
+    /// * `threshold` - Minimum cosine similarity (0.0 to 1.0). Default: 0.3
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mnemefusion_core::Config;
+    ///
+    /// // Strict pre-filter (only high-quality semantic matches)
+    /// let config = Config::default().with_semantic_prefilter_threshold(0.4);
+    ///
+    /// // Permissive pre-filter
+    /// let config = Config::default().with_semantic_prefilter_threshold(0.2);
+    ///
+    /// // Disable pre-filter (use only fusion threshold)
+    /// let config = Config::default().with_semantic_prefilter_threshold(0.0);
+    /// ```
+    pub fn with_semantic_prefilter_threshold(mut self, threshold: f32) -> Self {
+        self.semantic_prefilter_threshold = threshold.clamp(0.0, 1.0);
         self
     }
 

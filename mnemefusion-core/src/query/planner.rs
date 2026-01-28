@@ -27,6 +27,7 @@ pub struct QueryPlanner {
     pub(crate) graph_manager: Arc<RwLock<GraphManager>>,
     intent_classifier: IntentClassifier,
     fusion_engine: FusionEngine,
+    semantic_prefilter_threshold: f32,
 }
 
 impl QueryPlanner {
@@ -38,6 +39,7 @@ impl QueryPlanner {
         temporal_index: Arc<TemporalIndex>,
         graph_manager: Arc<RwLock<GraphManager>>,
         fusion_semantic_threshold: f32,
+        semantic_prefilter_threshold: f32,
         fusion_strategy: crate::query::FusionStrategy,
         rrf_k: f32,
     ) -> Self {
@@ -52,6 +54,7 @@ impl QueryPlanner {
                 .with_semantic_threshold(fusion_semantic_threshold)
                 .with_strategy(fusion_strategy)
                 .with_rrf_k(rrf_k),
+            semantic_prefilter_threshold,
         }
     }
 
@@ -92,6 +95,12 @@ impl QueryPlanner {
         let mut temporal_scores = self.temporal_search(query_text, limit * fetch_multiplier)?;
         let mut causal_scores = self.causal_search(query_text, limit * fetch_multiplier)?;
         let mut entity_scores = self.entity_search(query_text, limit * fetch_multiplier)?;
+
+        // Step 2.3: Pre-fusion semantic filtering (Sprint 18 Task 18.1)
+        // Filter out low-quality semantic matches before fusion to improve precision
+        if self.semantic_prefilter_threshold > 0.0 {
+            semantic_scores.retain(|_id, score| *score >= self.semantic_prefilter_threshold);
+        }
 
         // Step 2.5: Filter by namespace if provided
         if let Some(ns) = namespace {
@@ -689,7 +698,7 @@ mod tests {
         let temporal_index = Arc::new(TemporalIndex::new(Arc::clone(&storage)));
         let graph_manager = Arc::new(RwLock::new(GraphManager::new()));
 
-        // Use 0.0 threshold for tests to avoid filtering test results
+        // Use 0.0 thresholds for tests to avoid filtering test results
         // Use Weighted strategy for tests to maintain existing test expectations
         let planner = QueryPlanner::new(
             storage,
@@ -697,7 +706,8 @@ mod tests {
             bm25_index,
             temporal_index,
             graph_manager,
-            0.0, // threshold
+            0.0, // fusion_semantic_threshold
+            0.0, // semantic_prefilter_threshold
             crate::query::FusionStrategy::Weighted, // strategy (weighted for backward compat in tests)
             60.0, // rrf_k (not used with Weighted strategy)
         );
