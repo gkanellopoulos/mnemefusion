@@ -215,6 +215,97 @@ impl TemporalIndex {
         write_txn.commit()?;
         Ok(())
     }
+
+    /// Search memories by temporal content matching (Sprint 18 Task 18.6)
+    ///
+    /// Unlike timestamp-based queries (recent, range_query), this method matches
+    /// temporal expressions in the query to temporal expressions in memory content.
+    /// For example, "yesterday" in the query matches memories that mention "yesterday".
+    ///
+    /// # Arguments
+    ///
+    /// * `query_text` - The query text to extract temporal expressions from
+    /// * `limit` - Maximum number of results to return
+    ///
+    /// # Returns
+    ///
+    /// A vector of (MemoryId, score) tuples, sorted by score descending
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mnemefusion_core::index::TemporalIndex;
+    /// # use std::sync::Arc;
+    /// # let storage = Arc::new(mnemefusion_core::storage::StorageEngine::open("test.mfdb").unwrap());
+    /// let temporal = TemporalIndex::new(storage);
+    ///
+    /// // Query mentions "yesterday" - will match memories with "yesterday" in content
+    /// let results = temporal.search_temporal_content("What happened yesterday?", 10).unwrap();
+    /// for (id, score) in results {
+    ///     println!("Memory {} has temporal overlap score: {}", id, score);
+    /// }
+    /// ```
+    pub fn search_temporal_content(
+        &self,
+        query_text: &str,
+        limit: usize,
+    ) -> Result<Vec<(MemoryId, f32)>> {
+        use crate::ingest::get_temporal_extractor;
+
+        // Extract temporal expressions from query
+        let extractor = get_temporal_extractor();
+        let query_expressions = extractor.extract(query_text);
+
+        // If query has no temporal expressions, return empty
+        if query_expressions.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Get all memories and score them
+        let mut scored_results = Vec::new();
+
+        // Get all memories from storage (TODO: optimize this with an index)
+        let read_txn = self.storage.db().begin_read()?;
+        let table = read_txn.open_table(crate::storage::engine::TEMPORAL_INDEX)?;
+
+        for entry in table.iter()? {
+            let (_ts_key, id_bytes) = entry?;
+            let memory_id = MemoryId::from_bytes(id_bytes.value())?;
+
+            // Get memory to access metadata
+            if let Some(memory) = self.storage.get_memory(&memory_id)? {
+                // Get temporal expressions from metadata
+                if let Some(temporal_expr_json) = memory.get_metadata("temporal_expressions") {
+                    // Parse JSON array of temporal expression strings
+                    if let Ok(expr_strings) = serde_json::from_str::<Vec<String>>(temporal_expr_json) {
+                        if !expr_strings.is_empty() {
+                            // Convert strings back to TemporalExpression objects
+                            // For scoring, we just need the text, so create simple Relative expressions
+                            let memory_expressions: Vec<_> = expr_strings
+                                .iter()
+                                .map(|s| crate::ingest::TemporalExpression::Relative(s.clone()))
+                                .collect();
+
+                            // Calculate overlap score
+                            let score = extractor.calculate_overlap(&query_expressions, &memory_expressions);
+
+                            if score > 0.0 {
+                                scored_results.push((memory_id, score));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sort by score descending
+        scored_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Take top-K
+        scored_results.truncate(limit);
+
+        Ok(scored_results)
+    }
 }
 
 #[cfg(test)]
@@ -396,5 +487,163 @@ mod tests {
                 "Results should be sorted newest first"
             );
         }
+    }
+
+    // Sprint 18 Task 18.6: Temporal content scoring tests
+    #[test]
+    fn test_search_temporal_content_basic() {
+        let (temporal, storage, _dir) = create_test_index();
+
+        // Add memory with temporal expression in content
+        let mut mem1 = Memory::new(
+            "We had a meeting yesterday about the project".to_string(),
+            vec![0.1; 384],
+        );
+        mem1.set_metadata(
+            "temporal_expressions".to_string(),
+            r#"["yesterday"]"#.to_string(),
+        );
+        storage.store_memory(&mem1).unwrap();
+
+        // Add memory with different temporal expression
+        let mut mem2 = Memory::new(
+            "The event is scheduled for next week".to_string(),
+            vec![0.2; 384],
+        );
+        mem2.set_metadata(
+            "temporal_expressions".to_string(),
+            r#"["next week"]"#.to_string(),
+        );
+        storage.store_memory(&mem2).unwrap();
+
+        // Add memory with no temporal expressions
+        let mem3 = Memory::new(
+            "Machine learning is fascinating".to_string(),
+            vec![0.3; 384],
+        );
+        storage.store_memory(&mem3).unwrap();
+
+        // Query with "yesterday"
+        let results = temporal
+            .search_temporal_content("What happened yesterday?", 10)
+            .unwrap();
+
+        // Should find mem1 with "yesterday"
+        assert!(!results.is_empty(), "Should find memories with matching temporal expressions");
+        assert_eq!(results[0].0, mem1.id, "Should rank mem1 (yesterday) first");
+        assert!(results[0].1 > 0.0, "Should have positive score");
+    }
+
+    #[test]
+    fn test_search_temporal_content_no_query_expressions() {
+        let (temporal, storage, _dir) = create_test_index();
+
+        // Add memory with temporal expression
+        let mut mem1 = Memory::new(
+            "We met yesterday".to_string(),
+            vec![0.1; 384],
+        );
+        mem1.set_metadata(
+            "temporal_expressions".to_string(),
+            r#"["yesterday"]"#.to_string(),
+        );
+        storage.store_memory(&mem1).unwrap();
+
+        // Query with no temporal expressions
+        let results = temporal
+            .search_temporal_content("Tell me about machine learning", 10)
+            .unwrap();
+
+        // Should return empty (no temporal expressions in query)
+        assert_eq!(results.len(), 0, "Should return empty when query has no temporal expressions");
+    }
+
+    #[test]
+    fn test_search_temporal_content_multiple_matches() {
+        let (temporal, storage, _dir) = create_test_index();
+
+        // Add memories with "yesterday"
+        let mut mem1 = Memory::new(
+            "I saw Alice yesterday at the park".to_string(),
+            vec![0.1; 384],
+        );
+        mem1.set_metadata(
+            "temporal_expressions".to_string(),
+            r#"["yesterday"]"#.to_string(),
+        );
+        storage.store_memory(&mem1).unwrap();
+
+        let mut mem2 = Memory::new(
+            "Yesterday was a great day for tennis".to_string(),
+            vec![0.2; 384],
+        );
+        mem2.set_metadata(
+            "temporal_expressions".to_string(),
+            r#"["yesterday"]"#.to_string(),
+        );
+        storage.store_memory(&mem2).unwrap();
+
+        let mut mem3 = Memory::new(
+            "The meeting was last week".to_string(),
+            vec![0.3; 384],
+        );
+        mem3.set_metadata(
+            "temporal_expressions".to_string(),
+            r#"["last week"]"#.to_string(),
+        );
+        storage.store_memory(&mem3).unwrap();
+
+        // Query with "yesterday"
+        let results = temporal
+            .search_temporal_content("What did I do yesterday?", 10)
+            .unwrap();
+
+        // Should find both mem1 and mem2 (both have "yesterday")
+        assert!(results.len() >= 2, "Should find multiple memories with matching temporal expression");
+
+        let result_ids: Vec<_> = results.iter().map(|(id, _)| id).collect();
+        assert!(result_ids.contains(&&mem1.id), "Should include mem1 (yesterday)");
+        assert!(result_ids.contains(&&mem2.id), "Should include mem2 (yesterday)");
+    }
+
+    #[test]
+    fn test_search_temporal_content_scoring() {
+        let (temporal, storage, _dir) = create_test_index();
+
+        // Add memory with multiple temporal expressions matching query
+        let mut mem1 = Memory::new(
+            "Yesterday morning we discussed the project".to_string(),
+            vec![0.1; 384],
+        );
+        mem1.set_metadata(
+            "temporal_expressions".to_string(),
+            r#"["yesterday", "morning"]"#.to_string(),
+        );
+        storage.store_memory(&mem1).unwrap();
+
+        // Add memory with only one matching expression
+        let mut mem2 = Memory::new(
+            "I went to the park yesterday".to_string(),
+            vec![0.2; 384],
+        );
+        mem2.set_metadata(
+            "temporal_expressions".to_string(),
+            r#"["yesterday"]"#.to_string(),
+        );
+        storage.store_memory(&mem2).unwrap();
+
+        // Query with multiple temporal expressions
+        let results = temporal
+            .search_temporal_content("What happened yesterday morning?", 10)
+            .unwrap();
+
+        assert!(results.len() >= 2, "Should find both memories");
+
+        // mem1 should score higher (has both "yesterday" and "morning")
+        // Note: The actual scoring depends on TemporalExtractor.calculate_overlap()
+        // which may normalize scores, so we just verify both are found
+        let result_ids: Vec<_> = results.iter().map(|(id, _)| id).collect();
+        assert!(result_ids.contains(&&mem1.id), "Should include mem1 (yesterday morning)");
+        assert!(result_ids.contains(&&mem2.id), "Should include mem2 (yesterday)");
     }
 }

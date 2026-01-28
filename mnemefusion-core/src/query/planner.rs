@@ -409,71 +409,18 @@ impl QueryPlanner {
     /// Extracts temporal expressions from query and matches them to temporal expressions
     /// in memory content. Falls back to weak recency signal if query has no temporal context.
     fn temporal_search(&self, query_text: &str, limit: usize) -> Result<HashMap<MemoryId, f32>> {
-        let temporal_extractor = get_temporal_extractor();
-
-        // Extract temporal expressions from query
-        let query_temporal_expressions = temporal_extractor.extract(query_text);
-
-        // If query has no temporal context, use weak recency signal
-        if query_temporal_expressions.is_empty() {
-            return self.temporal_search_recency_fallback(limit);
-        }
-
-        // Get all memories (we need to check their temporal metadata)
-        // Fetch more to find matches, then score based on temporal overlap
-        let recent_memories = self.temporal_index.recent(limit * 10)?;
-
-        let mut scores = HashMap::new();
-
-        for temporal_result in recent_memories {
-            // Load memory to access metadata
-            if let Some(memory) = self.storage.get_memory(&temporal_result.id)? {
-                // Get temporal expressions from memory metadata
-                if let Some(expressions_json) = memory.get_metadata("temporal_expressions") {
-                    // Parse JSON array of temporal expressions
-                    if let Ok(memory_expressions) =
-                        serde_json::from_str::<Vec<String>>(expressions_json)
-                    {
-                        // Convert strings back to TemporalExpression for matching
-                        let memory_temporal_expressions: Vec<crate::ingest::TemporalExpression> =
-                            memory_expressions
-                                .iter()
-                                .map(|s| {
-                                    // Simple heuristic: assume Relative for common patterns
-                                    crate::ingest::TemporalExpression::Relative(s.clone())
-                                })
-                                .collect();
-
-                        // Calculate overlap score
-                        let overlap_score = temporal_extractor.calculate_overlap(
-                            &query_temporal_expressions,
-                            &memory_temporal_expressions,
-                        );
-
-                        if overlap_score > 0.0 {
-                            scores.insert(temporal_result.id, overlap_score);
-                        }
-                    }
-                }
-            }
-
-            // Stop once we have enough scored results
-            if scores.len() >= limit * 2 {
-                break;
-            }
-        }
+        // Sprint 18 Task 18.6: Use temporal content scoring
+        // Match temporal expressions in query to temporal expressions in memory content
+        let results = self.temporal_index.search_temporal_content(query_text, limit)?;
 
         // If we found temporal matches, return them
-        if !scores.is_empty() {
+        if !results.is_empty() {
+            let mut scores: HashMap<MemoryId, f32> = results.into_iter().collect();
+
             // Normalize scores to 0.0-1.0 range
             FusionEngine::normalize_scores(&mut scores);
 
-            // Take top results by score
-            let mut score_vec: Vec<_> = scores.into_iter().collect();
-            score_vec.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-            score_vec.truncate(limit);
-
-            Ok(score_vec.into_iter().collect())
+            Ok(scores)
         } else {
             // No temporal matches found - fall back to weak recency signal
             self.temporal_search_recency_fallback(limit)
