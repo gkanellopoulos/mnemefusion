@@ -9,17 +9,19 @@ MnemeFusion provides four-dimensional memory indexing (semantic, temporal, causa
 [![Tests](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/test.yml/badge.svg)](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/test.yml)
 [![Benchmarks](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/benchmark.yml/badge.svg)](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/benchmark.yml)
 
-## Status: 🚀 Sprint 17 IN PROGRESS
+## Status: ✅ Sprint 17 COMPLETE | 📋 Sprint 18 PLANNING
 
-**Sprint 17.1 + 17.2 COMPLETE!** (January 27, 2026)
+**Sprint 17 COMPLETE!** (January 28, 2026)
 
-Recent achievements:
-- ✅ **BM25 Keyword Search**: Exact term matching for names, dates, technical terms
-- ✅ **Reciprocal Rank Fusion**: 5-pathway RRF fusion (Hindsight's approach)
-- ✅ **319 tests passing**: All tests green including 14 new RRF/BM25 tests
-- 🎯 **Next**: LoCoMo benchmark to validate accuracy improvement
+Sprint 17 achievements:
+- ✅ **Multi-Dimensional Retrieval**: BM25, RRF, graph traversal, multi-turn aggregation
+- ✅ **65.2% LoCoMo Recall@10**: +26.7% improvement from semantic-only baseline
+- ✅ **70.1% LongMemEval Recall**: Strong session-based retrieval performance
+- ✅ **333 tests passing**: All tests green including new component tests
+- ✅ **Ablation study complete**: Component contributions measured and documented
+- 📋 **Sprint 18 planned**: Hybrid Retrieval + QA System (target: 80-85% recall)
 
-Phase 1 achievements:
+Core engine achievements:
 - ✅ **Storage Layer**: redb-based single-file database with ACID guarantees
 - ✅ **Vector Search**: usearch HNSW index for semantic similarity
 - ✅ **Temporal Indexing**: Time-based range queries and recency search
@@ -29,11 +31,11 @@ Phase 1 achievements:
 - ✅ **Query Intelligence**: Intent classification with RRF fusion
 - ✅ **Python Bindings**: Production-ready PyO3 bindings with comprehensive tests
 
-**Sprint 17 Progress:**
-- Tasks 17.1-17.2: ✅ COMPLETE (BM25 + RRF)
-- Tasks 17.3-17.5: 📋 PLANNED (Reranking, policy traversal, entity consolidation)
-- Task 17.6: 🎯 NEXT (LoCoMo benchmark validation)
-- Target: 70% LoCoMo Recall@10 (currently 38.5% baseline)
+**Benchmark Results:**
+- LoCoMo Phase 2: 65.2% recall (1,986 queries)
+- LongMemEval Oracle: 70.1% recall (500 queries)
+- HotpotQA Phase 2: 94.8% recall (1,000 queries)
+- Gap to Mem0: 1.7% (65.2% vs 66.9%) with zero external dependencies
 
 ## Features
 
