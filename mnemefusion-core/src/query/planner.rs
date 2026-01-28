@@ -85,6 +85,21 @@ impl QueryPlanner {
         // Step 1: Classify intent
         let intent = self.intent_classifier.classify(query_text);
 
+        // Step 1.5: Entity-first retrieval path (Sprint 18 Task 18.4)
+        // If query has entity_focus, fetch ALL memories mentioning that entity
+        // This bypasses top-K semantic search to get complete entity information
+        if let Some(entity_name) = intent.entity_focus.clone() {
+            return self.retrieve_entity_focused(
+                &entity_name,
+                query_text,
+                query_embedding,
+                limit,
+                namespace,
+                filters,
+                intent,
+            );
+        }
+
         // Step 2: Retrieve from all dimensions (fetch more to account for filtering)
         let needs_filtering =
             namespace.is_some() || (filters.is_some() && !filters.unwrap().is_empty());
@@ -243,6 +258,113 @@ impl QueryPlanner {
             &self.storage,
             limit,
         )?;
+
+        Ok((intent, final_results))
+    }
+
+    /// Entity-first retrieval path (Sprint 18 Task 18.4)
+    ///
+    /// For entity-focused queries (e.g., "What does Alice like?"), this method:
+    /// 1. Looks up the entity by name
+    /// 2. Fetches ALL memories mentioning that entity (bypasses top-K limit)
+    /// 3. Ranks by semantic similarity + keyword matching
+    /// 4. Applies filters and returns top results
+    ///
+    /// This solves Category 1 failures where evidence is scattered across many turns.
+    fn retrieve_entity_focused(
+        &self,
+        entity_name: &str,
+        query_text: &str,
+        query_embedding: &[f32],
+        limit: usize,
+        namespace: Option<&str>,
+        filters: Option<&[MetadataFilter]>,
+        intent: IntentClassification,
+    ) -> Result<(IntentClassification, Vec<FusedResult>)> {
+        // Step 1: Find entity by name (case-insensitive)
+        let entity = self.storage.find_entity_by_name(entity_name)?;
+
+        if entity.is_none() {
+            // Entity not found - return empty results
+            return Ok((intent, vec![]));
+        }
+
+        let entity = entity.unwrap();
+
+        // Step 2: Get ALL memories mentioning this entity from the graph
+        let graph = self.graph_manager.read().unwrap();
+        let entity_result = graph.get_entity_memories(&entity.id);
+        let memory_ids = entity_result.memories;
+        drop(graph); // Release lock
+
+        if memory_ids.is_empty() {
+            return Ok((intent, vec![]));
+        }
+
+        // Step 3: Calculate scores for each memory
+        let mut scored_results = Vec::new();
+
+        for memory_id in memory_ids {
+            // Get memory from storage
+            let memory = match self.storage.get_memory_by_u64(memory_id.to_u64())? {
+                Some(m) => m,
+                None => continue, // Skip if memory not found
+            };
+
+            // Apply namespace filter
+            if let Some(ns) = namespace {
+                if memory.get_namespace() != ns {
+                    continue;
+                }
+            }
+
+            // Apply metadata filters
+            if let Some(filter_list) = filters {
+                if !filter_list.is_empty() {
+                    if !Self::memory_matches_filters(&memory, filter_list) {
+                        continue;
+                    }
+                }
+            }
+
+            // Calculate semantic similarity
+            let semantic_score = if !memory.embedding.is_empty() && query_embedding.len() == memory.embedding.len() {
+                cosine_similarity(query_embedding, &memory.embedding)
+            } else {
+                0.0
+            };
+
+            // Calculate BM25 score for keyword matching
+            let bm25_score = {
+                let results = self.bm25_index.search(query_text, 1000)?;
+                results.iter()
+                    .find(|r| r.memory_id == memory_id)
+                    .map(|r| r.score)
+                    .unwrap_or(0.0)
+            };
+
+            // Combined score: prioritize semantic similarity with keyword boost
+            // For entity queries, we want memories that mention the entity AND match query semantics
+            let combined_score = 0.7 * semantic_score + 0.3 * bm25_score;
+
+            scored_results.push(FusedResult {
+                id: memory_id.clone(),
+                semantic_score,
+                bm25_score,
+                temporal_score: 0.0,
+                causal_score: 0.0,
+                entity_score: 1.0, // All results mention the entity
+                fused_score: combined_score,
+                confidence: 0.9, // High confidence since we know the entity is mentioned
+            });
+        }
+
+        // Step 4: Sort by combined score and take top-K
+        scored_results.sort_by(|a, b| {
+            b.fused_score.partial_cmp(&a.fused_score).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let final_results = scored_results.into_iter().take(limit).collect();
 
         Ok((intent, final_results))
     }
@@ -705,6 +827,25 @@ impl QueryPlanner {
         }
         true // All filters passed
     }
+}
+
+/// Calculate cosine similarity between two vectors
+///
+/// Returns similarity in range [0.0, 1.0] where 1.0 is identical vectors.
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+
+    let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let magnitude_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let magnitude_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+
+    if magnitude_a == 0.0 || magnitude_b == 0.0 {
+        return 0.0;
+    }
+
+    (dot_product / (magnitude_a * magnitude_b)).max(0.0).min(1.0)
 }
 
 #[cfg(test)]
@@ -1745,5 +1886,109 @@ mod tests {
             !scores.contains_key(&mem1_id),
             "Should filter out memories with very low causal density"
         );
+    }
+
+    // Sprint 18 Task 18.4: Entity-first retrieval path tests
+    #[test]
+    fn test_entity_focused_retrieval() {
+        use crate::ingest::IngestionPipeline;
+        use crate::Entity;
+
+        let (planner, _dir) = create_test_planner();
+
+        let pipeline = IngestionPipeline::new(
+            Arc::clone(&planner.storage),
+            Arc::clone(&planner.vector_index),
+            Arc::clone(&planner.bm25_index),
+            Arc::clone(&planner.temporal_index),
+            Arc::clone(&planner.graph_manager),
+            true, // Enable entity extraction
+        );
+
+        // Create and store entity
+        let entity = Entity::new("Alice");
+        planner.storage.store_entity(&entity).unwrap();
+
+        // Add memories mentioning Alice (scattered across turns)
+        let mem1 = Memory::new(
+            "Alice likes playing tennis on weekends".to_string(),
+            vec![0.1; 384],
+        );
+        let mem1_id = mem1.id.clone();
+        pipeline.add(mem1).unwrap();
+
+        let mem2 = Memory::new(
+            "Alice enjoys reading science fiction books".to_string(),
+            vec![0.2; 384],
+        );
+        let mem2_id = mem2.id.clone();
+        pipeline.add(mem2).unwrap();
+
+        let mem3 = Memory::new(
+            "Alice prefers coffee over tea".to_string(),
+            vec![0.3; 384],
+        );
+        let mem3_id = mem3.id.clone();
+        pipeline.add(mem3).unwrap();
+
+        // Unrelated memory
+        let mem4 = Memory::new(
+            "Bob works on machine learning projects".to_string(),
+            vec![0.4; 384],
+        );
+        pipeline.add(mem4).unwrap();
+
+        // Link memories to entity manually (since entity extraction is being tested separately)
+        {
+            let mut graph = planner.graph_manager.write().unwrap();
+            graph.link_memory_to_entity(&mem1_id, &entity.id);
+            graph.link_memory_to_entity(&mem2_id, &entity.id);
+            graph.link_memory_to_entity(&mem3_id, &entity.id);
+        }
+
+        // Query with entity-focused pattern (should trigger entity-first retrieval)
+        let query_embedding = vec![0.15; 384];
+        let (intent, results) = planner
+            .query("What does Alice like?", &query_embedding, 10, None, None)
+            .unwrap();
+
+        // Should classify as Entity intent
+        assert_eq!(intent.intent, crate::query::QueryIntent::Entity);
+
+        // Should extract "Alice" as entity_focus
+        assert_eq!(intent.entity_focus, Some("Alice".to_string()));
+
+        // Should retrieve ALL memories mentioning Alice (not limited by top-K semantic)
+        assert!(results.len() >= 3, "Should retrieve all memories mentioning Alice");
+
+        // Verify all Alice memories are in results
+        let result_ids: Vec<_> = results.iter().map(|r| &r.id).collect();
+        assert!(result_ids.contains(&&mem1_id), "Should include mem1 (tennis)");
+        assert!(result_ids.contains(&&mem2_id), "Should include mem2 (books)");
+        assert!(result_ids.contains(&&mem3_id), "Should include mem3 (coffee)");
+
+        // All results should have high entity_score (1.0 since they mention the entity)
+        for result in &results {
+            if result_ids.contains(&&result.id) {
+                assert_eq!(
+                    result.entity_score, 1.0,
+                    "All entity-focused results should have entity_score=1.0"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_entity_focused_retrieval_not_found() {
+        let (planner, _dir) = create_test_planner();
+
+        // Query for non-existent entity
+        let query_embedding = vec![0.1; 384];
+        let (_intent, results) = planner
+            .query("What does NonExistentEntity like?", &query_embedding, 10, None, None)
+            .unwrap();
+
+        // Should return empty results
+        assert_eq!(results.len(), 0, "Should return empty for non-existent entity");
     }
 }
