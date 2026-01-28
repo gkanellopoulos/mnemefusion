@@ -49,6 +49,8 @@ env/
 *.db
 /test_data/
 /temp/
+*.log
+nul
 
 # Documentation
 /target/doc/
