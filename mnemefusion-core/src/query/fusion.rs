@@ -89,6 +89,17 @@ pub struct FusedResult {
     pub entity_score: f32,
     /// Final fused score (0.0 to 1.0)
     pub fused_score: f32,
+    /// Cross-dimensional validation confidence (0.0 to 1.0)
+    ///
+    /// Confidence based on how many dimensions contributed to this result:
+    /// - 5 dimensions: 1.0 (all dimensions agree)
+    /// - 4 dimensions: 0.9
+    /// - 3 dimensions: 0.8
+    /// - 2 dimensions: 0.6 (medium confidence)
+    /// - 1 dimension: 0.4 (low confidence, likely noise)
+    ///
+    /// Added in Sprint 18 Task 18.2 to improve precision
+    pub confidence: f32,
 }
 
 /// Fusion strategy for combining multi-dimensional search results
@@ -305,6 +316,7 @@ impl FusionEngine {
                     causal_score,
                     entity_score,
                     fused_score,
+                    confidence: 1.0, // Will be adjusted by cross-dimensional validation
                 })
             })
             .collect();
@@ -395,6 +407,7 @@ impl FusionEngine {
                     causal_score,
                     entity_score,
                     fused_score: rrf_score,
+                    confidence: 1.0, // Will be adjusted by cross-dimensional validation
                 })
             })
             .collect();

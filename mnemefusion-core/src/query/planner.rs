@@ -180,7 +180,7 @@ impl QueryPlanner {
         }
 
         // Step 3: Fuse results with adaptive weights
-        let fused_results = self.fusion_engine.fuse(
+        let mut fused_results = self.fusion_engine.fuse(
             intent.intent,
             &semantic_scores,
             &bm25_scores,
@@ -188,6 +188,49 @@ impl QueryPlanner {
             &causal_scores,
             &entity_scores,
         );
+
+        // Step 3.5: Cross-dimensional validation (Sprint 18 Task 18.2)
+        // Calculate confidence based on how many dimensions contributed to each result
+        // Multi-dimensional matches are more reliable than single-dimension matches
+        for result in &mut fused_results {
+            // Count how many dimensions contributed (score > 0.0)
+            let mut dimension_count = 0;
+
+            if result.semantic_score > 0.0 {
+                dimension_count += 1;
+            }
+            if result.bm25_score > 0.0 {
+                dimension_count += 1;
+            }
+            if result.temporal_score > 0.0 {
+                dimension_count += 1;
+            }
+            if result.causal_score > 0.0 {
+                dimension_count += 1;
+            }
+            if result.entity_score > 0.0 {
+                dimension_count += 1;
+            }
+
+            // Assign confidence based on dimensional coverage
+            // More dimensions agreeing = higher confidence = more reliable result
+            result.confidence = match dimension_count {
+                5 => 1.0,   // All 5 dimensions agree - highest confidence
+                4 => 0.9,   // 4 dimensions - very high confidence
+                3 => 0.8,   // 3 dimensions - high confidence
+                2 => 0.6,   // 2 dimensions - medium confidence
+                1 => 0.4,   // 1 dimension only - low confidence (potential noise)
+                _ => 0.2,   // 0 dimensions (shouldn't happen) - very low confidence
+            };
+
+            // Adjust fused_score by confidence to penalize single-dimension matches
+            result.fused_score *= result.confidence;
+        }
+
+        // Re-sort by adjusted fused_score (confidence-weighted)
+        fused_results.sort_by(|a, b| {
+            b.fused_score.partial_cmp(&a.fused_score).unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Step 4: Multi-turn aggregation for list/collection queries
         // Note: Currently has minimal impact but kept for future improvement
@@ -575,6 +618,7 @@ impl QueryPlanner {
                 causal_score: 0.0,
                 entity_score: 0.0,
                 fused_score: temporal_score,
+                confidence: 1.0,
             });
 
             position += 1;

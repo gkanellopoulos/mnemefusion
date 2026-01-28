@@ -110,6 +110,7 @@ impl HeuristicReranker {
                     causal_score: result.causal_score,
                     entity_score: result.entity_score,
                     fused_score: final_score,
+                    confidence: result.confidence, // Preserve confidence from input
                 });
             }
         }
