@@ -32,6 +32,8 @@ pub struct IntentClassification {
     pub confidence: f32,
     /// Secondary intents (if any)
     pub secondary: Vec<(QueryIntent, f32)>,
+    /// Extracted entity name for entity-focused queries (Sprint 18 Task 18.3)
+    pub entity_focus: Option<String>,
 }
 
 /// Classifies query intent using pattern matching
@@ -42,6 +44,8 @@ pub struct IntentClassifier {
     temporal_patterns: Vec<Regex>,
     causal_patterns: Vec<Regex>,
     entity_patterns: Vec<Regex>,
+    /// Patterns for entity-focused list queries (Sprint 18 Task 18.3)
+    entity_list_patterns: Vec<Regex>,
 }
 
 impl IntentClassifier {
@@ -94,6 +98,20 @@ impl IntentClassifier {
                 Regex::new(r"(?i)\b(with|involving|mention|mentioning)\s+[A-Z]").unwrap(),
                 Regex::new(r"\b[A-Z][a-z]+\b").unwrap(), // Capitalized words (potential entities)
             ],
+            entity_list_patterns: vec![
+                // "What does X like/enjoy/prefer/want/need"
+                Regex::new(r"(?i)^what\s+does\s+(\w+)\s+(like|enjoy|prefer|want|need|love|hate|dislike)").unwrap(),
+                // "What are X's hobbies/interests/activities/preferences"
+                Regex::new(r"(?i)^what\s+(are|were)\s+(\w+)'?s\s+(hobbies|interests|activities|preferences|habits|routines)").unwrap(),
+                // "List all/everything about X"
+                Regex::new(r"(?i)^(list|show|get|find)\s+(all|everything)\s+(about|for|regarding)\s+(\w+)").unwrap(),
+                // "Tell me about X" / "Tell me everything about X"
+                Regex::new(r"(?i)^tell\s+me\s+(everything\s+)?(about|regarding)\s+(\w+)").unwrap(),
+                // "What do I know about X" / "What do we know about X"
+                Regex::new(r"(?i)^what\s+do\s+(i|we)\s+know\s+about\s+(\w+)").unwrap(),
+                // "X's hobbies/activities" (direct possessive)
+                Regex::new(r"(?i)^(\w+)'?s\s+(hobbies|interests|activities|preferences|habits)").unwrap(),
+            ],
         }
     }
 
@@ -127,6 +145,7 @@ impl IntentClassifier {
         let temporal_matches = self.count_matches(&self.temporal_patterns, query);
         let causal_matches = self.count_matches(&self.causal_patterns, query);
         let entity_matches = self.count_matches(&self.entity_patterns, query);
+        let entity_list_matches = self.count_matches(&self.entity_list_patterns, query);
 
         // Calculate scores based on matches
         if temporal_matches > 0 {
@@ -141,6 +160,14 @@ impl IntentClassifier {
         if entity_matches > 0 {
             // Entity patterns are weaker indicators
             *scores.get_mut(&QueryIntent::Entity).unwrap() = (entity_matches as f32 * 0.2).min(0.8);
+        }
+
+        // Entity list patterns are strong indicators (Sprint 18 Task 18.3)
+        if entity_list_matches > 0 {
+            // Boost entity score significantly for entity-focused queries
+            let current_score = *scores.get(&QueryIntent::Entity).unwrap();
+            *scores.get_mut(&QueryIntent::Entity).unwrap() =
+                (current_score + entity_list_matches as f32 * 0.6).min(1.0);
         }
 
         // Find primary intent (highest score)
@@ -158,16 +185,82 @@ impl IntentClassifier {
             }
         }
 
+        // Extract entity name if this is an entity-focused query (Sprint 18 Task 18.3)
+        let entity_focus = if primary_intent == QueryIntent::Entity {
+            self.extract_entity_from_query(query)
+        } else {
+            None
+        };
+
         IntentClassification {
             intent: primary_intent,
             confidence: primary_confidence,
             secondary,
+            entity_focus,
         }
     }
 
     /// Count how many patterns match in the query
     fn count_matches(&self, patterns: &[Regex], query: &str) -> usize {
         patterns.iter().filter(|p| p.is_match(query)).count()
+    }
+
+    /// Extract entity name from entity-focused queries (Sprint 18 Task 18.3)
+    ///
+    /// Detects queries like "What does Alice like?" and extracts "Alice".
+    /// Used for entity-based pre-retrieval to fetch ALL memories mentioning the entity.
+    ///
+    /// # Arguments
+    ///
+    /// * `query` - The query text to extract entity from
+    ///
+    /// # Returns
+    ///
+    /// Some(entity_name) if an entity-focused pattern matches, None otherwise
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mnemefusion_core::query::IntentClassifier;
+    ///
+    /// let classifier = IntentClassifier::new();
+    /// let entity = classifier.extract_entity_from_query("What does Alice like?");
+    /// assert_eq!(entity, Some("Alice".to_string()));
+    /// ```
+    pub fn extract_entity_from_query(&self, query: &str) -> Option<String> {
+        for pattern in &self.entity_list_patterns {
+            if let Some(captures) = pattern.captures(query) {
+                // Try different capture groups depending on the pattern
+                // Most patterns capture entity in group 1 or later groups
+                for i in 1..captures.len() {
+                    if let Some(capture) = captures.get(i) {
+                        let text = capture.as_str().trim();
+                        // Skip common words (what, does, are, etc.) and empty strings
+                        if !text.is_empty() && !Self::is_common_word(text) && text.len() > 1 {
+                            // Capitalize first letter
+                            let mut chars = text.chars();
+                            if let Some(first) = chars.next() {
+                                let capitalized = first.to_uppercase().collect::<String>() + chars.as_str();
+                                return Some(capitalized);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Check if word is a common query word (not an entity)
+    fn is_common_word(word: &str) -> bool {
+        const COMMON_WORDS: &[&str] = &[
+            "what", "does", "do", "are", "were", "is", "was", "the", "a", "an",
+            "like", "enjoy", "prefer", "want", "need", "love", "hate", "dislike",
+            "all", "everything", "about", "for", "regarding", "list", "show", "get",
+            "find", "tell", "me", "i", "we", "know", "hobbies", "interests",
+            "activities", "preferences", "habits", "routines", "everything ",
+        ];
+        COMMON_WORDS.contains(&word.to_lowercase().as_str())
     }
 }
 
@@ -261,5 +354,89 @@ mod tests {
         // Multiple temporal keywords should increase confidence
         assert_eq!(result.intent, QueryIntent::Temporal);
         assert!(result.confidence > 0.4);
+    }
+
+    // Sprint 18 Task 18.3: Entity extraction tests
+    #[test]
+    fn test_entity_extraction_what_does_pattern() {
+        let classifier = IntentClassifier::new();
+
+        let entity = classifier.extract_entity_from_query("What does Alice like?");
+        assert_eq!(entity, Some("Alice".to_string()));
+
+        let entity = classifier.extract_entity_from_query("what does bob enjoy doing");
+        assert_eq!(entity, Some("Bob".to_string()));
+
+        let entity = classifier.extract_entity_from_query("What does Charlie prefer?");
+        assert_eq!(entity, Some("Charlie".to_string()));
+    }
+
+    #[test]
+    fn test_entity_extraction_possessive_pattern() {
+        let classifier = IntentClassifier::new();
+
+        let entity = classifier.extract_entity_from_query("What are Alice's hobbies?");
+        assert_eq!(entity, Some("Alice".to_string()));
+
+        let entity = classifier.extract_entity_from_query("what were bob's interests");
+        assert_eq!(entity, Some("Bob".to_string()));
+
+        let entity = classifier.extract_entity_from_query("Charlie's activities");
+        assert_eq!(entity, Some("Charlie".to_string()));
+    }
+
+    #[test]
+    fn test_entity_extraction_list_pattern() {
+        let classifier = IntentClassifier::new();
+
+        let entity = classifier.extract_entity_from_query("List all about Alice");
+        assert_eq!(entity, Some("Alice".to_string()));
+
+        let entity = classifier.extract_entity_from_query("show everything about Project");
+        assert_eq!(entity, Some("Project".to_string()));
+
+        let entity = classifier.extract_entity_from_query("Tell me everything about Bob");
+        assert_eq!(entity, Some("Bob".to_string()));
+    }
+
+    #[test]
+    fn test_entity_extraction_know_pattern() {
+        let classifier = IntentClassifier::new();
+
+        let entity = classifier.extract_entity_from_query("What do I know about Alice?");
+        assert_eq!(entity, Some("Alice".to_string()));
+
+        let entity = classifier.extract_entity_from_query("What do we know about system");
+        assert_eq!(entity, Some("System".to_string()));
+    }
+
+    #[test]
+    fn test_entity_extraction_no_match() {
+        let classifier = IntentClassifier::new();
+
+        // Generic queries shouldn't extract entities
+        let entity = classifier.extract_entity_from_query("What happened yesterday?");
+        assert_eq!(entity, None);
+
+        let entity = classifier.extract_entity_from_query("Why was it cancelled?");
+        assert_eq!(entity, None);
+
+        let entity = classifier.extract_entity_from_query("machine learning techniques");
+        assert_eq!(entity, None);
+    }
+
+    #[test]
+    fn test_entity_focus_in_classification() {
+        let classifier = IntentClassifier::new();
+
+        // Entity query should have entity_focus populated
+        let result = classifier.classify("What does Alice like?");
+        assert_eq!(result.intent, QueryIntent::Entity);
+        assert_eq!(result.entity_focus, Some("Alice".to_string()));
+
+        // Non-entity query should not have entity_focus
+        let result = classifier.classify("What happened yesterday?");
+        assert_eq!(result.intent, QueryIntent::Temporal);
+        assert_eq!(result.entity_focus, None);
     }
 }
