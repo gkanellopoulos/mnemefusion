@@ -113,8 +113,65 @@ impl QueryPlanner {
             }
         }
 
+        // Step 2.7: Graph traversal expansion for retrieval augmentation (conditional)
+        // Only expand if seed results have high quality scores (>0.6 threshold)
+        // This prevents noise from over-expansion in session-based retrieval
+        let mut seed_results = semantic_scores.clone();
+        for (id, score) in &bm25_scores {
+            seed_results
+                .entry(id.clone())
+                .and_modify(|s| *s = (*s).max(*score))
+                .or_insert(*score);
+        }
+
+        // Calculate average seed quality
+        let avg_seed_quality = if !seed_results.is_empty() {
+            seed_results.values().sum::<f32>() / seed_results.len() as f32
+        } else {
+            0.0
+        };
+
+        // Only perform graph traversal if seed quality is good (prevents noise)
+        const GRAPH_EXPANSION_THRESHOLD: f32 = 0.6;
+        if avg_seed_quality >= GRAPH_EXPANSION_THRESHOLD {
+            let graph_traversal = crate::query::graph_traversal::GraphTraversal::new(
+                self.graph_manager.clone(),
+                self.storage.clone(),
+                crate::query::graph_traversal::TraversalConfig::default(),
+            );
+
+            let expanded_results = graph_traversal.expand(&seed_results, intent.intent, limit * 5)?;
+
+            // Merge expanded results into dimension scores
+            // Expanded memories get added to entity/causal scores based on their source
+            for (expanded_id, expansion_score) in expanded_results {
+                // Skip if already in seed results
+                if seed_results.contains_key(&expanded_id) {
+                    continue;
+                }
+
+                // Add to appropriate dimension score maps based on intent
+                match intent.intent {
+                    crate::query::QueryIntent::Causal => {
+                        causal_scores.insert(expanded_id.clone(), expansion_score);
+                    }
+                    crate::query::QueryIntent::Entity | crate::query::QueryIntent::Factual => {
+                        entity_scores.insert(expanded_id.clone(), expansion_score);
+                    }
+                    crate::query::QueryIntent::Temporal => {
+                        // Hybrid expansion - add to both temporal and entity
+                        temporal_scores
+                            .entry(expanded_id.clone())
+                            .and_modify(|s| *s = (*s).max(expansion_score * 0.7))
+                            .or_insert(expansion_score * 0.7);
+                        entity_scores.insert(expanded_id, expansion_score * 0.5);
+                    }
+                }
+            }
+        }
+
         // Step 3: Fuse results with adaptive weights
-        let mut fused_results = self.fusion_engine.fuse(
+        let fused_results = self.fusion_engine.fuse(
             intent.intent,
             &semantic_scores,
             &bm25_scores,
@@ -123,10 +180,19 @@ impl QueryPlanner {
             &entity_scores,
         );
 
-        // Step 4: Limit results
-        fused_results.truncate(limit);
+        // Step 4: Multi-turn aggregation for list/collection queries
+        // Note: Currently has minimal impact but kept for future improvement
+        let aggregator = crate::query::aggregator::MultiTurnAggregator::default();
+        let query_type = aggregator.classify_query(query_text);
+        let final_results = aggregator.aggregate(
+            query_type,
+            query_text,
+            fused_results,
+            &self.storage,
+            limit,
+        )?;
 
-        Ok((intent, fused_results))
+        Ok((intent, final_results))
     }
 
     /// Perform semantic similarity search
