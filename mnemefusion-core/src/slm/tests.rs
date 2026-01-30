@@ -76,11 +76,10 @@ mod tests {
     #[test]
     fn test_slm_disabled_returns_error() {
         let config = SlmConfig::default();
-        let classifier = SlmClassifier::new(config);
+        let result = SlmClassifier::new(config);
 
         // Should return error when SLM feature disabled
-        assert!(classifier.is_err());
-        assert!(matches!(classifier.unwrap_err(), crate::Error::SlmNotAvailable));
+        assert!(matches!(result, Err(crate::Error::SlmNotAvailable)));
     }
 
     #[test]

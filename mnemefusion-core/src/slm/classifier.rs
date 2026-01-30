@@ -280,7 +280,7 @@ impl SlmClassifier {
     /// Create classification prompt for the model
     ///
     /// Formats the query with instructions for structured JSON output.
-    pub(crate) fn create_classification_prompt(&self, query: &str) -> String {
+    pub fn create_classification_prompt(&self, query: &str) -> String {
         format!(
             r#"<|im_start|>system
 You are a query intent classifier. Classify queries into: Entity, Temporal, Causal, or Factual.<|im_end|>
@@ -303,7 +303,7 @@ Respond with JSON:
     /// Parse model output into structured classification
     ///
     /// Expects JSON output from the model in the format specified by the prompt.
-    pub(crate) fn parse_intent_output(&self, output: &str) -> Result<IntentClassification> {
+    pub fn parse_intent_output(&self, output: &str) -> Result<IntentClassification> {
         // Parse JSON directly (Python script already extracted it)
         let parsed: serde_json::Value = serde_json::from_str(output.trim())
             .map_err(|e| Error::SlmInference(format!("JSON parse error: {}", e)))?;

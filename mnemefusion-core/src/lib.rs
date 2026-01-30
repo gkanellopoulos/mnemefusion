@@ -64,7 +64,14 @@ pub use query::{
     AdaptiveWeightConfig, FusedResult, FusionEngine, IntentClassification, IntentClassifier,
     IntentWeights, QueryIntent, QueryPlanner,
 };
+
+// SLM exports (only available when slm feature is enabled)
+#[cfg(feature = "slm")]
 pub use slm::{SlmClassifier, SlmConfig};
+
+#[cfg(not(feature = "slm"))]
+pub use slm::SlmConfig; // Config always available, but SlmClassifier only with feature
+
 pub use types::{
     AddResult, BatchError, BatchResult, Entity, EntityId, FilterOp, Memory, MemoryId, MemoryInput,
     MetadataFilter, Source, SourceType, Timestamp, UpsertResult, NAMESPACE_METADATA_KEY,

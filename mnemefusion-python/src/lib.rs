@@ -2,9 +2,8 @@
 //!
 //! This module provides a Pythonic interface to the MnemeFusion memory engine.
 
-// Compile-time check: Verify SLM feature is enabled
-#[cfg(not(feature = "slm"))]
-compile_error!("❌ SLM feature is NOT enabled! Build with: maturin develop --features slm");
+// Note: SLM feature is optional. If not enabled, SlmClassifier won't be available in Rust,
+// but Python bindings will still work for basic memory operations.
 
 use mnemefusion_core::{
     types::{BatchResult, FilterOp, MemoryInput, MetadataFilter, Source, SourceType},
