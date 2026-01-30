@@ -101,6 +101,22 @@ pub enum Error {
     /// File truncated or incomplete
     #[error("File truncated or incomplete: {0}")]
     FileTruncated(String),
+
+    /// SLM feature not available (compiled without 'slm' feature)
+    #[error("SLM feature not available - compile with 'slm' feature to enable")]
+    SlmNotAvailable,
+
+    /// SLM initialization error
+    #[error("SLM initialization error: {0}")]
+    SlmInitialization(String),
+
+    /// SLM inference error
+    #[error("SLM inference error: {0}")]
+    SlmInference(String),
+
+    /// SLM timeout error
+    #[error("SLM inference timeout after {0}ms")]
+    SlmTimeout(u64),
 }
 
 /// Result type alias for MnemeFusion operations

@@ -26,6 +26,8 @@ pub struct QueryPlanner {
     pub(crate) temporal_index: Arc<TemporalIndex>,
     pub(crate) graph_manager: Arc<RwLock<GraphManager>>,
     intent_classifier: IntentClassifier,
+    #[cfg(feature = "slm")]
+    slm_classifier: Option<Arc<std::sync::Mutex<crate::slm::SlmClassifier>>>,
     fusion_engine: FusionEngine,
     semantic_prefilter_threshold: f32,
 }
@@ -42,20 +44,108 @@ impl QueryPlanner {
         semantic_prefilter_threshold: f32,
         fusion_strategy: crate::query::FusionStrategy,
         rrf_k: f32,
-    ) -> Self {
-        Self {
+        #[cfg(feature = "slm")]
+        slm_config: Option<crate::slm::SlmConfig>,
+    ) -> Result<Self> {
+        // Initialize SLM classifier if configured
+        #[cfg(feature = "slm")]
+        let slm_classifier = if let Some(config) = slm_config {
+            eprintln!("[DEBUG-QP] SLM config received! model_id: {}", config.model_id);
+            eprintln!("[DEBUG-QP] model_path: {:?}", config.model_path);
+            tracing::info!("Initializing SLM classifier with model: {}", config.model_id);
+            match crate::slm::SlmClassifier::new(config) {
+                Ok(classifier) => {
+                    eprintln!("[DEBUG-QP] ✓ SLM classifier initialized successfully");
+                    tracing::info!("SLM classifier initialized successfully (lazy loading)");
+                    Some(Arc::new(std::sync::Mutex::new(classifier)))
+                }
+                Err(e) => {
+                    eprintln!("[DEBUG-QP] ✗ SLM classifier initialization FAILED: {}", e);
+                    tracing::warn!("Failed to initialize SLM classifier: {}, falling back to patterns", e);
+                    None
+                }
+            }
+        } else {
+            eprintln!("[DEBUG-QP] No SLM config provided to QueryPlanner");
+            None
+        };
+
+        Ok(Self {
             storage,
             vector_index,
             bm25_index,
             temporal_index,
             graph_manager,
             intent_classifier: IntentClassifier::new(),
+            #[cfg(feature = "slm")]
+            slm_classifier,
             fusion_engine: FusionEngine::new()
                 .with_semantic_threshold(fusion_semantic_threshold)
                 .with_strategy(fusion_strategy)
                 .with_rrf_k(rrf_k),
             semantic_prefilter_threshold,
+        })
+    }
+
+    /// Classify query intent using SLM (if available) or patterns
+    ///
+    /// Tries SLM classification first. On any error, falls back to pattern-based
+    /// classification to ensure zero regression.
+    ///
+    /// # Arguments
+    ///
+    /// * `query_text` - The natural language query
+    ///
+    /// # Returns
+    ///
+    /// Intent classification with confidence score
+    fn classify_intent(&self, query_text: &str) -> Result<IntentClassification> {
+        eprintln!("[DEBUG-QP] classify_intent() called for: '{}'", query_text);
+
+        #[cfg(feature = "slm")]
+        {
+            if let Some(slm_classifier) = &self.slm_classifier {
+                eprintln!("[DEBUG-QP] SLM classifier is available, attempting to use it");
+                // Try SLM classification
+                match slm_classifier.lock() {
+                    Ok(mut classifier) => {
+                        eprintln!("[DEBUG-QP] Acquired SLM classifier lock, calling classify_intent");
+                        match classifier.classify_intent(query_text) {
+                            Ok(classification) => {
+                                eprintln!("[DEBUG-QP] ✓ SLM classification succeeded: {:?} (confidence: {:.2})",
+                                    classification.intent, classification.confidence);
+                                tracing::debug!(
+                                    "SLM classified query as {:?} (confidence: {:.2})",
+                                    classification.intent,
+                                    classification.confidence
+                                );
+                                return Ok(classification);
+                            }
+                            Err(e) => {
+                                eprintln!("[DEBUG-QP] ✗ SLM classification failed: {}, falling back", e);
+                                tracing::warn!(
+                                    "SLM classification failed: {}, falling back to patterns",
+                                    e
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[DEBUG-QP] ✗ Failed to acquire SLM classifier lock: {}", e);
+                        tracing::warn!(
+                            "Failed to acquire SLM classifier lock: {}, falling back to patterns",
+                            e
+                        );
+                    }
+                }
+            } else {
+                eprintln!("[DEBUG-QP] SLM classifier is NOT available");
+            }
         }
+
+        // Fallback to pattern-based classification
+        eprintln!("[DEBUG-QP] Using pattern-based classification");
+        Ok(self.intent_classifier.classify(query_text))
     }
 
     /// Execute a multi-dimensional query
@@ -82,8 +172,8 @@ impl QueryPlanner {
         namespace: Option<&str>,
         filters: Option<&[MetadataFilter]>,
     ) -> Result<(IntentClassification, Vec<FusedResult>)> {
-        // Step 1: Classify intent
-        let intent = self.intent_classifier.classify(query_text);
+        // Step 1: Classify intent (try SLM first, fallback to patterns)
+        let intent = self.classify_intent(query_text)?;
 
         // Step 1.5: Entity-first retrieval path (Sprint 18 Task 18.4)
         // If query has entity_focus, fetch ALL memories mentioning that entity
@@ -842,7 +932,9 @@ mod tests {
             0.0, // semantic_prefilter_threshold
             crate::query::FusionStrategy::Weighted, // strategy (weighted for backward compat in tests)
             60.0, // rrf_k (not used with Weighted strategy)
-        );
+            #[cfg(feature = "slm")]
+            None, // slm_config (disabled for tests)
+        ).expect("Failed to create QueryPlanner");
 
         (planner, dir)
     }

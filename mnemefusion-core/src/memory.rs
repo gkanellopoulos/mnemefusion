@@ -114,7 +114,9 @@ impl MemoryEngine {
             config.semantic_prefilter_threshold,
             config.fusion_strategy,
             config.rrf_k,
-        );
+            #[cfg(feature = "slm")]
+            config.slm_config.clone(),
+        )?;
 
         Ok(Self {
             storage,

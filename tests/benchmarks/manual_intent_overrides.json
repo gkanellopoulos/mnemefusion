@@ -1,0 +1,1219 @@
+{
+  "description": "Manual intent classifications for validation experiment",
+  "overrides": [
+    {
+      "query": "What did Caroline research?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Caroline",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D2:8"
+      ]
+    },
+    {
+      "query": "What is Caroline's identity?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Caroline",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D1:5"
+      ]
+    },
+    {
+      "query": "What is Caroline's relationship status?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Caroline",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D3:13",
+        "D2:14"
+      ]
+    },
+    {
+      "query": "Where did Caroline move from 4 years ago?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Caroline",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D3:13",
+        "D4:3"
+      ]
+    },
+    {
+      "query": "What career path has Caroline decided to persue?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Caroline",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D4:13",
+        "D1:11"
+      ]
+    },
+    {
+      "query": "What activities does Melanie partake in?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Melanie",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D5:4",
+        "D9:1",
+        "D1:12",
+        "D1:18"
+      ]
+    },
+    {
+      "query": "Where has Melanie camped?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Melanie",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D6:16",
+        "D4:6",
+        "D8:32"
+      ]
+    },
+    {
+      "query": "What do Melanie's kids like?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Melanies",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D6:6",
+        "D4:8"
+      ]
+    },
+    {
+      "query": "What books has Melanie read?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Melanie",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D7:8",
+        "D6:10"
+      ]
+    },
+    {
+      "query": "What does Melanie do to destress?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Melanie",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D7:22",
+        "D5:4"
+      ]
+    },
+    {
+      "query": "What LGBTQ+ events has Caroline participated in?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Caroline",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D5:1",
+        "D8:17",
+        "D3:1",
+        "D1:3"
+      ]
+    },
+    {
+      "query": "What events has Caroline participated in to help children?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Caroline",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D9:2",
+        "D3:3"
+      ]
+    },
+    {
+      "query": "What did Melanie paint recently?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Melanie",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D8:6; D9:17"
+      ]
+    },
+    {
+      "query": "What activities has Melanie done with her family?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Melanie",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D8:4",
+        "D8:6",
+        "D9:1",
+        "D6:4",
+        "D1:18",
+        "D3:14"
+      ]
+    },
+    {
+      "query": "In what ways is Caroline participating in the LGBTQ community?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Caroline",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D10:3",
+        "D5:1",
+        "D9:12",
+        "D9:2"
+      ]
+    },
+    {
+      "query": "How many times has Melanie gone to the beach in 2023?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Melanie",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D10:8",
+        "D6:16"
+      ]
+    },
+    {
+      "query": "What kind of art does Caroline make?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Caroline",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D11:12",
+        "D11:8",
+        "D9:14"
+      ]
+    },
+    {
+      "query": "Who supports Caroline when she has a negative experience?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Caroline",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D12:1",
+        "D3:11"
+      ]
+    },
+    {
+      "query": "What types of pottery have Melanie and her kids made?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Melanie",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D12:14",
+        "D8:4",
+        "D5:6"
+      ]
+    },
+    {
+      "query": "What has Melanie painted?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Melanie",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D13:8",
+        "D8:6",
+        "D1:12"
+      ]
+    },
+    {
+      "query": "What are Melanie's pets' names?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Melanies",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D13:4",
+        "D7:18"
+      ]
+    },
+    {
+      "query": "What subject have Caroline and Melanie both painted?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Caroline",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D14:5",
+        "D8:6"
+      ]
+    },
+    {
+      "query": "What symbols are important to Caroline?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Caroline",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D14:15",
+        "D4:1"
+      ]
+    },
+    {
+      "query": "What instruments does Melanie play?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Melanie",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D15:26",
+        "D2:5"
+      ]
+    },
+    {
+      "query": "What musical artists/bands has Melanie seen?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Melanie",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D15:16",
+        "D11:3"
+      ]
+    },
+    {
+      "query": "What are some changes Caroline has faced during her transition journey?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "faced",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D16:15",
+        "D11:14"
+      ]
+    },
+    {
+      "query": "What does Melanie do with her family on hikes?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Melanie",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D16:4",
+        "D10:12"
+      ]
+    },
+    {
+      "query": "What transgender-specific events has Caroline attended?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Caroline",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D17:19",
+        "D15:13"
+      ]
+    },
+    {
+      "query": "What book did Melanie read from Caroline's suggestion?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Melanie",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D7:11",
+        "D17:10"
+      ]
+    },
+    {
+      "query": "How many children does Melanie have?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Melanie",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D18:1",
+        "D18:7"
+      ]
+    },
+    {
+      "query": "When did Melanie go on a hike after the roadtrip?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Melanie",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D18:17"
+      ]
+    },
+    {
+      "query": "What items has Melanie bought?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Melanie",
+      "category": "1",
+      "conversation_id": 0,
+      "evidence": [
+        "D19:2",
+        "D7:18"
+      ]
+    },
+    {
+      "query": "What do Jon and Gina both have in common?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "in",
+      "category": "1",
+      "conversation_id": 1,
+      "evidence": [
+        "D1:2",
+        "D1:3",
+        "D1:4",
+        "D2:1"
+      ]
+    },
+    {
+      "query": "What Jon thinks the ideal dance studio should look like?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Jon",
+      "category": "1",
+      "conversation_id": 1,
+      "evidence": [
+        "D1:20",
+        "D2:4",
+        "D2:8"
+      ]
+    },
+    {
+      "query": "Which city have both Jean and John visited?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "both",
+      "category": "1",
+      "conversation_id": 1,
+      "evidence": [
+        "D2:5",
+        "D15:1"
+      ]
+    },
+    {
+      "query": "Why did Gina decide to start her own clothing store?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Gina",
+      "category": "1",
+      "conversation_id": 1,
+      "evidence": [
+        "D6:8",
+        "D1:3"
+      ]
+    },
+    {
+      "query": "Do Jon and Gina start businesses out of what they love?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Do",
+      "category": "1",
+      "conversation_id": 1,
+      "evidence": [
+        "D1:4",
+        "D6:8"
+      ]
+    },
+    {
+      "query": "How did Gina promote her clothes store?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Gina",
+      "category": "1",
+      "conversation_id": 1,
+      "evidence": [
+        "D5:5",
+        "D16:3",
+        "D8:4",
+        "D13:4"
+      ]
+    },
+    {
+      "query": "Which events has Jon participated in to promote his business venture?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Jon",
+      "category": "1",
+      "conversation_id": 1,
+      "evidence": [
+        "D10:1",
+        "D16:6",
+        "D8:4"
+      ]
+    },
+    {
+      "query": "What does Jon's dance studio offer?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Jon",
+      "category": "1",
+      "conversation_id": 1,
+      "evidence": [
+        "D13:7",
+        "D8:13"
+      ]
+    },
+    {
+      "query": "Did Jon and Gina both participate in dance competitions?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Jon",
+      "category": "1",
+      "conversation_id": 1,
+      "evidence": [
+        "D1:14",
+        "D14:14",
+        "D1:16",
+        "D1:17",
+        "D9:10"
+      ]
+    },
+    {
+      "query": "Which cities has Jon visited?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Jon",
+      "category": "1",
+      "conversation_id": 1,
+      "evidence": [
+        "D2:4",
+        "D15:1"
+      ]
+    },
+    {
+      "query": "How long did it take for Jon to open his studio?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Jon",
+      "category": "1",
+      "conversation_id": 1,
+      "evidence": [
+        "D1:2",
+        "D15:13"
+      ]
+    },
+    {
+      "query": "What martial arts has John done?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "John",
+      "category": "1",
+      "conversation_id": 2,
+      "evidence": [
+        "D2:28",
+        "D1:4"
+      ]
+    },
+    {
+      "query": "What type of volunteering have John and Maria both done?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "John",
+      "category": "1",
+      "conversation_id": 2,
+      "evidence": [
+        "D3:5",
+        "D2:1"
+      ]
+    },
+    {
+      "query": "Where has Maria made friends?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Maria",
+      "category": "1",
+      "conversation_id": 2,
+      "evidence": [
+        "D4:1",
+        "D2:1",
+        "D19:1",
+        "D14:10"
+      ]
+    },
+    {
+      "query": "What items des John mention having as a child?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "John",
+      "category": "1",
+      "conversation_id": 2,
+      "evidence": [
+        "D5:13",
+        "D3:15"
+      ]
+    },
+    {
+      "query": "Who gave Maria's family money when she was younger and her family was going through tough times?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Marias",
+      "category": "1",
+      "conversation_id": 2,
+      "evidence": [
+        "D6:9",
+        "D5:8"
+      ]
+    },
+    {
+      "query": "What people has Maria met and helped while volunteering?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "Maria",
+      "category": "1",
+      "conversation_id": 2,
+      "evidence": [
+        "D7:5",
+        "D6:5",
+        "D27:8",
+        "D21:19"
+      ]
+    },
+    {
+      "query": "What test has John taken multiple times?",
+      "intent": "Entity",
+      "confidence": 1.0,
+      "entity_focus": "John",
+      "category": "1",
+      "conversation_id": 2,
+      "evidence": [
+        "D8:18",
+        "D3:11"
+      ]
+    },
+    {
+      "query": "What fields would Caroline be likely to pursue in her educaton?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 0,
+      "evidence": [
+        "D1:9",
+        "D1:11"
+      ]
+    },
+    {
+      "query": "Would Caroline still want to pursue counseling as a career if she hadn't received support growing up?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 0,
+      "evidence": [
+        "D4:15",
+        "D3:5"
+      ]
+    },
+    {
+      "query": "Would Caroline likely have Dr. Seuss books on her bookshelf?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 0,
+      "evidence": [
+        "D6:9"
+      ]
+    },
+    {
+      "query": "Would Caroline pursue writing as a career option?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 0,
+      "evidence": [
+        "D7:5",
+        "D7:9"
+      ]
+    },
+    {
+      "query": "Would Melanie be considered a member of the LGBTQ community?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 0,
+      "evidence": []
+    },
+    {
+      "query": "Would Melanie be more interested in going to a national park or a theme park?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 0,
+      "evidence": [
+        "D10:12",
+        "D10:14"
+      ]
+    },
+    {
+      "query": "Would Melanie be considered an ally to the transgender community?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 0,
+      "evidence": []
+    },
+    {
+      "query": "What would Caroline's political leaning likely be?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 0,
+      "evidence": [
+        "D12:1"
+      ]
+    },
+    {
+      "query": "Would Caroline be considered religious?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 0,
+      "evidence": [
+        "D14:19",
+        "D12:1"
+      ]
+    },
+    {
+      "query": "Would Melanie likely enjoy the song \"The Four Seasons\" by Vivaldi?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 0,
+      "evidence": [
+        "D15:28"
+      ]
+    },
+    {
+      "query": "What personality traits might Melanie say Caroline has?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 0,
+      "evidence": [
+        "D16:18",
+        "D13:16",
+        "D7:4"
+      ]
+    },
+    {
+      "query": "Would Melanie go on another roadtrip soon?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 0,
+      "evidence": [
+        "D18:3",
+        "D18:1"
+      ]
+    },
+    {
+      "query": "Would Caroline want to move back to her home country soon?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 0,
+      "evidence": [
+        "D19:1",
+        "D19:3"
+      ]
+    },
+    {
+      "query": "What might John's financial status be?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 2,
+      "evidence": [
+        "D5:5"
+      ]
+    },
+    {
+      "query": "Would John be considered a patriotic person?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 2,
+      "evidence": [
+        "D8:18",
+        "D8:20"
+      ]
+    },
+    {
+      "query": "What might John's degree be in?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 2,
+      "evidence": [
+        "D9:6"
+      ]
+    },
+    {
+      "query": "Around which US holiday did Maria get into a car accident?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 2,
+      "evidence": [
+        "D21:3"
+      ]
+    },
+    {
+      "query": "Does John live close to a beach or the mountains?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 2,
+      "evidence": [
+        "D22:15"
+      ]
+    },
+    {
+      "query": "Would John be open to moving to another country?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 2,
+      "evidence": [
+        "D24:3",
+        "D7:2"
+      ]
+    },
+    {
+      "query": "What attributes describe John?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 2,
+      "evidence": [
+        "D26:6",
+        "D2:14",
+        "D3:5",
+        "D4:6"
+      ]
+    },
+    {
+      "query": "What job might Maria pursue in the future?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 2,
+      "evidence": [
+        "D32:14",
+        "D5:8",
+        "D11:10",
+        "D27:4"
+      ]
+    },
+    {
+      "query": "Is it likely that Nate has friends besides Joanna?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 3,
+      "evidence": [
+        "D1:7"
+      ]
+    },
+    {
+      "query": "What pets wouldn't cause any discomfort to Joanna?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 3,
+      "evidence": [
+        "D2:23"
+      ]
+    },
+    {
+      "query": "What underlying condition might Joanna have based on her allergies?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 3,
+      "evidence": [
+        "D5:11",
+        "D2:23"
+      ]
+    },
+    {
+      "query": "What nickname does Nate use for Joanna?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 3,
+      "evidence": [
+        "D7:1"
+      ]
+    },
+    {
+      "query": "What Console does Nate own?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 3,
+      "evidence": [
+        "D27:23"
+      ]
+    },
+    {
+      "query": "What alternative career might Nate consider after gaming?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 3,
+      "evidence": [
+        "D5:8",
+        "D19:3",
+        "D25:19",
+        "D28:25"
+      ]
+    },
+    {
+      "query": "How many hikes has Joanna been on?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 3,
+      "evidence": [
+        "D7:6",
+        "D11:5",
+        "D14:21",
+        "D28:22"
+      ]
+    },
+    {
+      "query": "What state did Joanna visit in summer 2021?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 3,
+      "evidence": [
+        "D28:22"
+      ]
+    },
+    {
+      "query": "Was the first half of September 2022 a good month career-wise for Nate and Joanna? Answer yes or no.",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 3,
+      "evidence": [
+        "D20:1",
+        "D21:1"
+      ]
+    },
+    {
+      "query": "What kind of job is Joanna beginning to preform the duties of because of her movie scripts?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 3,
+      "evidence": [
+        "D29:1"
+      ]
+    },
+    {
+      "query": "What state did Nate visit?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 3,
+      "evidence": [
+        "D29:6"
+      ]
+    },
+    {
+      "query": "Would Tim enjoy reading books by C. S. Lewis or John Greene?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 4,
+      "evidence": [
+        "D1:14",
+        "D1:16",
+        "D1:18"
+      ]
+    },
+    {
+      "query": "Based on Tim's collections, what is a shop that he would enjoy visiting in New York city?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 4,
+      "evidence": [
+        "D2:9"
+      ]
+    },
+    {
+      "query": "Which outdoor gear company likely signed up John for an endorsement deal?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 4,
+      "evidence": [
+        "D3:15",
+        "D25:2"
+      ]
+    },
+    {
+      "query": "Who is Anthony?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 4,
+      "evidence": [
+        "D4:8"
+      ]
+    },
+    {
+      "query": "What is a prominent charity organization that John might want to work with and why?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 4,
+      "evidence": [
+        "D3:13",
+        "D3:15",
+        "D6:15"
+      ]
+    },
+    {
+      "query": "Which popular time management technique does Tim use to prepare for exams?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 4,
+      "evidence": [
+        "D18:3",
+        "D18:7"
+      ]
+    },
+    {
+      "query": "Which popular music composer's tunes does Tim enjoy playing on the piano?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 4,
+      "evidence": [
+        "D8:14",
+        "D8:16"
+      ]
+    },
+    {
+      "query": "Which US states might Tim be in during September 2023 based on his plans of visiting Universal Studios?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 4,
+      "evidence": [
+        "D10:9"
+      ]
+    },
+    {
+      "query": "What could John do after his basketball career?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 4,
+      "evidence": [
+        "D11:19",
+        "D26:1",
+        "D27:26"
+      ]
+    },
+    {
+      "query": "What kind of yoga for building core strength might John benefit from?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 4,
+      "evidence": [
+        "D20:2"
+      ]
+    },
+    {
+      "query": "What other exercises can help John with his basketball performance?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 4,
+      "evidence": [
+        "D8:5",
+        "D20:2"
+      ]
+    },
+    {
+      "query": "What is a Star Wars book that Tim might enjoy?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 4,
+      "evidence": [
+        "D27:19",
+        "D27:21"
+      ]
+    },
+    {
+      "query": "What would be a good hobby related to his travel dreams for Tim to pick up?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 4,
+      "evidence": [
+        "D4:1",
+        "D6:6",
+        "D15:3",
+        "D27:37"
+      ]
+    },
+    {
+      "query": "Which Star Wars-related locations would Tim enjoy during his visit to Ireland?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 4,
+      "evidence": [
+        "D1:18",
+        "D27:21",
+        "D28:1"
+      ]
+    },
+    {
+      "query": "What is an indoor activity that Andrew would enjoy doing while make his dog happy?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 5,
+      "evidence": [
+        "D10:12",
+        "D12:1"
+      ]
+    },
+    {
+      "query": "Which meat does Audrey prefer eating more than others?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 5,
+      "evidence": [
+        "D10:13",
+        "D10:23"
+      ]
+    },
+    {
+      "query": "What can Andrew potentially do to improve his stress and accomodate his living situation with his dogs?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 5,
+      "evidence": [
+        "D12:3",
+        "D18:1",
+        "D21:5"
+      ]
+    },
+    {
+      "query": "Which US state do Audrey and Andrew potentially live in?",
+      "intent": "Temporal",
+      "confidence": 1.0,
+      "temporal_expression": null,
+      "category": "3",
+      "conversation_id": 5,
+      "evidence": [
+        "D11:9"
+      ]
+    }
+  ]
+}

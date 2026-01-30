@@ -2,6 +2,10 @@
 //!
 //! This module provides a Pythonic interface to the MnemeFusion memory engine.
 
+// Compile-time check: Verify SLM feature is enabled
+#[cfg(not(feature = "slm"))]
+compile_error!("❌ SLM feature is NOT enabled! Build with: maturin develop --features slm");
+
 use mnemefusion_core::{
     types::{BatchResult, FilterOp, MemoryInput, MetadataFilter, Source, SourceType},
     Config, MemoryEngine, MemoryId, Timestamp,
@@ -217,20 +221,61 @@ impl PyMemory {
     /// Example:
     ///     >>> memory = Memory("brain.mfdb")
     ///     >>> memory = Memory("brain.mfdb", config={"embedding_dim": 384})
+    ///     >>> # Enable SLM-based intent classification
+    ///     >>> memory = Memory("brain.mfdb", config={"use_slm": True})
+    ///     >>> # Enable SLM with custom model path
+    ///     >>> memory = Memory("brain.mfdb", config={"use_slm": True, "slm_model_path": "/path/to/model"})
     #[new]
     #[pyo3(signature = (path, config=None))]
     fn new(path: &str, config: Option<&PyDict>) -> PyResult<Self> {
+        eprintln!("========================================");
+        eprintln!("[DEBUG-PY-TOP] Memory::new() START");
+        eprintln!("[DEBUG-PY-TOP] path: {}", path);
+        eprintln!("[DEBUG-PY-TOP] config.is_some(): {}", config.is_some());
+        eprintln!("========================================");
+
         let mut rust_config = Config::default();
 
+        eprintln!("[DEBUG-PY-UNCONDITIONAL] Memory::new() called");
+
         if let Some(cfg) = config {
+            eprintln!("[DEBUG-PY-UNCONDITIONAL] Config dict provided");
             if let Some(dim) = cfg.get_item("embedding_dim")? {
                 rust_config.embedding_dim = dim.extract()?;
+                eprintln!("[DEBUG-PY-UNCONDITIONAL] embedding_dim set to: {}", rust_config.embedding_dim);
             }
             if let Some(entity_extraction) = cfg.get_item("entity_extraction_enabled")? {
                 rust_config.entity_extraction_enabled = entity_extraction.extract()?;
             }
             if let Some(indexed_metadata) = cfg.get_item("indexed_metadata")? {
                 rust_config.indexed_metadata = indexed_metadata.extract()?;
+            }
+
+            // SLM configuration (only available with 'slm' feature)
+            #[cfg(feature = "slm")]
+            {
+                if let Some(use_slm) = cfg.get_item("use_slm")? {
+                    let use_slm: bool = use_slm.extract()?;
+                    eprintln!("[DEBUG-PY] use_slm config found: {}", use_slm);
+                    if use_slm {
+                        // Create SLM config with defaults or custom settings
+                        let mut slm_config = mnemefusion_core::slm::SlmConfig::default();
+                        eprintln!("[DEBUG-PY] Created default SlmConfig with model_id: {}", slm_config.model_id);
+
+                        // Allow overriding model path via config or environment
+                        if let Some(model_path) = cfg.get_item("slm_model_path")? {
+                            let path: String = model_path.extract()?;
+                            eprintln!("[DEBUG-PY] Setting model_path: {}", path);
+                            slm_config = slm_config.with_model_path(PathBuf::from(path));
+                        }
+
+                        eprintln!("[DEBUG-PY] Calling rust_config.with_slm()");
+                        rust_config = rust_config.with_slm(slm_config);
+                        eprintln!("[DEBUG-PY] rust_config.slm_config.is_some() = {}", rust_config.slm_config.is_some());
+                    }
+                } else {
+                    eprintln!("[DEBUG-PY] No 'use_slm' in config");
+                }
             }
         }
 

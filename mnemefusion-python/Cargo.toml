@@ -11,6 +11,10 @@ crate-type = ["cdylib"]
 mnemefusion-core = { path = "../mnemefusion-core" }
 pyo3 = { version = "0.20", features = ["extension-module"] }
 
+[features]
+# Pass through the slm feature to mnemefusion-core
+slm = ["mnemefusion-core/slm"]
+
 [profile.release]
 lto = true
 codegen-units = 1

@@ -58,3 +58,26 @@ site/
 
 # CI/CD
 .github/workflows/*.log
+
+# Test artifacts
+*.log
+*.mfdb
+test_*.py
+example_*.mfdb
+
+# Validation results (regenerate as needed)
+tests/benchmarks/*_phase*.json
+tests/benchmarks/validation_*.json
+tests/benchmarks/sprint*.json
+tests/benchmarks/baseline*.json
+tests/benchmarks/*.log
+
+# Build artifacts
+*.o
+build_output.txt
+
+# Temporary analysis files
+tests/benchmarks/analysis_*.txt
+tests/benchmarks/FINDINGS*.md
+tests/benchmarks/INVESTIGATION*.md
+tests/benchmarks/SLM_*.md
