@@ -3,6 +3,11 @@
 //! Implements the BM25 (Best Matching 25) algorithm for keyword-based retrieval.
 //! This provides exact term matching to complement semantic vector search.
 //!
+//! Features:
+//! - Porter stemming for morphological normalization (research ↔ researching)
+//! - Stop word filtering for common words
+//! - Length normalization for fair scoring across document sizes
+//!
 //! BM25 formula:
 //! score(D, Q) = Σ IDF(qi) * (f(qi, D) * (k1 + 1)) / (f(qi, D) + k1 * (1 - b + b * |D| / avgdl))
 //!
@@ -19,9 +24,27 @@
 use crate::error::Result;
 use crate::types::MemoryId;
 use crate::storage::StorageEngine;
-use std::collections::HashMap;
+use rust_stemmers::{Algorithm, Stemmer};
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use serde::{Deserialize, Serialize};
+
+/// Common English stop words to filter out during indexing
+const STOP_WORDS: &[&str] = &[
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
+    "has", "he", "in", "is", "it", "its", "of", "on", "that", "the",
+    "to", "was", "were", "will", "with", "the", "this", "but", "they",
+    "have", "had", "what", "when", "where", "who", "which", "why", "how",
+    "all", "each", "every", "both", "few", "more", "most", "other",
+    "some", "such", "no", "nor", "not", "only", "own", "same", "so",
+    "than", "too", "very", "just", "can", "could", "may", "might",
+    "must", "shall", "should", "would", "now", "also", "like", "even",
+    "because", "been", "being", "before", "after", "above", "below",
+    "between", "into", "through", "during", "out", "off", "over", "under",
+    "again", "further", "then", "once", "here", "there", "about", "did",
+    "does", "doing", "don", "down", "up", "your", "you", "we", "our",
+    "me", "my", "myself", "him", "his", "her", "she", "i", "am",
+];
 
 /// BM25 configuration parameters
 #[derive(Debug, Clone)]
@@ -86,6 +109,10 @@ pub struct BM25Index {
     avg_doc_length: Arc<RwLock<f32>>,
     /// Storage reference for persistence
     storage: Arc<StorageEngine>,
+    /// Porter stemmer for morphological normalization
+    stemmer: Stemmer,
+    /// Stop words set for fast lookup
+    stop_words: HashSet<&'static str>,
 }
 
 impl BM25Index {
@@ -99,10 +126,18 @@ impl BM25Index {
             num_docs: Arc::new(RwLock::new(0)),
             avg_doc_length: Arc::new(RwLock::new(0.0)),
             storage,
+            stemmer: Stemmer::create(Algorithm::English),
+            stop_words: STOP_WORDS.iter().copied().collect(),
         }
     }
 
-    /// Tokenize text into terms
+    /// Tokenize and stem text into normalized terms
+    ///
+    /// Applies:
+    /// 1. Lowercase conversion
+    /// 2. Punctuation removal
+    /// 3. Stop word filtering
+    /// 4. Porter stemming (research → research, researching → research)
     fn tokenize(&self, text: &str) -> Vec<String> {
         text.to_lowercase()
             .split_whitespace()
@@ -111,13 +146,20 @@ impl BM25Index {
                 let token = token.trim_matches(|c: char| !c.is_alphanumeric());
 
                 // Filter by length
-                if token.len() >= self.config.min_term_length
-                    && token.len() <= self.config.max_term_length
+                if token.len() < self.config.min_term_length
+                    || token.len() > self.config.max_term_length
                 {
-                    Some(token.to_string())
-                } else {
-                    None
+                    return None;
                 }
+
+                // Skip stop words
+                if self.stop_words.contains(token) {
+                    return None;
+                }
+
+                // Apply Porter stemming
+                let stemmed = self.stemmer.stem(token);
+                Some(stemmed.to_string())
             })
             .collect()
     }
@@ -387,12 +429,19 @@ mod tests {
     fn test_tokenize() {
         let (index, _dir) = create_test_index();
 
+        // "this", "is", "a" are stop words and get filtered out
+        // "hello", "world", "test" remain and get stemmed
         let terms = index.tokenize("Hello, World! This is a test.");
-        assert_eq!(terms, vec!["hello", "world", "this", "is", "test"]);
+        assert_eq!(terms, vec!["hello", "world", "test"]);
 
         // Test single letter filtering (min_term_length = 2)
+        // "a" and "b" are too short, "cd" and "efg" pass
         let terms = index.tokenize("a b cd efg");
         assert_eq!(terms, vec!["cd", "efg"]);
+
+        // Test stemming: "researching" -> "research", "running" -> "run"
+        let terms = index.tokenize("researching running");
+        assert_eq!(terms, vec!["research", "run"]);
     }
 
     #[test]

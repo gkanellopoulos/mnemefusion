@@ -27,6 +27,9 @@ dirs = "5.0"
 # Using Python subprocess for llama.cpp inference (simpler than native bindings)
 tracing = "0.1"
 
+# BM25 stemming for better keyword matching
+rust-stemmers = "1.2"
+
 [features]
 default = []
 slm = []
