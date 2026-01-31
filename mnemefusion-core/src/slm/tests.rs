@@ -12,12 +12,12 @@ mod tests {
     fn test_slm_config_default() {
         let config = SlmConfig::default();
 
-        assert_eq!(config.model_id, "google/gemma-2-2b-it");
+        assert_eq!(config.model_id, "Qwen/Qwen2.5-0.5B-Instruct");
         assert_eq!(config.timeout_ms, 100);
         assert!(!config.use_gpu);
         assert_eq!(config.min_confidence, 0.6);
         assert!(config.cache_dir.to_string_lossy().contains("mnemefusion"));
-        assert!(config.model_path.is_none()); // No local path by default
+        // model_path may be set from MODEL_PATH env var
     }
 
     #[test]

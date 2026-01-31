@@ -98,6 +98,24 @@ pub struct Config {
     /// mnemefusion-core = { version = "0.1", features = ["slm"] }
     /// ```
     pub slm_config: Option<crate::slm::SlmConfig>,
+
+    /// Enable SLM metadata extraction at ingestion time
+    ///
+    /// When enabled and slm_config is set, uses Small Language Model to extract rich
+    /// metadata (entities, temporal markers, causal relationships, topics) during
+    /// memory ingestion. This enables fast, accurate retrieval without query-time
+    /// SLM inference.
+    ///
+    /// Key principle: "Pay the cost once" - ingestion can be slow (3-5s), but queries
+    /// must be fast (<100ms).
+    ///
+    /// Default: true (enabled when slm_config is set)
+    ///
+    /// Requires `slm` feature to be enabled at compile time:
+    /// ```toml
+    /// mnemefusion-core = { version = "0.1", features = ["slm"] }
+    /// ```
+    pub slm_metadata_extraction_enabled: bool,
 }
 
 impl Default for Config {
@@ -117,6 +135,7 @@ impl Default for Config {
             fusion_strategy: FusionStrategy::default(), // RRF by default
             rrf_k: 60.0, // From RRF paper
             slm_config: None, // SLM disabled by default
+            slm_metadata_extraction_enabled: true, // Enabled by default when slm_config is set
         }
     }
 }
@@ -334,6 +353,36 @@ impl Config {
     /// after it has been enabled.
     pub fn without_slm(mut self) -> Self {
         self.slm_config = None;
+        self
+    }
+
+    /// Enable or disable SLM metadata extraction at ingestion time
+    ///
+    /// When enabled and slm_config is set, uses Small Language Model to extract
+    /// rich metadata during memory ingestion. This metadata enables fast, accurate
+    /// retrieval without query-time SLM inference.
+    ///
+    /// # Arguments
+    ///
+    /// * `enabled` - Whether to enable SLM metadata extraction
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use mnemefusion_core::{Config, SlmConfig};
+    ///
+    /// // Enable SLM for both classification and metadata extraction
+    /// let config = Config::default()
+    ///     .with_slm(SlmConfig::default())
+    ///     .with_slm_metadata_extraction(true);
+    ///
+    /// // Enable SLM for classification only, skip metadata extraction
+    /// let config = Config::default()
+    ///     .with_slm(SlmConfig::default())
+    ///     .with_slm_metadata_extraction(false);
+    /// ```
+    pub fn with_slm_metadata_extraction(mut self, enabled: bool) -> Self {
+        self.slm_metadata_extraction_enabled = enabled;
         self
     }
 

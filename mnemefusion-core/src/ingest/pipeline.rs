@@ -3,6 +3,12 @@
 //! The ingestion pipeline ensures that memories are indexed across all dimensions
 //! atomically. If any indexing step fails, changes are rolled back to maintain
 //! consistency.
+//!
+//! # SLM Metadata Extraction
+//!
+//! When the `slm` feature is enabled and an SLM extractor is configured, the pipeline
+//! extracts rich metadata at ingestion time. This enables fast, accurate retrieval
+//! without query-time SLM inference.
 
 use crate::{
     error::Result,
@@ -15,13 +21,23 @@ use crate::{
     },
     util::hash,
 };
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
+
+#[cfg(feature = "slm")]
+use crate::ingest::SlmMetadataExtractor;
 
 /// Coordinates memory ingestion across all dimensions
 ///
 /// The IngestionPipeline ensures that all dimension indexes are updated
 /// atomically when adding or deleting memories. This prevents partial
 /// state if any indexing operation fails.
+///
+/// # SLM Metadata Extraction
+///
+/// When the `slm` feature is enabled and an SLM extractor is configured via
+/// [`with_slm_extractor`](Self::with_slm_extractor), the pipeline extracts rich
+/// metadata (entities, temporal markers, causal relationships, topics) at ingestion
+/// time. This metadata is stored in the memory and enables fast retrieval.
 pub struct IngestionPipeline {
     storage: Arc<StorageEngine>,
     vector_index: Arc<RwLock<VectorIndex>>,
@@ -30,6 +46,9 @@ pub struct IngestionPipeline {
     graph_manager: Arc<RwLock<GraphManager>>,
     entity_extractor: SimpleEntityExtractor,
     entity_extraction_enabled: bool,
+    /// SLM metadata extractor (optional, requires `slm` feature)
+    #[cfg(feature = "slm")]
+    slm_extractor: Option<Arc<Mutex<SlmMetadataExtractor>>>,
 }
 
 impl IngestionPipeline {
@@ -59,7 +78,35 @@ impl IngestionPipeline {
             graph_manager,
             entity_extractor: SimpleEntityExtractor::new(),
             entity_extraction_enabled,
+            #[cfg(feature = "slm")]
+            slm_extractor: None,
         }
+    }
+
+    /// Set the SLM metadata extractor for rich metadata extraction at ingestion time
+    ///
+    /// When set, the pipeline will use the SLM to extract entities, temporal markers,
+    /// causal relationships, and topics from memory content during ingestion.
+    ///
+    /// # Arguments
+    ///
+    /// * `extractor` - The SLM metadata extractor to use
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use mnemefusion_core::ingest::{IngestionPipeline, SlmMetadataExtractor};
+    /// use mnemefusion_core::slm::SlmConfig;
+    /// use std::sync::{Arc, Mutex};
+    ///
+    /// // Create pipeline with SLM extractor
+    /// let extractor = SlmMetadataExtractor::new(SlmConfig::default()).unwrap();
+    /// let pipeline = pipeline.with_slm_extractor(Arc::new(Mutex::new(extractor)));
+    /// ```
+    #[cfg(feature = "slm")]
+    pub fn with_slm_extractor(mut self, extractor: Arc<Mutex<SlmMetadataExtractor>>) -> Self {
+        self.slm_extractor = Some(extractor);
+        self
     }
 
     /// Reserve capacity in the vector index for future insertions
@@ -116,6 +163,42 @@ impl IngestionPipeline {
 
             // Store causal density as string
             memory.set_metadata("causal_density".to_string(), causal_density.to_string());
+        }
+
+        // Step 0c: SLM metadata extraction (if available)
+        // This extracts rich metadata using a Small Language Model for better retrieval
+        #[cfg(feature = "slm")]
+        if let Some(ref slm_extractor) = self.slm_extractor {
+            match slm_extractor.lock().unwrap().extract(&memory.content) {
+                Ok(slm_metadata) => {
+                    // Store full SLM metadata as JSON
+                    let json = serde_json::to_string(&slm_metadata).unwrap_or_default();
+                    memory.set_metadata("slm_metadata".to_string(), json);
+
+                    // Also populate entity_names for backward compatibility
+                    if !slm_metadata.entities.is_empty() {
+                        let names: Vec<String> = slm_metadata
+                            .entities
+                            .iter()
+                            .map(|e| e.name.clone())
+                            .collect();
+                        memory.set_metadata(
+                            "entity_names".to_string(),
+                            serde_json::to_string(&names).unwrap_or_default(),
+                        );
+                    }
+
+                    tracing::debug!(
+                        "SLM extracted {} entities, {} topics from memory",
+                        slm_metadata.entities.len(),
+                        slm_metadata.topics.len()
+                    );
+                }
+                Err(e) => {
+                    // Log warning but continue - pattern-based extraction already done in 0a/0b
+                    tracing::warn!("SLM extraction failed, using pattern-based extraction: {}", e);
+                }
+            }
         }
 
         // Step 1: Store memory (if this fails, nothing else happens)
@@ -321,7 +404,12 @@ impl IngestionPipeline {
         // Convert inputs to memories and extract temporal/causal expressions
         let temporal_extractor = get_temporal_extractor();
         let causal_extractor = get_causal_extractor();
-        let memories: Vec<Memory> = inputs
+
+        // SLM extraction is done separately since it requires a mutex lock
+        #[cfg(feature = "slm")]
+        let slm_extractor_ref = self.slm_extractor.clone();
+
+        let mut memories: Vec<Memory> = inputs
             .iter()
             .map(|input| {
                 let mut memory = input.to_memory();
@@ -346,6 +434,40 @@ impl IngestionPipeline {
                 memory
             })
             .collect();
+
+        // SLM metadata extraction for batch (done after pattern extraction)
+        #[cfg(feature = "slm")]
+        if let Some(ref slm_extractor) = slm_extractor_ref {
+            let mut extractor = slm_extractor.lock().unwrap();
+            for memory in memories.iter_mut() {
+                match extractor.extract(&memory.content) {
+                    Ok(slm_metadata) => {
+                        // Store full SLM metadata as JSON
+                        let json = serde_json::to_string(&slm_metadata).unwrap_or_default();
+                        memory.set_metadata("slm_metadata".to_string(), json);
+
+                        // Also populate entity_names for backward compatibility
+                        if !slm_metadata.entities.is_empty() {
+                            let names: Vec<String> = slm_metadata
+                                .entities
+                                .iter()
+                                .map(|e| e.name.clone())
+                                .collect();
+                            memory.set_metadata(
+                                "entity_names".to_string(),
+                                serde_json::to_string(&names).unwrap_or_default(),
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "SLM extraction failed for batch memory, using patterns: {}",
+                            e
+                        );
+                    }
+                }
+            }
+        }
 
         // Lock vector index once for the entire batch
         let mut vector_index = self.vector_index.write().unwrap();

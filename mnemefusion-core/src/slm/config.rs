@@ -174,7 +174,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = SlmConfig::default();
-        assert_eq!(config.model_id, "google/gemma-2-2b-it");
+        assert_eq!(config.model_id, "Qwen/Qwen2.5-0.5B-Instruct");
         assert_eq!(config.timeout_ms, 100);
         assert!(!config.use_gpu);
         assert_eq!(config.min_confidence, 0.6);
