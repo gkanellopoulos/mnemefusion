@@ -405,10 +405,6 @@ impl IngestionPipeline {
         let temporal_extractor = get_temporal_extractor();
         let causal_extractor = get_causal_extractor();
 
-        // SLM extraction is done separately since it requires a mutex lock
-        #[cfg(feature = "slm")]
-        let slm_extractor_ref = self.slm_extractor.clone();
-
         let mut memories: Vec<Memory> = inputs
             .iter()
             .map(|input| {
@@ -435,18 +431,17 @@ impl IngestionPipeline {
             })
             .collect();
 
-        // SLM metadata extraction for batch (done after pattern extraction)
+        // SLM metadata extraction (individual extraction for each memory)
+        // Note: For horizontal scaling, run multiple library instances rather than batching
         #[cfg(feature = "slm")]
-        if let Some(ref slm_extractor) = slm_extractor_ref {
+        if let Some(ref slm_extractor) = self.slm_extractor {
             let mut extractor = slm_extractor.lock().unwrap();
             for memory in memories.iter_mut() {
                 match extractor.extract(&memory.content) {
                     Ok(slm_metadata) => {
-                        // Store full SLM metadata as JSON
                         let json = serde_json::to_string(&slm_metadata).unwrap_or_default();
                         memory.set_metadata("slm_metadata".to_string(), json);
 
-                        // Also populate entity_names for backward compatibility
                         if !slm_metadata.entities.is_empty() {
                             let names: Vec<String> = slm_metadata
                                 .entities
@@ -461,7 +456,7 @@ impl IngestionPipeline {
                     }
                     Err(e) => {
                         tracing::warn!(
-                            "SLM extraction failed for batch memory, using patterns: {}",
+                            "SLM extraction failed for memory, using patterns: {}",
                             e
                         );
                     }

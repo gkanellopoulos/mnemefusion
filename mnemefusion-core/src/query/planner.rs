@@ -7,7 +7,7 @@ use crate::{
     error::Result,
     graph::GraphManager,
     index::{TemporalIndex, VectorIndex},
-    ingest::{get_causal_extractor, get_temporal_extractor, EntityExtractor, SimpleEntityExtractor},
+    ingest::{get_causal_extractor, EntityExtractor, SimpleEntityExtractor, SlmMetadata},
     query::{
         fusion::{FusedResult, FusionEngine},
         intent::{IntentClassification, IntentClassifier},
@@ -28,6 +28,9 @@ pub struct QueryPlanner {
     intent_classifier: IntentClassifier,
     #[cfg(feature = "slm")]
     slm_classifier: Option<Arc<std::sync::Mutex<crate::slm::SlmClassifier>>>,
+    /// Whether to use SLM for query classification (default: false)
+    /// When false, uses pattern-based classification for fast queries
+    slm_query_classification_enabled: bool,
     fusion_engine: FusionEngine,
     semantic_prefilter_threshold: f32,
 }
@@ -46,6 +49,7 @@ impl QueryPlanner {
         rrf_k: f32,
         #[cfg(feature = "slm")]
         slm_config: Option<crate::slm::SlmConfig>,
+        slm_query_classification_enabled: bool,
     ) -> Result<Self> {
         // Initialize SLM classifier if configured
         #[cfg(feature = "slm")]
@@ -79,6 +83,7 @@ impl QueryPlanner {
             intent_classifier: IntentClassifier::new(),
             #[cfg(feature = "slm")]
             slm_classifier,
+            slm_query_classification_enabled,
             fusion_engine: FusionEngine::new()
                 .with_semantic_threshold(fusion_semantic_threshold)
                 .with_strategy(fusion_strategy)
@@ -87,10 +92,11 @@ impl QueryPlanner {
         })
     }
 
-    /// Classify query intent using SLM (if available) or patterns
+    /// Classify query intent using SLM (if enabled and available) or patterns
     ///
-    /// Tries SLM classification first. On any error, falls back to pattern-based
-    /// classification to ensure zero regression.
+    /// If slm_query_classification_enabled is true and SLM is available, tries SLM
+    /// classification first. Otherwise, or on any error, falls back to pattern-based
+    /// classification for fast queries.
     ///
     /// # Arguments
     ///
@@ -102,10 +108,12 @@ impl QueryPlanner {
     fn classify_intent(&self, query_text: &str) -> Result<IntentClassification> {
         eprintln!("[DEBUG-QP] classify_intent() called for: '{}'", query_text);
 
+        // Only use SLM classification if explicitly enabled (default: false)
+        // This is intentionally disabled by default for fast queries
         #[cfg(feature = "slm")]
-        {
+        if self.slm_query_classification_enabled {
             if let Some(slm_classifier) = &self.slm_classifier {
-                eprintln!("[DEBUG-QP] SLM classifier is available, attempting to use it");
+                eprintln!("[DEBUG-QP] SLM query classification ENABLED, attempting to use it");
                 // Try SLM classification
                 match slm_classifier.lock() {
                     Ok(mut classifier) => {
@@ -141,6 +149,13 @@ impl QueryPlanner {
             } else {
                 eprintln!("[DEBUG-QP] SLM classifier is NOT available");
             }
+        } else {
+            eprintln!("[DEBUG-QP] SLM query classification DISABLED (using patterns for fast queries)");
+        }
+
+        #[cfg(not(feature = "slm"))]
+        {
+            let _ = self.slm_query_classification_enabled; // Suppress unused warning
         }
 
         // Fallback to pattern-based classification
@@ -494,26 +509,110 @@ impl QueryPlanner {
         Ok(scores)
     }
 
-    /// Perform temporal search based on temporal content matching
+    /// Perform temporal search based on SLM metadata with pattern fallback
     ///
-    /// Extracts temporal expressions from query and matches them to temporal expressions
-    /// in memory content. Falls back to weak recency signal if query has no temporal context.
+    /// Uses SLM-extracted temporal metadata (markers, sequence, relative_time, absolute_dates)
+    /// when available, falling back to pattern-based temporal content scoring.
+    /// Falls back to weak recency signal if no temporal context found.
     fn temporal_search(&self, query_text: &str, limit: usize) -> Result<HashMap<MemoryId, f32>> {
-        // Sprint 18 Task 18.6: Use temporal content scoring
-        // Match temporal expressions in query to temporal expressions in memory content
-        let results = self.temporal_index.search_temporal_content(query_text, limit)?;
+        // Get more memories to search for temporal matches
+        // Use larger multiplier to search broader corpus for better recall
+        let fetch_limit = limit * 20;
+        let recent_memories = self.temporal_index.recent(fetch_limit)?;
+
+        let mut scores = HashMap::new();
+
+        for temporal_result in recent_memories {
+            // Load memory to access metadata
+            if let Some(memory) = self.storage.get_memory(&temporal_result.id)? {
+                let mut temporal_score = 0.0;
+
+                // Try SLM metadata first (richer temporal information)
+                if let Some(slm_metadata) = Self::get_slm_metadata(&memory) {
+                    temporal_score = Self::calculate_slm_temporal_score(query_text, &slm_metadata);
+                }
+
+                // Fallback to pattern-based temporal matching if SLM didn't match
+                if temporal_score == 0.0 {
+                    // Use the temporal index's content-based scoring
+                    if let Some(content_score) = self.get_temporal_content_score(&memory, query_text) {
+                        temporal_score = content_score;
+                    }
+                }
+
+                if temporal_score > 0.0 {
+                    scores.insert(temporal_result.id.clone(), temporal_score);
+                }
+            }
+        }
 
         // If we found temporal matches, return them
-        if !results.is_empty() {
-            let mut scores: HashMap<MemoryId, f32> = results.into_iter().collect();
-
+        if !scores.is_empty() {
             // Normalize scores to 0.0-1.0 range
             FusionEngine::normalize_scores(&mut scores);
 
-            Ok(scores)
+            // Take top results by score
+            let mut score_vec: Vec<_> = scores.into_iter().collect();
+            score_vec.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+            score_vec.truncate(limit);
+
+            Ok(score_vec.into_iter().collect())
         } else {
             // No temporal matches found - fall back to weak recency signal
             self.temporal_search_recency_fallback(limit)
+        }
+    }
+
+    /// Get temporal content score for a memory using pattern-based matching
+    ///
+    /// Checks if the memory's temporal expressions match the query's temporal expressions.
+    fn get_temporal_content_score(&self, memory: &Memory, query_text: &str) -> Option<f32> {
+        // Get memory's temporal expressions from metadata
+        let temporal_expressions_json = memory.get_metadata("temporal_expressions")?;
+        let memory_expressions: Vec<String> = serde_json::from_str(temporal_expressions_json).ok()?;
+
+        if memory_expressions.is_empty() {
+            return None;
+        }
+
+        // Extract temporal expressions from query using the same patterns
+        let query_lower = query_text.to_lowercase();
+
+        // Common temporal keywords to match
+        let temporal_keywords = [
+            "yesterday", "today", "tomorrow", "last week", "next week",
+            "last month", "next month", "last year", "next year",
+            "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+            "january", "february", "march", "april", "may", "june",
+            "july", "august", "september", "october", "november", "december",
+            "morning", "afternoon", "evening", "night",
+            "recently", "earlier", "later", "before", "after",
+            "first", "last", "initially", "finally", "eventually",
+        ];
+
+        let mut match_score: f32 = 0.0;
+
+        for memory_expr in &memory_expressions {
+            let expr_lower = memory_expr.to_lowercase();
+
+            // Check direct match
+            if query_lower.contains(&expr_lower) {
+                match_score += 1.0;
+            } else {
+                // Check for keyword overlap
+                for keyword in &temporal_keywords {
+                    if query_lower.contains(keyword) && expr_lower.contains(keyword) {
+                        match_score += 0.7;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if match_score > 0.0 {
+            Some((match_score / memory_expressions.len() as f32).min(1.0))
+        } else {
+            None
         }
     }
 
@@ -541,10 +640,11 @@ impl QueryPlanner {
         Ok(scores)
     }
 
-    /// Perform entity-based search using content matching
+    /// Perform entity-based search using SLM metadata with pattern fallback
     ///
-    /// Extracts entities from query using SimpleEntityExtractor (with stop word filtering)
-    /// and matches them to entities in memory content. Returns empty if query has no entities.
+    /// Uses SLM-extracted entities (with mentions, roles, types) when available,
+    /// falling back to pattern-based entity_names. Searches broader corpus for
+    /// better recall.
     fn entity_search(&self, query_text: &str, limit: usize) -> Result<HashMap<MemoryId, f32>> {
         let entity_extractor = SimpleEntityExtractor::new();
 
@@ -560,34 +660,35 @@ impl QueryPlanner {
         let query_entity_set: std::collections::HashSet<String> =
             query_entities.iter().map(|e| e.to_lowercase()).collect();
 
-        // Get recent memories to check their entity metadata
-        // Fetch more to find matches
-        let recent_memories = self.temporal_index.recent(limit * 10)?;
+        // Get more memories to search for entity matches
+        // Use larger multiplier to search broader corpus for better recall
+        let fetch_limit = limit * 20; // Search 20x more for better entity coverage
+        let recent_memories = self.temporal_index.recent(fetch_limit)?;
 
         let mut scores = HashMap::new();
 
         for temporal_result in recent_memories {
             // Load memory to access metadata
             if let Some(memory) = self.storage.get_memory(&temporal_result.id)? {
-                // Get entity names from memory metadata
-                if let Some(entities_json) = memory.get_metadata("entity_names") {
-                    // Parse JSON array of entity names
-                    if let Ok(memory_entities) = serde_json::from_str::<Vec<String>>(entities_json)
-                    {
-                        // Calculate overlap score
-                        let overlap_score =
-                            Self::calculate_entity_overlap(&query_entity_set, &memory_entities);
+                let mut entity_score = 0.0;
 
-                        if overlap_score > 0.0 {
-                            scores.insert(temporal_result.id, overlap_score);
+                // Try SLM metadata first (richer entity information)
+                if let Some(slm_metadata) = Self::get_slm_metadata(&memory) {
+                    entity_score = Self::calculate_slm_entity_score(&query_entity_set, &slm_metadata);
+                }
+
+                // Fallback to pattern-based entity_names if SLM didn't match
+                if entity_score == 0.0 {
+                    if let Some(entities_json) = memory.get_metadata("entity_names") {
+                        if let Ok(memory_entities) = serde_json::from_str::<Vec<String>>(entities_json) {
+                            entity_score = Self::calculate_entity_overlap(&query_entity_set, &memory_entities);
                         }
                     }
                 }
-            }
 
-            // Stop once we have enough scored results
-            if scores.len() >= limit * 2 {
-                break;
+                if entity_score > 0.0 {
+                    scores.insert(temporal_result.id.clone(), entity_score);
+                }
             }
         }
 
@@ -652,10 +753,11 @@ impl QueryPlanner {
         }
     }
 
-    /// Perform causal language-based search
+    /// Perform causal language-based search using SLM metadata with pattern fallback
     ///
-    /// Checks if query has causal intent. If yes, scores memories based on
-    /// causal language density. If no, returns empty (no causal scoring).
+    /// Uses SLM-extracted causal metadata (relationships, density, implicit causation)
+    /// when available, falling back to pattern-based causal density.
+    /// Returns empty if query has no causal intent.
     fn causal_search(&self, query_text: &str, limit: usize) -> Result<HashMap<MemoryId, f32>> {
         let causal_extractor = get_causal_extractor();
 
@@ -665,42 +767,47 @@ impl QueryPlanner {
             return Ok(HashMap::new());
         }
 
-        // Get recent memories to check their causal metadata
-        // Fetch more to find matches
-        let recent_memories = self.temporal_index.recent(limit * 10)?;
+        // Get more memories to search for causal matches
+        // Use larger multiplier to search broader corpus for better recall
+        let fetch_limit = limit * 20;
+        let recent_memories = self.temporal_index.recent(fetch_limit)?;
 
         let mut scores = HashMap::new();
 
         for temporal_result in recent_memories {
             // Load memory to access metadata
             if let Some(memory) = self.storage.get_memory(&temporal_result.id)? {
-                // Get causal density from memory metadata
-                if let Some(density_str) = memory.get_metadata("causal_density") {
-                    if let Ok(causal_density) = density_str.parse::<f32>() {
-                        // Only score memories with significant causal density (> 0.1)
-                        if causal_density > 0.1 {
-                            // Check if memory has causal graph links for boost
-                            let has_graph_links = {
-                                let graph = self.graph_manager.read().unwrap();
-                                graph.get_causes(&temporal_result.id, 1).ok().map_or(false, |r| !r.paths.is_empty())
-                                    || graph.get_effects(&temporal_result.id, 1).ok().map_or(false, |r| !r.paths.is_empty())
-                            };
+                let mut causal_score = 0.0;
 
-                            // Calculate relevance score with optional graph boost
-                            let score =
-                                causal_extractor.calculate_relevance_score(causal_density, has_graph_links);
+                // Try SLM metadata first (richer causal information)
+                if let Some(slm_metadata) = Self::get_slm_metadata(&memory) {
+                    causal_score = Self::calculate_slm_causal_score(query_text, &slm_metadata);
+                }
 
-                            if score > 0.0 {
-                                scores.insert(temporal_result.id, score);
+                // Fallback to pattern-based causal_density if SLM didn't match
+                if causal_score == 0.0 {
+                    if let Some(density_str) = memory.get_metadata("causal_density") {
+                        if let Ok(causal_density) = density_str.parse::<f32>() {
+                            // Only score memories with significant causal density (> 0.1)
+                            if causal_density > 0.1 {
+                                // Check if memory has causal graph links for boost
+                                let has_graph_links = {
+                                    let graph = self.graph_manager.read().unwrap();
+                                    graph.get_causes(&temporal_result.id, 1).ok().map_or(false, |r| !r.paths.is_empty())
+                                        || graph.get_effects(&temporal_result.id, 1).ok().map_or(false, |r| !r.paths.is_empty())
+                                };
+
+                                // Calculate relevance score with optional graph boost
+                                causal_score =
+                                    causal_extractor.calculate_relevance_score(causal_density, has_graph_links);
                             }
                         }
                     }
                 }
-            }
 
-            // Stop once we have enough scored results
-            if scores.len() >= limit * 2 {
-                break;
+                if causal_score > 0.0 {
+                    scores.insert(temporal_result.id.clone(), causal_score);
+                }
             }
         }
 
@@ -864,6 +971,181 @@ impl QueryPlanner {
         }
         true // All filters passed
     }
+
+    /// Parse SlmMetadata from memory's slm_metadata field
+    ///
+    /// Returns None if the memory doesn't have slm_metadata or if parsing fails.
+    /// This allows graceful fallback to pattern-based matching.
+    fn get_slm_metadata(memory: &Memory) -> Option<SlmMetadata> {
+        memory
+            .get_metadata("slm_metadata")
+            .and_then(|json| serde_json::from_str(json).ok())
+    }
+
+    /// Calculate entity match score using SLM metadata
+    ///
+    /// Matches query entities against SLM-extracted entities, considering:
+    /// - Entity names (exact and partial match)
+    /// - Entity mentions (pronoun resolution)
+    /// - Entity roles and types
+    fn calculate_slm_entity_score(
+        query_entities: &std::collections::HashSet<String>,
+        slm_metadata: &SlmMetadata,
+    ) -> f32 {
+        if query_entities.is_empty() || slm_metadata.entities.is_empty() {
+            return 0.0;
+        }
+
+        let mut total_score = 0.0;
+        let mut matches = 0;
+
+        for query_entity in query_entities {
+            let query_lower = query_entity.to_lowercase();
+
+            for extracted in &slm_metadata.entities {
+                // Check exact name match
+                if extracted.name.to_lowercase() == query_lower {
+                    total_score += 1.0;
+                    matches += 1;
+                    break;
+                }
+
+                // Check mentions (e.g., "she", "he", "they" resolved to entity)
+                for mention in &extracted.mentions {
+                    if mention.to_lowercase() == query_lower {
+                        total_score += 0.9; // Slightly lower for mention match
+                        matches += 1;
+                        break;
+                    }
+                }
+
+                // Check partial match (substring)
+                if extracted.name.to_lowercase().contains(&query_lower)
+                    || query_lower.contains(&extracted.name.to_lowercase())
+                {
+                    total_score += 0.5;
+                    matches += 1;
+                    break;
+                }
+            }
+        }
+
+        if matches > 0 {
+            total_score / query_entities.len() as f32
+        } else {
+            0.0
+        }
+    }
+
+    /// Calculate temporal match score using SLM metadata
+    ///
+    /// Matches query temporal expressions against SLM-extracted temporal metadata:
+    /// - Temporal markers (yesterday, last week, etc.)
+    /// - Sequence position (early, middle, late)
+    /// - Relative time (before current, concurrent, after current)
+    /// - Absolute dates
+    fn calculate_slm_temporal_score(
+        query_text: &str,
+        slm_metadata: &SlmMetadata,
+    ) -> f32 {
+        let query_lower = query_text.to_lowercase();
+        let temporal = &slm_metadata.temporal;
+        let mut score: f32 = 0.0;
+
+        // Check for temporal marker matches
+        for marker in &temporal.markers {
+            if query_lower.contains(&marker.to_lowercase()) {
+                score += 0.8;
+                break; // One match is enough
+            }
+        }
+
+        // Check for absolute date matches
+        for date in &temporal.absolute_dates {
+            if query_lower.contains(&date.to_lowercase()) {
+                score += 0.9;
+                break;
+            }
+        }
+
+        // Check for sequence-related queries
+        if let Some(ref sequence) = temporal.sequence {
+            let seq_lower = sequence.to_lowercase();
+            // Match queries like "first", "initially", "beginning" to "early"
+            if (query_lower.contains("first") || query_lower.contains("initial") || query_lower.contains("begin"))
+                && seq_lower == "early"
+            {
+                score += 0.7;
+            }
+            // Match queries like "last", "finally", "end" to "late"
+            if (query_lower.contains("last") || query_lower.contains("final") || query_lower.contains("end"))
+                && seq_lower == "late"
+            {
+                score += 0.7;
+            }
+        }
+
+        // Check for relative time matches
+        if let Some(ref relative) = temporal.relative_time {
+            let rel_lower = relative.to_lowercase();
+            if query_lower.contains("before") && rel_lower.contains("before") {
+                score += 0.6;
+            }
+            if query_lower.contains("after") && rel_lower.contains("after") {
+                score += 0.6;
+            }
+            if (query_lower.contains("recent") || query_lower.contains("latest"))
+                && rel_lower.contains("current")
+            {
+                score += 0.5;
+            }
+        }
+
+        score.min(1.0) // Cap at 1.0
+    }
+
+    /// Calculate causal match score using SLM metadata
+    ///
+    /// Matches based on:
+    /// - Causal relationships (cause/effect pairs)
+    /// - Causal density
+    /// - Implicit causation detection
+    fn calculate_slm_causal_score(
+        query_text: &str,
+        slm_metadata: &SlmMetadata,
+    ) -> f32 {
+        let causal = &slm_metadata.causal;
+        let query_lower = query_text.to_lowercase();
+
+        // Base score from causal density
+        let mut score = causal.density * 0.5;
+
+        // Boost for explicit causal markers
+        if !causal.explicit_markers.is_empty() {
+            score += 0.2;
+        }
+
+        // Boost for implicit causation (captures nuanced causal relationships)
+        if causal.has_implicit_causation {
+            score += 0.3;
+        }
+
+        // Check if query terms match any cause/effect in relationships
+        for rel in &causal.relationships {
+            let cause_lower = rel.cause.to_lowercase();
+            let effect_lower = rel.effect.to_lowercase();
+
+            // Check if query mentions the cause or effect
+            if query_lower.contains(&cause_lower) || cause_lower.contains(&query_lower) {
+                score += 0.3 * rel.confidence;
+            }
+            if query_lower.contains(&effect_lower) || effect_lower.contains(&query_lower) {
+                score += 0.3 * rel.confidence;
+            }
+        }
+
+        score.min(1.0) // Cap at 1.0
+    }
 }
 
 /// Calculate cosine similarity between two vectors
@@ -934,6 +1216,7 @@ mod tests {
             60.0, // rrf_k (not used with Weighted strategy)
             #[cfg(feature = "slm")]
             None, // slm_config (disabled for tests)
+            false, // slm_query_classification_enabled (disabled for fast tests)
         ).expect("Failed to create QueryPlanner");
 
         (planner, dir)

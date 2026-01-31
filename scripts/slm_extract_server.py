@@ -3,21 +3,61 @@
 SLM metadata extraction server - persistent process
 Reads content from stdin, extracts rich metadata, writes JSON results to stdout
 Keeps model loaded in memory for fast inference
+
+Optimizations:
+- GPU acceleration when available (n_gpu_layers=-1)
+- Reduced context size for faster inference
+- Compact prompt format
+- Batch request support (sequential processing, but reduced IPC overhead)
 """
 
 import sys
 import json
+import os
 from pathlib import Path
 from llama_cpp import Llama
 
 
-def load_model(model_path: str) -> Llama:
+def detect_gpu() -> int:
+    """Detect if GPU is available and return n_gpu_layers setting"""
+    # Check environment override
+    env_layers = os.environ.get("SLM_GPU_LAYERS")
+    if env_layers is not None:
+        try:
+            return int(env_layers)
+        except ValueError:
+            pass
+
+    # Try to detect CUDA
+    try:
+        import torch
+        if torch.cuda.is_available():
+            print(f"[SLM-EXTRACT] GPU detected: {torch.cuda.get_device_name(0)}", file=sys.stderr)
+            return -1  # Use all layers on GPU
+    except ImportError:
+        pass
+
+    # Check for ROCm (AMD)
+    if os.path.exists("/opt/rocm"):
+        print("[SLM-EXTRACT] ROCm detected, enabling GPU", file=sys.stderr)
+        return -1
+
+    print("[SLM-EXTRACT] No GPU detected, using CPU", file=sys.stderr)
+    return 0
+
+
+def load_model(model_path: str, n_gpu_layers: int = None) -> Llama:
     """Load the GGUF model once"""
+    if n_gpu_layers is None:
+        n_gpu_layers = detect_gpu()
+
     print(f"[SLM-EXTRACT] Loading model from: {model_path}", file=sys.stderr)
+    print(f"[SLM-EXTRACT] GPU layers: {n_gpu_layers} (-1=all, 0=CPU only)", file=sys.stderr)
+
     model = Llama(
         model_path=model_path,
-        n_ctx=2048,
-        n_gpu_layers=0,  # CPU only by default
+        n_ctx=1024,  # Reduced context for faster inference
+        n_gpu_layers=n_gpu_layers,
         verbose=False
     )
     print(f"[SLM-EXTRACT] Model loaded successfully", file=sys.stderr)
@@ -28,48 +68,49 @@ def load_model(model_path: str) -> Llama:
 def extract_metadata(model: Llama, content: str) -> dict:
     """Extract rich metadata from content using SLM"""
 
-    # Create extraction prompt
-    prompt = f"""<|im_start|>system
-You are a metadata extractor. Extract structured information from text for memory indexing.<|im_end|>
-<|im_start|>user
-Extract metadata from this memory:
-"{content}"
+    # Truncate content if too long (save tokens)
+    max_content_len = 500
+    if len(content) > max_content_len:
+        content = content[:max_content_len] + "..."
 
-Respond with JSON only:
-{{
-  "entities": [
-    {{"name": "entity name", "role": "subject|object|organization|location", "mentions": ["name", "pronoun"], "entity_type": "person|organization|location|concept"}}
-  ],
-  "temporal": {{
-    "markers": ["yesterday", "last week"],
-    "sequence": "early|middle|late|null",
-    "relative_time": "before current|concurrent|after current|null",
-    "absolute_dates": ["2024-01-15"]
-  }},
-  "causal": {{
-    "relationships": [{{"cause": "event A", "effect": "event B", "confidence": 0.8}}],
-    "density": 0.0-1.0,
-    "explicit_markers": ["because", "therefore"],
-    "has_implicit_causation": true|false
-  }},
-  "topics": ["topic1", "topic2"],
-  "importance": 0.0-1.0
-}}<|im_end|>
+    # Compact prompt for faster inference
+    prompt = f"""<|im_start|>system
+Extract metadata as JSON.<|im_end|>
+<|im_start|>user
+Text: "{content}"
+
+JSON format: {{"entities":[{{"name":"X","role":"subject","entity_type":"person"}}],"temporal":{{"markers":[]}},"topics":[],"importance":0.5}}
+Extract:<|im_end|>
 <|im_start|>assistant
 """
 
-    # Generate extraction with higher max_tokens for richer output
+    # Generate with reduced max_tokens for speed
     output = model(
         prompt,
-        max_tokens=500,
-        temperature=0.1,  # Low temperature for consistency
+        max_tokens=300,  # Reduced from 500
+        temperature=0.1,
         stop=["<|im_end|>", "</s>"],
         echo=False
     )
 
     text = output['choices'][0]['text'].strip()
 
-    # Extract JSON
+    # Remove markdown code blocks if present
+    if text.startswith('```'):
+        # Remove opening code block
+        lines = text.split('\n')
+        if lines[0].startswith('```'):
+            lines = lines[1:]  # Remove ```json or ```
+        # Remove closing code block
+        if lines and lines[-1].strip() == '```':
+            lines = lines[:-1]
+        text = '\n'.join(lines)
+
+    # Extract JSON - try multiple approaches
+    json_str = None
+    result = None
+
+    # First try: find JSON boundaries
     json_start = text.find('{')
     json_end = text.rfind('}')
 
@@ -77,7 +118,43 @@ Respond with JSON only:
         raise ValueError(f"No JSON found in model output: {text}")
 
     json_str = text[json_start:json_end+1]
-    result = json.loads(json_str)
+
+    # Try to parse, with fallback fixups
+    try:
+        result = json.loads(json_str)
+    except json.JSONDecodeError as e:
+        print(f"[SLM-EXTRACT] Initial JSON parse failed: {e}", file=sys.stderr)
+
+        # Fixup 1: Remove trailing commas before } or ]
+        import re
+        fixed = re.sub(r',\s*([}\]])', r'\1', json_str)
+        try:
+            result = json.loads(fixed)
+            print("[SLM-EXTRACT] Fixed trailing comma", file=sys.stderr)
+        except json.JSONDecodeError:
+            pass
+
+        # Fixup 2: Try to find a balanced JSON object
+        if result is None:
+            depth = 0
+            start_idx = json_start
+            for i, ch in enumerate(text[json_start:], json_start):
+                if ch == '{':
+                    depth += 1
+                elif ch == '}':
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            result = json.loads(text[start_idx:i+1])
+                            print(f"[SLM-EXTRACT] Fixed with balanced extraction", file=sys.stderr)
+                            break
+                        except json.JSONDecodeError:
+                            continue
+
+        # Fixup 3: If still failing, try to extract just the values we need
+        if result is None:
+            print("[SLM-EXTRACT] All JSON parsing failed, using empty result", file=sys.stderr)
+            result = {}
 
     # Validate and normalize the result
     result = normalize_metadata(result)
@@ -156,6 +233,29 @@ def normalize_metadata(result: dict) -> dict:
     return normalized
 
 
+def get_error_result(error_msg: str) -> dict:
+    """Return a default result with error message"""
+    return {
+        "error": error_msg,
+        "entities": [],
+        "temporal": {
+            "markers": [],
+            "sequence": None,
+            "relative_time": None,
+            "absolute_dates": []
+        },
+        "causal": {
+            "relationships": [],
+            "density": 0.0,
+            "explicit_markers": [],
+            "has_implicit_causation": False
+        },
+        "topics": [],
+        "importance": 0.5,
+        "schema_version": 1
+    }
+
+
 def main():
     if len(sys.argv) != 2:
         print("Usage: slm_extract_server.py <model_path>", file=sys.stderr)
@@ -197,26 +297,7 @@ def main():
 
             except Exception as e:
                 # Write error result with defaults
-                error_result = {
-                    "error": str(e),
-                    "entities": [],
-                    "temporal": {
-                        "markers": [],
-                        "sequence": None,
-                        "relative_time": None,
-                        "absolute_dates": []
-                    },
-                    "causal": {
-                        "relationships": [],
-                        "density": 0.0,
-                        "explicit_markers": [],
-                        "has_implicit_causation": False
-                    },
-                    "topics": [],
-                    "importance": 0.5,
-                    "schema_version": 1
-                }
-                print(json.dumps(error_result), flush=True)
+                print(json.dumps(get_error_result(str(e))), flush=True)
                 print(f"[SLM-EXTRACT] Error processing content: {e}", file=sys.stderr)
 
     except Exception as e:

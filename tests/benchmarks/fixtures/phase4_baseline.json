@@ -1,0 +1,53 @@
+{
+  "phase": "4",
+  "architecture": "slm_at_ingestion",
+  "slm_extraction_enabled": true,
+  "top_k": 10,
+  "num_documents": 5882,
+  "num_queries": 1986,
+  "embedding_time_seconds": 26.068767070770264,
+  "ingestion_time_seconds": 428.9394884109497,
+  "ingestion_time_per_doc_ms": 72.92408847516995,
+  "recall_at_k": 0.5431799290560618,
+  "mrr": 0.17764070717242925,
+  "precision_at_k": 0.06022155085599194,
+  "query_time_avg_ms": 12.7430698062478,
+  "query_time_p50_ms": 12.9852294921875,
+  "query_time_p95_ms": 22.948145866394043,
+  "query_time_p99_ms": 29.420912265777606,
+  "category_metrics": {
+    "2": {
+      "recall_at_k": 0.6934060228452752,
+      "mrr": 0.23413316520793154,
+      "precision_at_k": 0.07663551401869158,
+      "count": 321
+    },
+    "3": {
+      "recall_at_k": 0.20399305555555558,
+      "mrr": 0.09186507936507936,
+      "precision_at_k": 0.028125,
+      "count": 96
+    },
+    "1": {
+      "recall_at_k": 0.09783217176834197,
+      "mrr": 0.0669058876505685,
+      "precision_at_k": 0.029787234042553193,
+      "count": 282
+    },
+    "4": {
+      "recall_at_k": 0.5975029726516052,
+      "mrr": 0.19244002793348813,
+      "precision_at_k": 0.06254458977407847,
+      "count": 841
+    },
+    "5": {
+      "recall_at_k": 0.6872197309417041,
+      "mrr": 0.1975540963769663,
+      "precision_at_k": 0.07017937219730941,
+      "count": 446
+    }
+  },
+  "model": "BAAI/bge-base-en-v1.5",
+  "embedding_dim": 768,
+  "num_conversations": 10
+}

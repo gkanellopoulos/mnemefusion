@@ -220,10 +220,10 @@ impl PyMemory {
     /// Example:
     ///     >>> memory = Memory("brain.mfdb")
     ///     >>> memory = Memory("brain.mfdb", config={"embedding_dim": 384})
-    ///     >>> # Enable SLM-based intent classification
-    ///     >>> memory = Memory("brain.mfdb", config={"use_slm": True})
-    ///     >>> # Enable SLM with custom model path
+    ///     >>> # Enable SLM metadata extraction at ingestion (recommended)
     ///     >>> memory = Memory("brain.mfdb", config={"use_slm": True, "slm_model_path": "/path/to/model"})
+    ///     >>> # Disable SLM query classification for fast queries (default: False)
+    ///     >>> memory = Memory("brain.mfdb", config={"use_slm": True, "slm_query_classification_enabled": False})
     #[new]
     #[pyo3(signature = (path, config=None))]
     fn new(path: &str, config: Option<&PyDict>) -> PyResult<Self> {
@@ -274,6 +274,20 @@ impl PyMemory {
                     }
                 } else {
                     eprintln!("[DEBUG-PY] No 'use_slm' in config");
+                }
+
+                // SLM metadata extraction at ingestion time (default: true when SLM is enabled)
+                if let Some(slm_extraction) = cfg.get_item("slm_metadata_extraction_enabled")? {
+                    let enabled: bool = slm_extraction.extract()?;
+                    eprintln!("[DEBUG-PY] slm_metadata_extraction_enabled set to: {}", enabled);
+                    rust_config = rust_config.with_slm_metadata_extraction(enabled);
+                }
+
+                // SLM query classification (default: false - disabled for fast queries)
+                if let Some(slm_query_class) = cfg.get_item("slm_query_classification_enabled")? {
+                    let enabled: bool = slm_query_class.extract()?;
+                    eprintln!("[DEBUG-PY] slm_query_classification_enabled set to: {}", enabled);
+                    rust_config = rust_config.with_slm_query_classification(enabled);
                 }
             }
         }

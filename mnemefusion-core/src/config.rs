@@ -116,6 +116,28 @@ pub struct Config {
     /// mnemefusion-core = { version = "0.1", features = ["slm"] }
     /// ```
     pub slm_metadata_extraction_enabled: bool,
+
+    /// Enable SLM query classification at query time
+    ///
+    /// When enabled and slm_config is set, uses Small Language Model to classify
+    /// query intent at query time. This adds ~3 seconds latency to every query.
+    ///
+    /// **IMPORTANT**: This is typically NOT recommended for production use.
+    /// With rich SLM metadata extracted at ingestion time (Phase 1-2), RRF fusion
+    /// can automatically balance retrieval pathways without classification.
+    ///
+    /// Default: false (disabled - rely on RRF fusion instead)
+    ///
+    /// Only enable for:
+    /// - Experimentation and benchmarking
+    /// - Comparing classification vs no-classification approaches
+    /// - Cases where ingestion-time metadata is unavailable
+    ///
+    /// Requires `slm` feature to be enabled at compile time:
+    /// ```toml
+    /// mnemefusion-core = { version = "0.1", features = ["slm"] }
+    /// ```
+    pub slm_query_classification_enabled: bool,
 }
 
 impl Default for Config {
@@ -136,6 +158,7 @@ impl Default for Config {
             rrf_k: 60.0, // From RRF paper
             slm_config: None, // SLM disabled by default
             slm_metadata_extraction_enabled: true, // Enabled by default when slm_config is set
+            slm_query_classification_enabled: false, // Disabled by default - rely on RRF fusion
         }
     }
 }
@@ -386,6 +409,37 @@ impl Config {
         self
     }
 
+    /// Enable or disable SLM query classification at query time
+    ///
+    /// When enabled and slm_config is set, uses Small Language Model to classify
+    /// query intent. This adds ~3 seconds latency per query.
+    ///
+    /// **NOT RECOMMENDED** for production. With rich metadata from ingestion-time
+    /// SLM extraction, RRF fusion handles pathway balancing automatically.
+    ///
+    /// # Arguments
+    ///
+    /// * `enabled` - Whether to enable SLM query classification
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use mnemefusion_core::{Config, SlmConfig};
+    ///
+    /// // Default: SLM classification disabled at query time (recommended)
+    /// let config = Config::default()
+    ///     .with_slm(SlmConfig::default());
+    ///
+    /// // Enable for experimentation only
+    /// let config = Config::default()
+    ///     .with_slm(SlmConfig::default())
+    ///     .with_slm_query_classification(true);
+    /// ```
+    pub fn with_slm_query_classification(mut self, enabled: bool) -> Self {
+        self.slm_query_classification_enabled = enabled;
+        self
+    }
+
     /// Validate the configuration
     ///
     /// Returns detailed errors if the configuration is invalid.
@@ -610,5 +664,23 @@ mod tests {
 
         // Should validate successfully
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_slm_query_classification_default_disabled() {
+        // SLM query classification should be disabled by default
+        let config = Config::default();
+        assert!(!config.slm_query_classification_enabled);
+    }
+
+    #[test]
+    fn test_slm_query_classification_builder() {
+        // Test enabling SLM query classification
+        let config = Config::default().with_slm_query_classification(true);
+        assert!(config.slm_query_classification_enabled);
+
+        // Test explicitly disabling
+        let config = Config::default().with_slm_query_classification(false);
+        assert!(!config.slm_query_classification_enabled);
     }
 }

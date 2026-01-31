@@ -20,6 +20,11 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
+#[cfg(feature = "slm")]
+use crate::ingest::SlmMetadataExtractor;
+#[cfg(feature = "slm")]
+use std::sync::Mutex;
+
 /// Main memory engine interface
 ///
 /// This is the primary entry point for all MnemeFusion operations.
@@ -94,7 +99,7 @@ impl MemoryEngine {
         let graph_manager = Arc::new(RwLock::new(graph_manager));
 
         // Create ingestion pipeline
-        let pipeline = IngestionPipeline::new(
+        let mut pipeline = IngestionPipeline::new(
             Arc::clone(&storage),
             Arc::clone(&vector_index),
             Arc::clone(&bm25_index),
@@ -102,6 +107,28 @@ impl MemoryEngine {
             Arc::clone(&graph_manager),
             config.entity_extraction_enabled,
         );
+
+        // Attach SLM metadata extractor if enabled
+        #[cfg(feature = "slm")]
+        if config.slm_metadata_extraction_enabled {
+            if let Some(ref slm_config) = config.slm_config {
+                tracing::info!("Initializing SLM metadata extractor for ingestion...");
+                match SlmMetadataExtractor::new(slm_config.clone()) {
+                    Ok(extractor) => {
+                        pipeline = pipeline.with_slm_extractor(Arc::new(Mutex::new(extractor)));
+                        tracing::info!("SLM metadata extractor attached to pipeline");
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to initialize SLM metadata extractor, using pattern-based extraction: {}",
+                            e
+                        );
+                    }
+                }
+            } else {
+                tracing::debug!("SLM metadata extraction enabled but no slm_config provided");
+            }
+        }
 
         // Create query planner
         let query_planner = QueryPlanner::new(
@@ -116,6 +143,7 @@ impl MemoryEngine {
             config.rrf_k,
             #[cfg(feature = "slm")]
             config.slm_config.clone(),
+            config.slm_query_classification_enabled,
         )?;
 
         Ok(Self {
