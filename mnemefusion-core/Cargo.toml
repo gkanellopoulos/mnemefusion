@@ -30,9 +30,14 @@ tracing = "0.1"
 # BM25 stemming for better keyword matching
 rust-stemmers = "1.2"
 
+# Native LLM inference for entity extraction (optional)
+llama-cpp-2 = { version = "0.1", optional = true }
+
 [features]
 default = []
 slm = []
+entity-extraction = ["llama-cpp-2"]
+entity-extraction-cuda = ["entity-extraction", "llama-cpp-2/cuda"]
 
 [dev-dependencies]
 tempfile = "3.10"

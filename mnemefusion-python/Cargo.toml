@@ -14,6 +14,10 @@ pyo3 = { version = "0.20", features = ["extension-module"] }
 [features]
 # Pass through the slm feature to mnemefusion-core
 slm = ["mnemefusion-core/slm"]
+# Pass through the entity-extraction feature for native LLM extraction
+entity-extraction = ["mnemefusion-core/entity-extraction"]
+# Entity extraction with CUDA GPU acceleration
+entity-extraction-cuda = ["entity-extraction", "mnemefusion-core/entity-extraction-cuda"]
 
 [profile.release]
 lto = true
