@@ -12,8 +12,8 @@ use crate::{
     query::{FusedResult, IntentClassification, QueryPlanner},
     storage::StorageEngine,
     types::{
-        AddResult, BatchResult, Entity, Memory, MemoryId, MemoryInput, MetadataFilter, Source,
-        Timestamp, UpsertResult,
+        AddResult, BatchResult, Entity, EntityProfile, Memory, MemoryId, MemoryInput,
+        MetadataFilter, Source, Timestamp, UpsertResult,
     },
 };
 use std::collections::HashMap;
@@ -23,6 +23,11 @@ use std::sync::{Arc, RwLock};
 #[cfg(feature = "slm")]
 use crate::ingest::SlmMetadataExtractor;
 #[cfg(feature = "slm")]
+use std::sync::Mutex;
+
+#[cfg(feature = "entity-extraction")]
+use crate::extraction::{LlmEntityExtractor, ModelTier};
+#[cfg(all(feature = "entity-extraction", not(feature = "slm")))]
 use std::sync::Mutex;
 
 /// Main memory engine interface
@@ -156,6 +161,80 @@ impl MemoryEngine {
             query_planner,
             config,
         })
+    }
+
+    /// Enable native LLM entity extraction with the specified model tier
+    ///
+    /// This enables automatic entity and fact extraction during memory ingestion
+    /// using a locally-running LLM via llama.cpp. Extraction results are stored
+    /// in entity profiles for fast retrieval.
+    ///
+    /// # Arguments
+    ///
+    /// * `tier` - Model tier to use (Balanced = 4B, Quality = 7B)
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the model cannot be loaded.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use mnemefusion_core::{MemoryEngine, Config, ModelTier};
+    ///
+    /// let engine = MemoryEngine::open("./brain.mfdb", Config::default())?
+    ///     .with_llm_entity_extraction(ModelTier::Balanced)?;
+    /// # Ok::<(), mnemefusion_core::Error>(())
+    /// ```
+    #[cfg(feature = "entity-extraction")]
+    pub fn with_llm_entity_extraction(mut self, tier: ModelTier) -> Result<Self> {
+        tracing::info!("Initializing LLM entity extractor ({:?})...", tier);
+
+        let extractor = LlmEntityExtractor::load(tier)?;
+        self.pipeline = self
+            .pipeline
+            .with_llm_extractor(Arc::new(Mutex::new(extractor)));
+
+        tracing::info!("LLM entity extractor attached to pipeline");
+        Ok(self)
+    }
+
+    /// Enable native LLM entity extraction with a custom model path
+    ///
+    /// This enables automatic entity and fact extraction using a model
+    /// at the specified path.
+    ///
+    /// # Arguments
+    ///
+    /// * `model_path` - Path to the GGUF model file
+    /// * `tier` - Model tier (affects generation parameters)
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the model cannot be loaded.
+    #[cfg(feature = "entity-extraction")]
+    pub fn with_llm_entity_extraction_from_path(
+        mut self,
+        model_path: impl Into<std::path::PathBuf>,
+        tier: ModelTier,
+    ) -> Result<Self> {
+        tracing::info!("Initializing LLM entity extractor from custom path...");
+
+        let extractor = LlmEntityExtractor::load_from_path(model_path, tier)?;
+        self.pipeline = self
+            .pipeline
+            .with_llm_extractor(Arc::new(Mutex::new(extractor)));
+
+        tracing::info!("LLM entity extractor attached to pipeline");
+        Ok(self)
     }
 
     /// Add a new memory to the database
@@ -1244,6 +1323,88 @@ impl MemoryEngine {
     /// ```
     pub fn list_entities(&self) -> Result<Vec<Entity>> {
         self.storage.list_entities()
+    }
+
+    // ========== Entity Profile Operations ==========
+
+    /// Get the profile for an entity by name
+    ///
+    /// Entity profiles aggregate facts about entities across all memories.
+    /// They are automatically built during ingestion when SLM metadata extraction
+    /// is enabled.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The entity name (case-insensitive)
+    ///
+    /// # Returns
+    ///
+    /// The EntityProfile if found, or None
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mnemefusion_core::{MemoryEngine, Config};
+    /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
+    /// if let Some(profile) = engine.get_entity_profile("Alice").unwrap() {
+    ///     println!("Entity: {} ({})", profile.name, profile.entity_type);
+    ///
+    ///     // Get facts about Alice's occupation
+    ///     for fact in profile.get_facts("occupation") {
+    ///         println!("  Occupation: {} (confidence: {})", fact.value, fact.confidence);
+    ///     }
+    ///
+    ///     // Get facts about Alice's research
+    ///     for fact in profile.get_facts("research_topic") {
+    ///         println!("  Research: {} (confidence: {})", fact.value, fact.confidence);
+    ///     }
+    /// }
+    /// ```
+    pub fn get_entity_profile(&self, name: &str) -> Result<Option<EntityProfile>> {
+        self.storage.get_entity_profile(name)
+    }
+
+    /// List all entity profiles in the database
+    ///
+    /// # Returns
+    ///
+    /// A vector of all EntityProfile objects
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mnemefusion_core::{MemoryEngine, Config};
+    /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
+    /// let profiles = engine.list_entity_profiles().unwrap();
+    /// for profile in profiles {
+    ///     println!("{} ({}) - {} facts from {} memories",
+    ///         profile.name,
+    ///         profile.entity_type,
+    ///         profile.total_facts(),
+    ///         profile.source_memories.len()
+    ///     );
+    /// }
+    /// ```
+    pub fn list_entity_profiles(&self) -> Result<Vec<EntityProfile>> {
+        self.storage.list_entity_profiles()
+    }
+
+    /// Count entity profiles in the database
+    ///
+    /// # Returns
+    ///
+    /// The number of entity profiles
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mnemefusion_core::{MemoryEngine, Config};
+    /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
+    /// let count = engine.count_entity_profiles().unwrap();
+    /// println!("Total entity profiles: {}", count);
+    /// ```
+    pub fn count_entity_profiles(&self) -> Result<usize> {
+        self.storage.count_entity_profiles()
     }
 
     /// Create a scoped view for namespace-specific operations

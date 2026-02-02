@@ -17,14 +17,18 @@ use crate::{
     ingest::{get_causal_extractor, get_temporal_extractor, EntityExtractor, SimpleEntityExtractor},
     storage::StorageEngine,
     types::{
-        AddResult, BatchError, BatchResult, Entity, Memory, MemoryId, MemoryInput, UpsertResult,
+        AddResult, BatchError, BatchResult, Entity, EntityFact, EntityId, EntityProfile, Memory,
+        MemoryId, MemoryInput, Timestamp, UpsertResult,
     },
     util::hash,
 };
 use std::sync::{Arc, Mutex, RwLock};
 
 #[cfg(feature = "slm")]
-use crate::ingest::SlmMetadataExtractor;
+use crate::ingest::{SlmMetadata, SlmMetadataExtractor};
+
+#[cfg(feature = "entity-extraction")]
+use crate::extraction::{ExtractionResult, LlmEntityExtractor};
 
 /// Coordinates memory ingestion across all dimensions
 ///
@@ -49,6 +53,10 @@ pub struct IngestionPipeline {
     /// SLM metadata extractor (optional, requires `slm` feature)
     #[cfg(feature = "slm")]
     slm_extractor: Option<Arc<Mutex<SlmMetadataExtractor>>>,
+    /// Native LLM entity extractor (optional, requires `entity-extraction` feature)
+    /// This takes precedence over the Python SLM extractor when both are available.
+    #[cfg(feature = "entity-extraction")]
+    llm_extractor: Option<Arc<Mutex<LlmEntityExtractor>>>,
 }
 
 impl IngestionPipeline {
@@ -80,6 +88,8 @@ impl IngestionPipeline {
             entity_extraction_enabled,
             #[cfg(feature = "slm")]
             slm_extractor: None,
+            #[cfg(feature = "entity-extraction")]
+            llm_extractor: None,
         }
     }
 
@@ -106,6 +116,32 @@ impl IngestionPipeline {
     #[cfg(feature = "slm")]
     pub fn with_slm_extractor(mut self, extractor: Arc<Mutex<SlmMetadataExtractor>>) -> Self {
         self.slm_extractor = Some(extractor);
+        self
+    }
+
+    /// Set the native LLM entity extractor for entity extraction at ingestion time
+    ///
+    /// When set, the pipeline will use the native LLM (via llama.cpp) to extract
+    /// entities and facts from memory content during ingestion. This takes
+    /// precedence over the Python SLM extractor when both are available.
+    ///
+    /// # Arguments
+    ///
+    /// * `extractor` - The LLM entity extractor to use
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use mnemefusion_core::extraction::{LlmEntityExtractor, ModelTier};
+    /// use std::sync::{Arc, Mutex};
+    ///
+    /// // Create pipeline with LLM extractor
+    /// let extractor = LlmEntityExtractor::load(ModelTier::Balanced).unwrap();
+    /// let pipeline = pipeline.with_llm_extractor(Arc::new(Mutex::new(extractor)));
+    /// ```
+    #[cfg(feature = "entity-extraction")]
+    pub fn with_llm_extractor(mut self, extractor: Arc<Mutex<LlmEntityExtractor>>) -> Self {
+        self.llm_extractor = Some(extractor);
         self
     }
 
@@ -165,44 +201,121 @@ impl IngestionPipeline {
             memory.set_metadata("causal_density".to_string(), causal_density.to_string());
         }
 
-        // Step 0c: SLM metadata extraction (if available)
+        // Step 0c: Native LLM entity extraction (if available)
+        // Uses llama.cpp with grammar-constrained decoding for guaranteed valid JSON
+        // Takes precedence over Python SLM extractor when both are available
+        #[cfg(feature = "entity-extraction")]
+        let llm_extraction_result: Option<ExtractionResult> =
+            if let Some(ref llm_extractor) = self.llm_extractor {
+                match llm_extractor.lock().unwrap().extract(&memory.content) {
+                    Ok(extraction) => {
+                        // Store extraction result as JSON
+                        let json = serde_json::to_string(&extraction).unwrap_or_default();
+                        memory.set_metadata("llm_extraction".to_string(), json);
+
+                        // Also populate entity_names for backward compatibility
+                        if !extraction.entities.is_empty() {
+                            let names: Vec<String> =
+                                extraction.entities.iter().map(|e| e.name.clone()).collect();
+                            memory.set_metadata(
+                                "entity_names".to_string(),
+                                serde_json::to_string(&names).unwrap_or_default(),
+                            );
+                        }
+
+                        tracing::debug!(
+                            "LLM extracted {} entities, {} topics, {} entity_facts from memory",
+                            extraction.entities.len(),
+                            extraction.topics.len(),
+                            extraction.entity_facts.len()
+                        );
+
+                        Some(extraction)
+                    }
+                    Err(e) => {
+                        tracing::warn!("LLM extraction failed: {}", e);
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+        // Step 0d: Python SLM metadata extraction (fallback if LLM extraction not available)
         // This extracts rich metadata using a Small Language Model for better retrieval
         #[cfg(feature = "slm")]
-        if let Some(ref slm_extractor) = self.slm_extractor {
-            match slm_extractor.lock().unwrap().extract(&memory.content) {
-                Ok(slm_metadata) => {
-                    // Store full SLM metadata as JSON
-                    let json = serde_json::to_string(&slm_metadata).unwrap_or_default();
-                    memory.set_metadata("slm_metadata".to_string(), json);
+        let slm_metadata_for_profiles: Option<SlmMetadata> = {
+            // Skip if LLM extraction already succeeded
+            #[cfg(feature = "entity-extraction")]
+            let llm_succeeded = llm_extraction_result.is_some();
+            #[cfg(not(feature = "entity-extraction"))]
+            let llm_succeeded = false;
 
-                    // Also populate entity_names for backward compatibility
-                    if !slm_metadata.entities.is_empty() {
-                        let names: Vec<String> = slm_metadata
-                            .entities
-                            .iter()
-                            .map(|e| e.name.clone())
-                            .collect();
-                        memory.set_metadata(
-                            "entity_names".to_string(),
-                            serde_json::to_string(&names).unwrap_or_default(),
+            if llm_succeeded {
+                None // LLM extraction takes precedence
+            } else if let Some(ref slm_extractor) = self.slm_extractor {
+                match slm_extractor.lock().unwrap().extract(&memory.content) {
+                    Ok(slm_metadata) => {
+                        // Store full SLM metadata as JSON
+                        let json = serde_json::to_string(&slm_metadata).unwrap_or_default();
+                        memory.set_metadata("slm_metadata".to_string(), json);
+
+                        // Also populate entity_names for backward compatibility
+                        if !slm_metadata.entities.is_empty() {
+                            let names: Vec<String> = slm_metadata
+                                .entities
+                                .iter()
+                                .map(|e| e.name.clone())
+                                .collect();
+                            memory.set_metadata(
+                                "entity_names".to_string(),
+                                serde_json::to_string(&names).unwrap_or_default(),
+                            );
+                        }
+
+                        tracing::debug!(
+                            "SLM extracted {} entities, {} topics, {} entity_facts from memory",
+                            slm_metadata.entities.len(),
+                            slm_metadata.topics.len(),
+                            slm_metadata.entity_facts.len()
                         );
-                    }
 
-                    tracing::debug!(
-                        "SLM extracted {} entities, {} topics from memory",
-                        slm_metadata.entities.len(),
-                        slm_metadata.topics.len()
-                    );
+                        Some(slm_metadata)
+                    }
+                    Err(e) => {
+                        // Log warning but continue - pattern-based extraction already done in 0a/0b
+                        tracing::warn!(
+                            "SLM extraction failed, using pattern-based extraction: {}",
+                            e
+                        );
+                        None
+                    }
                 }
-                Err(e) => {
-                    // Log warning but continue - pattern-based extraction already done in 0a/0b
-                    tracing::warn!("SLM extraction failed, using pattern-based extraction: {}", e);
-                }
+            } else {
+                None
             }
-        }
+        };
 
         // Step 1: Store memory (if this fails, nothing else happens)
         self.storage.store_memory(&memory)?;
+
+        // Step 1b: Update entity profiles from LLM extraction (if available)
+        #[cfg(feature = "entity-extraction")]
+        if let Some(ref extraction) = llm_extraction_result {
+            if let Err(e) = self.update_entity_profiles_from_llm(&id, extraction) {
+                tracing::warn!("Failed to update entity profiles from LLM: {}", e);
+                // Don't fail the entire ingestion - profiles are a bonus feature
+            }
+        }
+
+        // Step 1c: Update entity profiles from SLM entity_facts (if available and LLM didn't run)
+        #[cfg(feature = "slm")]
+        if let Some(ref slm_metadata) = slm_metadata_for_profiles {
+            if let Err(e) = self.update_entity_profiles_from_slm(&id, slm_metadata) {
+                tracing::warn!("Failed to update entity profiles: {}", e);
+                // Don't fail the entire ingestion - profiles are a bonus feature
+            }
+        }
 
         // Step 2: Add to vector index + persist immediately (rollback: delete from storage)
         if let Err(e) = self.add_to_vector_index(&id, &memory.embedding) {
@@ -345,11 +458,15 @@ impl IngestionPipeline {
             }
         }
 
-        // Step 5: Remove from causal graph
+        // Step 5b: Remove from causal graph
         {
             let mut graph = self.graph_manager.write().unwrap();
             graph.remove_memory_from_causal_graph(id);
         }
+
+        // Step 5c: Clean up entity profiles
+        // Remove any facts that came from this memory
+        self.cleanup_entity_profiles_for_memory(id)?;
 
         // Step 6: Persist vector index for crash recovery
         // This ensures deletions are durable
@@ -431,38 +548,10 @@ impl IngestionPipeline {
             })
             .collect();
 
-        // SLM metadata extraction (individual extraction for each memory)
-        // Note: For horizontal scaling, run multiple library instances rather than batching
-        #[cfg(feature = "slm")]
-        if let Some(ref slm_extractor) = self.slm_extractor {
-            let mut extractor = slm_extractor.lock().unwrap();
-            for memory in memories.iter_mut() {
-                match extractor.extract(&memory.content) {
-                    Ok(slm_metadata) => {
-                        let json = serde_json::to_string(&slm_metadata).unwrap_or_default();
-                        memory.set_metadata("slm_metadata".to_string(), json);
-
-                        if !slm_metadata.entities.is_empty() {
-                            let names: Vec<String> = slm_metadata
-                                .entities
-                                .iter()
-                                .map(|e| e.name.clone())
-                                .collect();
-                            memory.set_metadata(
-                                "entity_names".to_string(),
-                                serde_json::to_string(&names).unwrap_or_default(),
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "SLM extraction failed for memory, using patterns: {}",
-                            e
-                        );
-                    }
-                }
-            }
-        }
+        // Note: LLM/SLM extraction is NOT done in batch mode by design.
+        // Per architecture decision, model inference should be handled at the application layer.
+        // Use individual add() calls if you need LLM extraction.
+        // Batch add is optimized for fast bulk ingestion without extraction.
 
         // Lock vector index once for the entire batch
         let mut vector_index = self.vector_index.write().unwrap();
@@ -643,6 +732,11 @@ impl IngestionPipeline {
                     self.storage.store_entity(&entity)?;
                 }
             }
+        }
+
+        // Clean up entity profiles for all deleted memories
+        for id in &ids {
+            self.cleanup_entity_profiles_for_memory(id)?;
         }
 
         // Persist vector index once for entire batch
@@ -844,6 +938,188 @@ impl IngestionPipeline {
     fn save_graph(&self) -> Result<()> {
         let graph = self.graph_manager.read().unwrap();
         crate::graph::persist::save_graph(&graph, &self.storage)
+    }
+
+    /// Update entity profiles from LLM-extracted entity facts
+    ///
+    /// This creates or updates EntityProfiles based on the entity_facts extracted
+    /// by the native LLM at ingestion time. Each fact is associated with its source
+    /// memory for provenance tracking.
+    ///
+    /// # Arguments
+    ///
+    /// * `memory_id` - The memory that the facts were extracted from
+    /// * `extraction` - The LLM extraction result containing entity_facts
+    #[cfg(feature = "entity-extraction")]
+    fn update_entity_profiles_from_llm(
+        &self,
+        memory_id: &MemoryId,
+        extraction: &ExtractionResult,
+    ) -> Result<()> {
+        if extraction.entity_facts.is_empty() {
+            return Ok(());
+        }
+
+        for extracted_fact in &extraction.entity_facts {
+            // Get or create profile for this entity
+            let mut profile = self
+                .storage
+                .get_entity_profile(&extracted_fact.entity)?
+                .unwrap_or_else(|| {
+                    // Determine entity type from extraction entities if available
+                    let entity_type = extraction
+                        .entities
+                        .iter()
+                        .find(|e| e.name.eq_ignore_ascii_case(&extracted_fact.entity))
+                        .map(|e| e.entity_type.clone())
+                        .unwrap_or_else(|| "unknown".to_string());
+
+                    EntityProfile::new(
+                        EntityId::new(),
+                        extracted_fact.entity.clone(),
+                        entity_type,
+                    )
+                });
+
+            // Create EntityFact from ExtractedFact
+            let fact = EntityFact {
+                fact_type: extracted_fact.fact_type.clone(),
+                value: extracted_fact.value.clone(),
+                confidence: extracted_fact.confidence,
+                source_memory: memory_id.clone(),
+                extracted_at: Timestamp::now(),
+            };
+
+            // Add fact to profile
+            profile.add_fact(fact);
+
+            // Track source memory
+            profile.add_source_memory(memory_id.clone());
+
+            // Save profile
+            self.storage.store_entity_profile(&profile)?;
+
+            tracing::debug!(
+                "Updated entity profile '{}' with LLM fact: {} = {}",
+                extracted_fact.entity,
+                extracted_fact.fact_type,
+                extracted_fact.value
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Update entity profiles from SLM-extracted entity facts
+    ///
+    /// This creates or updates EntityProfiles based on the entity_facts extracted
+    /// by the SLM at ingestion time. Each fact is associated with its source memory
+    /// for provenance tracking.
+    ///
+    /// # Arguments
+    ///
+    /// * `memory_id` - The memory that the facts were extracted from
+    /// * `slm_metadata` - The SLM metadata containing entity_facts
+    #[cfg(feature = "slm")]
+    fn update_entity_profiles_from_slm(
+        &self,
+        memory_id: &MemoryId,
+        slm_metadata: &SlmMetadata,
+    ) -> Result<()> {
+        if slm_metadata.entity_facts.is_empty() {
+            return Ok(());
+        }
+
+        for extracted_fact in &slm_metadata.entity_facts {
+            // Get or create profile for this entity
+            let mut profile = self
+                .storage
+                .get_entity_profile(&extracted_fact.entity)?
+                .unwrap_or_else(|| {
+                    // Determine entity type from SLM entities if available
+                    let entity_type = slm_metadata
+                        .entities
+                        .iter()
+                        .find(|e| e.name.eq_ignore_ascii_case(&extracted_fact.entity))
+                        .map(|e| e.entity_type.clone())
+                        .unwrap_or_else(|| "unknown".to_string());
+
+                    EntityProfile::new(
+                        EntityId::new(),
+                        extracted_fact.entity.clone(),
+                        entity_type,
+                    )
+                });
+
+            // Create EntityFact from ExtractedEntityFact
+            let fact = EntityFact {
+                fact_type: extracted_fact.fact_type.clone(),
+                value: extracted_fact.value.clone(),
+                confidence: extracted_fact.confidence,
+                source_memory: memory_id.clone(),
+                extracted_at: Timestamp::now(),
+            };
+
+            // Add fact to profile
+            profile.add_fact(fact);
+
+            // Track source memory
+            profile.add_source_memory(memory_id.clone());
+
+            // Save profile
+            self.storage.store_entity_profile(&profile)?;
+
+            tracing::debug!(
+                "Updated entity profile '{}' with fact: {} = {}",
+                extracted_fact.entity,
+                extracted_fact.fact_type,
+                extracted_fact.value
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Clean up entity profiles when a memory is deleted
+    ///
+    /// This removes any facts from entity profiles that were extracted from
+    /// the deleted memory. If a profile becomes empty after cleanup, it is deleted.
+    ///
+    /// # Arguments
+    ///
+    /// * `memory_id` - The memory that was deleted
+    fn cleanup_entity_profiles_for_memory(&self, memory_id: &MemoryId) -> Result<()> {
+        // Get all entity profiles
+        let profiles = self.storage.list_entity_profiles()?;
+
+        for mut profile in profiles {
+            // Check if this profile has facts from the deleted memory
+            if !profile.source_memories.contains(memory_id) {
+                continue;
+            }
+
+            // Remove facts from this memory
+            profile.remove_facts_from_memory(memory_id);
+
+            // Check if profile is now empty
+            if profile.is_empty() {
+                // Delete the empty profile
+                self.storage.delete_entity_profile(&profile.name)?;
+                tracing::debug!(
+                    "Deleted empty entity profile '{}' after memory deletion",
+                    profile.name
+                );
+            } else {
+                // Save the updated profile
+                self.storage.store_entity_profile(&profile)?;
+                tracing::debug!(
+                    "Removed facts from profile '{}' for deleted memory",
+                    profile.name
+                );
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -1459,5 +1735,197 @@ mod tests {
         // Bob should exist
         let bob = pipeline.storage.find_entity_by_name("Bob").unwrap();
         assert!(bob.is_some());
+    }
+
+    // ========== Entity Profile Cleanup Tests ==========
+
+    #[test]
+    fn test_pipeline_delete_cleans_entity_profiles() {
+        let (pipeline, _dir) = create_test_pipeline();
+
+        // Add a memory
+        let memory = Memory::new("Test content".to_string(), vec![0.1; 384]);
+        let id = memory.id.clone();
+        pipeline.add(memory).unwrap();
+
+        // Manually create an entity profile with a fact from this memory
+        let mut profile = crate::types::EntityProfile::new(
+            crate::types::EntityId::new(),
+            "TestEntity".to_string(),
+            "concept".to_string(),
+        );
+        profile.add_fact(crate::types::EntityFact::new(
+            "test_fact",
+            "test_value",
+            0.9,
+            id.clone(),
+        ));
+        profile.add_source_memory(id.clone());
+        pipeline.storage.store_entity_profile(&profile).unwrap();
+
+        // Verify profile exists with the fact
+        let stored = pipeline.storage.get_entity_profile("TestEntity").unwrap().unwrap();
+        assert_eq!(stored.total_facts(), 1);
+        assert!(stored.source_memories.contains(&id));
+
+        // Delete the memory
+        let deleted = pipeline.delete(&id).unwrap();
+        assert!(deleted);
+
+        // Profile should now be empty and deleted
+        let profile_after = pipeline.storage.get_entity_profile("TestEntity").unwrap();
+        assert!(profile_after.is_none(), "Empty profile should be deleted");
+    }
+
+    #[test]
+    fn test_pipeline_delete_preserves_other_facts_in_profile() {
+        let (pipeline, _dir) = create_test_pipeline();
+
+        // Add two memories
+        let memory1 = Memory::new("Memory 1".to_string(), vec![0.1; 384]);
+        let id1 = memory1.id.clone();
+        pipeline.add(memory1).unwrap();
+
+        let memory2 = Memory::new("Memory 2".to_string(), vec![0.2; 384]);
+        let id2 = memory2.id.clone();
+        pipeline.add(memory2).unwrap();
+
+        // Create a profile with facts from both memories
+        let mut profile = crate::types::EntityProfile::new(
+            crate::types::EntityId::new(),
+            "SharedEntity".to_string(),
+            "concept".to_string(),
+        );
+        profile.add_fact(crate::types::EntityFact::new(
+            "fact_from_mem1",
+            "value1",
+            0.9,
+            id1.clone(),
+        ));
+        profile.add_fact(crate::types::EntityFact::new(
+            "fact_from_mem2",
+            "value2",
+            0.85,
+            id2.clone(),
+        ));
+        profile.add_source_memory(id1.clone());
+        profile.add_source_memory(id2.clone());
+        pipeline.storage.store_entity_profile(&profile).unwrap();
+
+        // Verify profile has both facts
+        let stored = pipeline.storage.get_entity_profile("SharedEntity").unwrap().unwrap();
+        assert_eq!(stored.total_facts(), 2);
+
+        // Delete memory1
+        pipeline.delete(&id1).unwrap();
+
+        // Profile should still exist with only mem2's fact
+        let profile_after = pipeline.storage.get_entity_profile("SharedEntity").unwrap().unwrap();
+        assert_eq!(profile_after.total_facts(), 1);
+        assert!(!profile_after.source_memories.contains(&id1));
+        assert!(profile_after.source_memories.contains(&id2));
+
+        // The remaining fact should be from memory2
+        let remaining_facts = profile_after.get_facts("fact_from_mem2");
+        assert_eq!(remaining_facts.len(), 1);
+        assert_eq!(remaining_facts[0].value, "value2");
+    }
+
+    #[test]
+    fn test_pipeline_delete_nonexistent_memory_doesnt_affect_profiles() {
+        let (pipeline, _dir) = create_test_pipeline();
+
+        // Create a profile with some facts
+        let memory_id = MemoryId::new();
+        let mut profile = crate::types::EntityProfile::new(
+            crate::types::EntityId::new(),
+            "PersistentEntity".to_string(),
+            "concept".to_string(),
+        );
+        profile.add_fact(crate::types::EntityFact::new(
+            "test_fact",
+            "test_value",
+            0.9,
+            memory_id.clone(),
+        ));
+        profile.add_source_memory(memory_id);
+        pipeline.storage.store_entity_profile(&profile).unwrap();
+
+        // Try to delete a nonexistent memory
+        let fake_id = MemoryId::new();
+        let deleted = pipeline.delete(&fake_id).unwrap();
+        assert!(!deleted);
+
+        // Profile should be unchanged
+        let profile_after = pipeline.storage.get_entity_profile("PersistentEntity").unwrap().unwrap();
+        assert_eq!(profile_after.total_facts(), 1);
+    }
+
+    #[test]
+    fn test_pipeline_delete_batch_cleans_profiles() {
+        let (pipeline, _dir) = create_test_pipeline();
+
+        // Add three memories
+        let memory1 = Memory::new("Memory 1".to_string(), vec![0.1; 384]);
+        let id1 = memory1.id.clone();
+        pipeline.add(memory1).unwrap();
+
+        let memory2 = Memory::new("Memory 2".to_string(), vec![0.2; 384]);
+        let id2 = memory2.id.clone();
+        pipeline.add(memory2).unwrap();
+
+        let memory3 = Memory::new("Memory 3".to_string(), vec![0.3; 384]);
+        let id3 = memory3.id.clone();
+        pipeline.add(memory3).unwrap();
+
+        // Create profiles with facts from different memories
+        let mut profile1 = crate::types::EntityProfile::new(
+            crate::types::EntityId::new(),
+            "Entity1".to_string(),
+            "concept".to_string(),
+        );
+        profile1.add_fact(crate::types::EntityFact::new(
+            "fact1",
+            "value1",
+            0.9,
+            id1.clone(),
+        ));
+        profile1.add_source_memory(id1.clone());
+        pipeline.storage.store_entity_profile(&profile1).unwrap();
+
+        let mut profile2 = crate::types::EntityProfile::new(
+            crate::types::EntityId::new(),
+            "Entity2".to_string(),
+            "concept".to_string(),
+        );
+        profile2.add_fact(crate::types::EntityFact::new(
+            "fact2",
+            "value2",
+            0.85,
+            id2.clone(),
+        ));
+        profile2.add_fact(crate::types::EntityFact::new(
+            "fact3",
+            "value3",
+            0.8,
+            id3.clone(),
+        ));
+        profile2.add_source_memory(id2.clone());
+        profile2.add_source_memory(id3.clone());
+        pipeline.storage.store_entity_profile(&profile2).unwrap();
+
+        // Delete memories 1 and 2
+        let deleted = pipeline.delete_batch(vec![id1.clone(), id2.clone()]).unwrap();
+        assert_eq!(deleted, 2);
+
+        // Entity1 profile should be deleted (only had facts from id1)
+        assert!(pipeline.storage.get_entity_profile("Entity1").unwrap().is_none());
+
+        // Entity2 profile should exist with only id3's fact
+        let profile2_after = pipeline.storage.get_entity_profile("Entity2").unwrap().unwrap();
+        assert_eq!(profile2_after.total_facts(), 1);
+        assert!(profile2_after.source_memories.contains(&id3));
+        assert!(!profile2_after.source_memories.contains(&id1));
+        assert!(!profile2_after.source_memories.contains(&id2));
     }
 }

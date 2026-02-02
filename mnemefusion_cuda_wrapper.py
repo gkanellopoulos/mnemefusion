@@ -37,6 +37,14 @@ def setup_cuda() -> bool:
 
     print(f"[CUDA] Setting up from: {CUDA_BIN_X64}")
 
+    # Set CUDA environment variables
+    os.environ['CUDA_PATH'] = str(CUDA_PATH)
+    os.environ['CUDA_HOME'] = str(CUDA_PATH)
+    os.environ['CUDA_TOOLKIT_ROOT_DIR'] = str(CUDA_PATH)
+    os.environ['CUDA_VISIBLE_DEVICES'] = '0'  # Use first GPU
+    os.environ['GGML_CUDA_FORCE_CUBLAS'] = '1'  # Force cuBLAS
+    os.environ['CUDA_LAUNCH_BLOCKING'] = '1'  # Synchronous execution
+
     # Add CUDA path to DLL search path (Windows 10+)
     try:
         dll_add = windll.kernel32.AddDllDirectory

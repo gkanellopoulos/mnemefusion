@@ -117,6 +117,18 @@ pub enum Error {
     /// SLM timeout error
     #[error("SLM inference timeout after {0}ms")]
     SlmTimeout(u64),
+
+    /// Model file not found (entity extraction)
+    #[error("Model not found: {0}")]
+    ModelNotFound(String),
+
+    /// Native inference error (llama.cpp)
+    #[error("Inference error: {0}")]
+    InferenceError(String),
+
+    /// Entity extraction feature not available
+    #[error("Entity extraction feature not available - compile with 'entity-extraction' feature")]
+    EntityExtractionNotAvailable,
 }
 
 /// Result type alias for MnemeFusion operations

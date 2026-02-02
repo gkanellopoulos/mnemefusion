@@ -11,6 +11,7 @@ use crate::{
     query::{
         fusion::{FusedResult, FusionEngine},
         intent::{IntentClassification, IntentClassifier},
+        profile_search::ProfileSearch,
     },
     storage::StorageEngine,
     types::{Memory, MemoryId, MetadataFilter, Timestamp},
@@ -33,6 +34,8 @@ pub struct QueryPlanner {
     slm_query_classification_enabled: bool,
     fusion_engine: FusionEngine,
     semantic_prefilter_threshold: f32,
+    /// Profile-based search for entity fact lookup
+    profile_search: ProfileSearch,
 }
 
 impl QueryPlanner {
@@ -74,6 +77,9 @@ impl QueryPlanner {
             None
         };
 
+        // Create profile search engine
+        let profile_search = ProfileSearch::new(Arc::clone(&storage));
+
         Ok(Self {
             storage,
             vector_index,
@@ -89,6 +95,7 @@ impl QueryPlanner {
                 .with_strategy(fusion_strategy)
                 .with_rrf_k(rrf_k),
             semantic_prefilter_threshold,
+            profile_search,
         })
     }
 
@@ -215,6 +222,21 @@ impl QueryPlanner {
         let mut temporal_scores = self.temporal_search(query_text, limit * fetch_multiplier)?;
         let mut causal_scores = self.causal_search(query_text, limit * fetch_multiplier)?;
         let mut entity_scores = self.entity_search(query_text, limit * fetch_multiplier)?;
+
+        // Step 2.2: Profile-based search for direct fact lookup (Phase 3)
+        // Boost entity_scores with profile matches - memories that are sources of
+        // matching facts get significant priority
+        let profile_scores = self.profile_search(query_text, limit * fetch_multiplier)?;
+        for (memory_id, profile_score) in profile_scores {
+            entity_scores
+                .entry(memory_id)
+                .and_modify(|s| {
+                    // Boost existing entity score with profile score
+                    // Use max to prefer profile-based matches
+                    *s = (*s + profile_score * 0.5).min(1.0);
+                })
+                .or_insert(profile_score);
+        }
 
         // Step 2.3: Pre-fusion semantic filtering (Sprint 18 Task 18.1)
         // Filter out low-quality semantic matches before fusion to improve precision
@@ -406,6 +428,30 @@ impl QueryPlanner {
             return Ok((intent, vec![]));
         }
 
+        // Step 2.5: Look up entity profile for fact-based boosting
+        // If the entity has a profile with matching facts, boost those memories
+        let profile_boost_memories: HashMap<MemoryId, f32> = {
+            let mut boost_map = HashMap::new();
+            if let Some(profile) = self.storage.get_entity_profile(entity_name)? {
+                // Detect fact types from query
+                let fact_types = self.profile_search.detect_fact_types(query_text);
+
+                if !fact_types.is_empty() {
+                    // Boost memories with matching facts
+                    for fact_type in &fact_types {
+                        for fact in profile.get_facts(fact_type) {
+                            let confidence = fact.confidence;
+                            boost_map
+                                .entry(fact.source_memory.clone())
+                                .and_modify(|s: &mut f32| *s = (*s + confidence).min(1.0))
+                                .or_insert(confidence);
+                        }
+                    }
+                }
+            }
+            boost_map
+        };
+
         // Step 3: Calculate scores for each memory
         let mut scored_results = Vec::new();
 
@@ -448,9 +494,25 @@ impl QueryPlanner {
                     .unwrap_or(0.0)
             };
 
+            // Check for profile-based boost
+            let profile_boost = profile_boost_memories
+                .get(&memory_id)
+                .copied()
+                .unwrap_or(0.0);
+
             // Combined score: prioritize semantic similarity with keyword boost
             // For entity queries, we want memories that mention the entity AND match query semantics
-            let combined_score = 0.7 * semantic_score + 0.3 * bm25_score;
+            // Profile boost significantly increases score for memories with matching facts
+            let base_score = 0.7 * semantic_score + 0.3 * bm25_score;
+            let combined_score = if profile_boost > 0.0 {
+                // Significant boost for profile matches - these are direct fact sources
+                (base_score + profile_boost * 0.5).min(1.0)
+            } else {
+                base_score
+            };
+
+            // Higher confidence for profile-matched memories
+            let confidence = if profile_boost > 0.0 { 0.95 } else { 0.9 };
 
             scored_results.push(FusedResult {
                 id: memory_id.clone(),
@@ -458,9 +520,9 @@ impl QueryPlanner {
                 bm25_score,
                 temporal_score: 0.0,
                 causal_score: 0.0,
-                entity_score: 1.0, // All results mention the entity
+                entity_score: 1.0 + profile_boost, // Boost entity score for profile matches
                 fused_score: combined_score,
-                confidence: 0.9, // High confidence since we know the entity is mentioned
+                confidence,
             });
         }
 
@@ -751,6 +813,21 @@ impl QueryPlanner {
         } else {
             0.0
         }
+    }
+
+    /// Perform profile-based search using Entity Profiles
+    ///
+    /// Looks up Entity Profiles for entities mentioned in the query and
+    /// returns source memories of matching facts. This enables direct fact
+    /// lookup instead of relying on semantic similarity.
+    ///
+    /// For example, query "What is Caroline researching?" will:
+    /// 1. Detect entity "Caroline"
+    /// 2. Detect fact_type "research_topic" from "researching"
+    /// 3. Look up Caroline's profile
+    /// 4. Return memories that are sources of her research_topic facts
+    fn profile_search(&self, query_text: &str, limit: usize) -> Result<HashMap<MemoryId, f32>> {
+        self.profile_search.search(query_text, limit)
     }
 
     /// Perform causal language-based search using SLM metadata with pattern fallback

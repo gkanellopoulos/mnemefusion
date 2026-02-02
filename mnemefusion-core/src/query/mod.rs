@@ -13,6 +13,7 @@ pub mod fusion;
 pub mod graph_traversal;
 pub mod intent;
 pub mod planner;
+pub mod profile_search;
 pub mod reranker;
 
 pub use aggregator::{MultiTurnAggregator, QueryType};
@@ -22,4 +23,5 @@ pub use fusion::{
 pub use graph_traversal::{GraphTraversal, TraversalConfig};
 pub use intent::{IntentClassification, IntentClassifier, QueryIntent};
 pub use planner::QueryPlanner;
+pub use profile_search::{FactTypeDetector, ProfileSearch};
 pub use reranker::HeuristicReranker;

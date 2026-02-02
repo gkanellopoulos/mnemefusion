@@ -3,7 +3,7 @@
 //! Wraps redb and provides CRUD operations for memories and indexes.
 
 use crate::{
-    types::{Entity, EntityId, Memory, MemoryId, Timestamp},
+    types::{Entity, EntityId, EntityProfile, Memory, MemoryId, Timestamp},
     Error, Result,
 };
 use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
@@ -24,6 +24,7 @@ const ENTITY_NAMES: TableDefinition<&str, &[u8]> = TableDefinition::new("entity_
 const CONTENT_HASH_INDEX: TableDefinition<&str, &[u8]> = TableDefinition::new("content_hash_index");
 const LOGICAL_KEY_INDEX: TableDefinition<&str, &[u8]> = TableDefinition::new("logical_key_index");
 const METADATA_INDEX: TableDefinition<&str, &[u8]> = TableDefinition::new("metadata_index");
+const ENTITY_PROFILES: TableDefinition<&str, &[u8]> = TableDefinition::new("entity_profiles");
 
 /// Storage engine wrapper around redb
 ///
@@ -90,6 +91,7 @@ impl StorageEngine {
             let _ = write_txn.open_table(CONTENT_HASH_INDEX)?;
             let _ = write_txn.open_table(LOGICAL_KEY_INDEX)?;
             let _ = write_txn.open_table(METADATA_INDEX)?;
+            let _ = write_txn.open_table(ENTITY_PROFILES)?;
         }
         write_txn.commit()?;
         Ok(())
@@ -196,6 +198,13 @@ impl StorageEngine {
         if let Err(e) = read_txn.open_table(METADATA_INDEX) {
             return Err(Error::DatabaseCorruption(format!(
                 "Required table 'metadata_index' is missing or corrupt: {}",
+                e
+            )));
+        }
+
+        if let Err(e) = read_txn.open_table(ENTITY_PROFILES) {
+            return Err(Error::DatabaseCorruption(format!(
+                "Required table 'entity_profiles' is missing or corrupt: {}",
                 e
             )));
         }
@@ -1005,6 +1014,124 @@ impl StorageEngine {
 
         Ok(())
     }
+
+    // Entity Profile operations
+
+    /// Store an entity profile
+    ///
+    /// Profiles are keyed by the normalized (lowercase) entity name for
+    /// case-insensitive lookups.
+    ///
+    /// # Arguments
+    ///
+    /// * `profile` - The entity profile to store
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let profile = EntityProfile::new(EntityId::new(), "Alice".into(), "person".into());
+    /// storage.store_entity_profile(&profile)?;
+    /// ```
+    pub fn store_entity_profile(&self, profile: &EntityProfile) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(ENTITY_PROFILES)?;
+            let key = profile.name.to_lowercase();
+            let data =
+                serde_json::to_vec(profile).map_err(|e| Error::Serialization(e.to_string()))?;
+            table.insert(key.as_str(), data.as_slice())?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Get an entity profile by name (case-insensitive)
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The entity name to look up
+    ///
+    /// # Returns
+    ///
+    /// The entity profile if found, or None
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let profile = storage.get_entity_profile("Alice")?;
+    /// if let Some(p) = profile {
+    ///     println!("Found profile for {}", p.name);
+    /// }
+    /// ```
+    pub fn get_entity_profile(&self, name: &str) -> Result<Option<EntityProfile>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(ENTITY_PROFILES)?;
+        let key = name.to_lowercase();
+
+        match table.get(key.as_str())? {
+            Some(data) => {
+                let profile: EntityProfile = serde_json::from_slice(data.value())
+                    .map_err(|e| Error::Deserialization(e.to_string()))?;
+                Ok(Some(profile))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// List all entity profiles
+    ///
+    /// # Returns
+    ///
+    /// Vector of all entity profiles in the database
+    ///
+    /// # Performance
+    ///
+    /// O(n) where n = number of profiles. Use with caution on large databases.
+    pub fn list_entity_profiles(&self) -> Result<Vec<EntityProfile>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(ENTITY_PROFILES)?;
+
+        let mut profiles = Vec::new();
+        for result in table.iter()? {
+            let (_, value) = result?;
+            let profile: EntityProfile = serde_json::from_slice(value.value())
+                .map_err(|e| Error::Deserialization(e.to_string()))?;
+            profiles.push(profile);
+        }
+        Ok(profiles)
+    }
+
+    /// Delete an entity profile by name (case-insensitive)
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The entity name to delete
+    ///
+    /// # Returns
+    ///
+    /// true if the profile was deleted, false if it didn't exist
+    pub fn delete_entity_profile(&self, name: &str) -> Result<bool> {
+        let write_txn = self.db.begin_write()?;
+        let deleted = {
+            let mut table = write_txn.open_table(ENTITY_PROFILES)?;
+            let key = name.to_lowercase();
+            let result = table.remove(key.as_str())?;
+            result.is_some()
+        };
+        write_txn.commit()?;
+        Ok(deleted)
+    }
+
+    /// Count entity profiles
+    ///
+    /// # Returns
+    ///
+    /// Number of entity profiles in the database
+    pub fn count_entity_profiles(&self) -> Result<usize> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(ENTITY_PROFILES)?;
+        Ok(table.len()? as usize)
+    }
 }
 
 // Add serde_json for metadata serialization
@@ -1585,5 +1712,247 @@ mod tests {
 
         // Verify header is valid
         assert!(engine.validate_database().is_ok());
+    }
+
+    // Entity Profile tests
+
+    #[test]
+    fn test_entity_profile_store_and_retrieve() {
+        use crate::types::{EntityFact, EntityId, EntityProfile};
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = StorageEngine::open(&path).unwrap();
+
+        // Create a profile
+        let entity_id = EntityId::new();
+        let mut profile = EntityProfile::new(
+            entity_id.clone(),
+            "Alice".to_string(),
+            "person".to_string(),
+        );
+
+        // Add a fact
+        let memory_id = MemoryId::new();
+        profile.add_fact(EntityFact::new(
+            "occupation",
+            "engineer",
+            0.9,
+            memory_id.clone(),
+        ));
+        profile.add_source_memory(memory_id);
+
+        // Store
+        engine.store_entity_profile(&profile).unwrap();
+
+        // Retrieve
+        let retrieved = engine.get_entity_profile("Alice").unwrap();
+        assert!(retrieved.is_some());
+
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.name, "Alice");
+        assert_eq!(retrieved.entity_type, "person");
+        assert_eq!(retrieved.facts.get("occupation").unwrap().len(), 1);
+        assert_eq!(retrieved.facts.get("occupation").unwrap()[0].value, "engineer");
+    }
+
+    #[test]
+    fn test_entity_profile_case_insensitive_lookup() {
+        use crate::types::{EntityId, EntityProfile};
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = StorageEngine::open(&path).unwrap();
+
+        let profile = EntityProfile::new(
+            EntityId::new(),
+            "Alice".to_string(),
+            "person".to_string(),
+        );
+        engine.store_entity_profile(&profile).unwrap();
+
+        // Case-insensitive lookup
+        assert!(engine.get_entity_profile("alice").unwrap().is_some());
+        assert!(engine.get_entity_profile("ALICE").unwrap().is_some());
+        assert!(engine.get_entity_profile("Alice").unwrap().is_some());
+        assert!(engine.get_entity_profile("aLiCe").unwrap().is_some());
+    }
+
+    #[test]
+    fn test_entity_profile_not_found() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = StorageEngine::open(&path).unwrap();
+
+        let result = engine.get_entity_profile("Nonexistent").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_entity_profile_list() {
+        use crate::types::{EntityId, EntityProfile};
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = StorageEngine::open(&path).unwrap();
+
+        // Create and store profiles
+        let profile1 = EntityProfile::new(
+            EntityId::new(),
+            "Alice".to_string(),
+            "person".to_string(),
+        );
+        let profile2 = EntityProfile::new(
+            EntityId::new(),
+            "Bob".to_string(),
+            "person".to_string(),
+        );
+        let profile3 = EntityProfile::new(
+            EntityId::new(),
+            "Acme Corp".to_string(),
+            "organization".to_string(),
+        );
+
+        engine.store_entity_profile(&profile1).unwrap();
+        engine.store_entity_profile(&profile2).unwrap();
+        engine.store_entity_profile(&profile3).unwrap();
+
+        // List all
+        let profiles = engine.list_entity_profiles().unwrap();
+        assert_eq!(profiles.len(), 3);
+
+        let names: Vec<_> = profiles.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"Alice"));
+        assert!(names.contains(&"Bob"));
+        assert!(names.contains(&"Acme Corp"));
+    }
+
+    #[test]
+    fn test_entity_profile_delete() {
+        use crate::types::{EntityId, EntityProfile};
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = StorageEngine::open(&path).unwrap();
+
+        let profile = EntityProfile::new(
+            EntityId::new(),
+            "Alice".to_string(),
+            "person".to_string(),
+        );
+        engine.store_entity_profile(&profile).unwrap();
+
+        // Verify it exists
+        assert!(engine.get_entity_profile("Alice").unwrap().is_some());
+
+        // Delete
+        let deleted = engine.delete_entity_profile("Alice").unwrap();
+        assert!(deleted);
+
+        // Verify it's gone
+        assert!(engine.get_entity_profile("Alice").unwrap().is_none());
+
+        // Deleting non-existent returns false
+        let deleted = engine.delete_entity_profile("Alice").unwrap();
+        assert!(!deleted);
+    }
+
+    #[test]
+    fn test_entity_profile_count() {
+        use crate::types::{EntityId, EntityProfile};
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = StorageEngine::open(&path).unwrap();
+
+        assert_eq!(engine.count_entity_profiles().unwrap(), 0);
+
+        engine.store_entity_profile(&EntityProfile::new(
+            EntityId::new(),
+            "Alice".to_string(),
+            "person".to_string(),
+        )).unwrap();
+        assert_eq!(engine.count_entity_profiles().unwrap(), 1);
+
+        engine.store_entity_profile(&EntityProfile::new(
+            EntityId::new(),
+            "Bob".to_string(),
+            "person".to_string(),
+        )).unwrap();
+        assert_eq!(engine.count_entity_profiles().unwrap(), 2);
+    }
+
+    #[test]
+    fn test_entity_profile_update() {
+        use crate::types::{EntityFact, EntityId, EntityProfile};
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = StorageEngine::open(&path).unwrap();
+
+        // Create initial profile
+        let entity_id = EntityId::new();
+        let mut profile = EntityProfile::new(
+            entity_id.clone(),
+            "Alice".to_string(),
+            "person".to_string(),
+        );
+        profile.add_fact(EntityFact::new(
+            "occupation",
+            "engineer",
+            0.9,
+            MemoryId::new(),
+        ));
+        engine.store_entity_profile(&profile).unwrap();
+
+        // Update profile with new fact
+        profile.add_fact(EntityFact::new(
+            "skill",
+            "Rust",
+            0.85,
+            MemoryId::new(),
+        ));
+        engine.store_entity_profile(&profile).unwrap();
+
+        // Retrieve and verify update
+        let retrieved = engine.get_entity_profile("Alice").unwrap().unwrap();
+        assert_eq!(retrieved.facts.len(), 2);
+        assert!(retrieved.facts.contains_key("occupation"));
+        assert!(retrieved.facts.contains_key("skill"));
+    }
+
+    #[test]
+    fn test_entity_profile_persistence() {
+        use crate::types::{EntityFact, EntityId, EntityProfile};
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+
+        let entity_id = EntityId::new();
+
+        // Create and store profile
+        {
+            let engine = StorageEngine::open(&path).unwrap();
+            let mut profile = EntityProfile::new(
+                entity_id.clone(),
+                "Alice".to_string(),
+                "person".to_string(),
+            );
+            profile.add_fact(EntityFact::new(
+                "occupation",
+                "engineer",
+                0.9,
+                MemoryId::new(),
+            ));
+            engine.store_entity_profile(&profile).unwrap();
+        }
+
+        // Reopen and verify
+        {
+            let engine = StorageEngine::open(&path).unwrap();
+            let retrieved = engine.get_entity_profile("Alice").unwrap().unwrap();
+            assert_eq!(retrieved.name, "Alice");
+            assert_eq!(retrieved.facts.get("occupation").unwrap()[0].value, "engineer");
+        }
     }
 }

@@ -53,6 +53,14 @@ pub mod storage;
 pub mod types;
 pub mod util;
 
+// Native LLM inference module (only available with entity-extraction feature)
+#[cfg(feature = "entity-extraction")]
+pub mod inference;
+
+// Entity extraction module (only available with entity-extraction feature)
+#[cfg(feature = "entity-extraction")]
+pub mod extraction;
+
 // Public API exports
 pub use config::Config;
 pub use error::{Error, Result};
@@ -71,6 +79,14 @@ pub use slm::{SlmClassifier, SlmConfig};
 
 #[cfg(not(feature = "slm"))]
 pub use slm::SlmConfig; // Config always available, but SlmClassifier only with feature
+
+// Native inference exports (only available with entity-extraction feature)
+#[cfg(feature = "entity-extraction")]
+pub use inference::{InferenceEngine, JsonGrammar};
+
+// Entity extraction exports (only available with entity-extraction feature)
+#[cfg(feature = "entity-extraction")]
+pub use extraction::{ExtractedEntity, ExtractedFact, ExtractionResult, LlmEntityExtractor, ModelTier};
 
 pub use types::{
     AddResult, BatchError, BatchResult, Entity, EntityId, FilterOp, Memory, MemoryId, MemoryInput,

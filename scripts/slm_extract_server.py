@@ -73,16 +73,17 @@ def extract_metadata(model: Llama, content: str) -> dict:
     if len(content) > max_content_len:
         content = content[:max_content_len] + "..."
 
-    # Compact prompt for faster inference
-    prompt = f"""<|im_start|>system
-Extract metadata as JSON.<|im_end|>
+    # Few-shot prompt with single example
+    prompt = f"""<|im_start|>user
+Text: "Alice researches climate change and lives in Boston"
+JSON:<|im_end|>
+<|im_start|>assistant
+{{"entities":["Alice"],"topics":["climate"],"entity_facts":[{{"entity":"Alice","fact_type":"research_topic","value":"climate change"}},{{"entity":"Alice","fact_type":"location","value":"Boston"}}]}}<|im_end|>
 <|im_start|>user
 Text: "{content}"
-
-JSON format: {{"entities":[{{"name":"X","role":"subject","entity_type":"person"}}],"temporal":{{"markers":[]}},"topics":[],"importance":0.5}}
-Extract:<|im_end|>
+JSON:<|im_end|>
 <|im_start|>assistant
-"""
+{{"""
 
     # Generate with reduced max_tokens for speed
     output = model(
@@ -94,6 +95,9 @@ Extract:<|im_end|>
     )
 
     text = output['choices'][0]['text'].strip()
+
+    # Prepend the opening brace we used to prime the model
+    text = "{" + text
 
     # Remove markdown code blocks if present
     if text.startswith('```'):
@@ -151,10 +155,34 @@ Extract:<|im_end|>
                         except json.JSONDecodeError:
                             continue
 
-        # Fixup 3: If still failing, try to extract just the values we need
+        # Fixup 3: Try regex extraction of entity_facts
         if result is None:
-            print("[SLM-EXTRACT] All JSON parsing failed, using empty result", file=sys.stderr)
             result = {}
+            # Try to extract entity_facts using regex
+            entity_fact_pattern = r'"entity"\s*:\s*"([^"]+)"\s*,\s*"fact_type"\s*:\s*"([^"]+)"\s*,\s*"value"\s*:\s*"([^"]+)"'
+            matches = re.findall(entity_fact_pattern, text)
+            if matches:
+                result["entity_facts"] = [
+                    {"entity": m[0], "fact_type": m[1], "value": m[2], "confidence": 0.7}
+                    for m in matches
+                ]
+                print(f"[SLM-EXTRACT] Regex extracted {len(matches)} entity_facts", file=sys.stderr)
+
+            # Try to extract entities
+            entity_pattern = r'"name"\s*:\s*"([^"]+)"'
+            entity_matches = re.findall(entity_pattern, text)
+            if entity_matches:
+                result["entities"] = [{"name": e, "role": "subject", "entity_type": "person"} for e in entity_matches[:5]]
+
+            # Try to extract topics
+            topic_pattern = r'"topics"\s*:\s*\[([^\]]+)\]'
+            topic_match = re.search(topic_pattern, text)
+            if topic_match:
+                topics = re.findall(r'"([^"]+)"', topic_match.group(1))
+                result["topics"] = topics[:5]
+
+            if not result:
+                print("[SLM-EXTRACT] All extraction failed, using empty result", file=sys.stderr)
 
     # Validate and normalize the result
     result = normalize_metadata(result)
@@ -182,6 +210,7 @@ def normalize_metadata(result: dict) -> dict:
         },
         "topics": [],
         "importance": 0.5,
+        "entity_facts": [],
         "schema_version": 1
     }
 
@@ -223,6 +252,22 @@ def normalize_metadata(result: dict) -> dict:
     if "topics" in result and isinstance(result["topics"], list):
         normalized["topics"] = [str(t) for t in result["topics"]]
 
+    # Copy entity_facts
+    if "entity_facts" in result and isinstance(result["entity_facts"], list):
+        for fact in result["entity_facts"]:
+            if isinstance(fact, dict) and "entity" in fact and "fact_type" in fact and "value" in fact:
+                try:
+                    confidence = float(fact.get("confidence", 0.5))
+                    confidence = max(0.0, min(1.0, confidence))
+                except (TypeError, ValueError):
+                    confidence = 0.5
+                normalized["entity_facts"].append({
+                    "entity": str(fact.get("entity", "")),
+                    "fact_type": str(fact.get("fact_type", "")),
+                    "value": str(fact.get("value", "")),
+                    "confidence": confidence
+                })
+
     # Copy importance
     if "importance" in result:
         try:
@@ -252,6 +297,7 @@ def get_error_result(error_msg: str) -> dict:
         },
         "topics": [],
         "importance": 0.5,
+        "entity_facts": [],
         "schema_version": 1
     }
 

@@ -53,6 +53,11 @@ pub struct SlmMetadata {
     /// Importance score (0.0 to 1.0)
     pub importance: f32,
 
+    /// Entity-specific facts extracted from content
+    /// These are structured facts about entities that enable direct lookup
+    /// e.g., "Caroline researches adoption agencies" -> {entity: "Caroline", fact_type: "research_topic", value: "adoption agencies"}
+    pub entity_facts: Vec<ExtractedEntityFact>,
+
     /// Schema version for future migrations
     pub schema_version: u32,
 }
@@ -65,7 +70,48 @@ impl Default for SlmMetadata {
             causal: CausalMetadata::default(),
             topics: Vec::new(),
             importance: 0.5,
+            entity_facts: Vec::new(),
             schema_version: 1,
+        }
+    }
+}
+
+/// A fact about an entity extracted from the content
+///
+/// Entity facts enable direct fact lookup instead of relying on semantic similarity.
+/// For example, "Caroline researches adoption agencies" extracts:
+/// - entity: "Caroline"
+/// - fact_type: "research_topic"
+/// - value: "adoption agencies"
+/// - confidence: 0.9
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ExtractedEntityFact {
+    /// Entity name this fact is about
+    pub entity: String,
+
+    /// Fact type: "research_topic", "occupation", "relationship", "goal", "preference", etc.
+    pub fact_type: String,
+
+    /// Fact value
+    pub value: String,
+
+    /// Confidence (0.0-1.0)
+    pub confidence: f32,
+}
+
+impl ExtractedEntityFact {
+    /// Create a new extracted entity fact
+    pub fn new(
+        entity: impl Into<String>,
+        fact_type: impl Into<String>,
+        value: impl Into<String>,
+        confidence: f32,
+    ) -> Self {
+        Self {
+            entity: entity.into(),
+            fact_type: fact_type.into(),
+            value: value.into(),
+            confidence: confidence.clamp(0.0, 1.0),
         }
     }
 }
@@ -592,6 +638,32 @@ impl SlmMetadataExtractor {
             })
             .unwrap_or_default();
 
+        // Parse entity_facts
+        let entity_facts: Vec<ExtractedEntityFact> = parsed
+            .get("entity_facts")
+            .and_then(|f| f.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|fact| {
+                        let entity = fact.get("entity")?.as_str()?;
+                        let fact_type = fact.get("fact_type")?.as_str()?;
+                        let value = fact.get("value")?.as_str()?;
+                        let confidence = fact
+                            .get("confidence")
+                            .and_then(|c| c.as_f64())
+                            .unwrap_or(0.5) as f32;
+
+                        Some(ExtractedEntityFact {
+                            entity: entity.to_string(),
+                            fact_type: fact_type.to_string(),
+                            value: value.to_string(),
+                            confidence: confidence.clamp(0.0, 1.0),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         // Parse importance
         let importance = parsed
             .get("importance")
@@ -610,6 +682,7 @@ impl SlmMetadataExtractor {
             causal,
             topics,
             importance: importance.clamp(0.0, 1.0),
+            entity_facts,
             schema_version,
         })
     }
@@ -661,6 +734,7 @@ mod tests {
         let metadata = SlmMetadata::default();
         assert!(metadata.entities.is_empty());
         assert!(metadata.topics.is_empty());
+        assert!(metadata.entity_facts.is_empty());
         assert_eq!(metadata.importance, 0.5);
         assert_eq!(metadata.schema_version, 1);
     }
@@ -687,6 +761,9 @@ mod tests {
             },
             topics: vec!["meetings".to_string(), "weather".to_string()],
             importance: 0.8,
+            entity_facts: vec![
+                ExtractedEntityFact::new("Alice", "occupation", "engineer", 0.9),
+            ],
             schema_version: 1,
         };
 
@@ -695,12 +772,39 @@ mod tests {
         assert!(json.contains("Alice"));
         assert!(json.contains("yesterday"));
         assert!(json.contains("because"));
+        assert!(json.contains("occupation"));
+        assert!(json.contains("engineer"));
 
         // Deserialize back
         let parsed: SlmMetadata = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.entities.len(), 1);
         assert_eq!(parsed.entities[0].name, "Alice");
         assert_eq!(parsed.importance, 0.8);
+        assert_eq!(parsed.entity_facts.len(), 1);
+        assert_eq!(parsed.entity_facts[0].entity, "Alice");
+        assert_eq!(parsed.entity_facts[0].fact_type, "occupation");
+    }
+
+    #[test]
+    fn test_extracted_entity_fact_new() {
+        let fact = ExtractedEntityFact::new("Caroline", "research_topic", "adoption agencies", 0.9);
+
+        assert_eq!(fact.entity, "Caroline");
+        assert_eq!(fact.fact_type, "research_topic");
+        assert_eq!(fact.value, "adoption agencies");
+        assert_eq!(fact.confidence, 0.9);
+    }
+
+    #[test]
+    fn test_extracted_entity_fact_confidence_clamping() {
+        let fact1 = ExtractedEntityFact::new("Test", "type", "value", 1.5);
+        assert_eq!(fact1.confidence, 1.0);
+
+        let fact2 = ExtractedEntityFact::new("Test", "type", "value", -0.5);
+        assert_eq!(fact2.confidence, 0.0);
+
+        let fact3 = ExtractedEntityFact::new("Test", "type", "value", 0.75);
+        assert_eq!(fact3.confidence, 0.75);
     }
 
     #[test]
@@ -750,6 +854,10 @@ mod tests {
                 "has_implicit_causation": false
             },
             "topics": ["work", "meetings"],
+            "entity_facts": [
+                {"entity": "Caroline", "fact_type": "research_topic", "value": "adoption agencies", "confidence": 0.9},
+                {"entity": "Caroline", "fact_type": "goal", "value": "find biological parents", "confidence": 0.85}
+            ],
             "importance": 0.7,
             "schema_version": 1
         }"#;
@@ -771,6 +879,13 @@ mod tests {
         let causal = parsed.get("causal").unwrap();
         let relationships = causal.get("relationships").unwrap().as_array().unwrap();
         assert_eq!(relationships.len(), 1);
+
+        // Verify entity_facts parsing
+        let entity_facts = parsed.get("entity_facts").unwrap().as_array().unwrap();
+        assert_eq!(entity_facts.len(), 2);
+        assert_eq!(entity_facts[0].get("entity").unwrap().as_str().unwrap(), "Caroline");
+        assert_eq!(entity_facts[0].get("fact_type").unwrap().as_str().unwrap(), "research_topic");
+        assert_eq!(entity_facts[0].get("value").unwrap().as_str().unwrap(), "adoption agencies");
     }
 
     #[test]

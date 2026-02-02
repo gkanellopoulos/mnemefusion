@@ -24,7 +24,8 @@ pub use temporal_extractor::{get_temporal_extractor, TemporalExpression, Tempora
 
 // SLM metadata types (always available for serialization/deserialization)
 pub use slm_extractor::{
-    CausalMetadata, CausalRelationship, ExtractedEntity, SlmMetadata, TemporalMetadata,
+    CausalMetadata, CausalRelationship, ExtractedEntity, ExtractedEntityFact, SlmMetadata,
+    TemporalMetadata,
 };
 
 // SLM extractor (only available with slm feature)

@@ -1045,6 +1045,47 @@ impl PyMemory {
             .map_err(|e| PyIOError::new_err(format!("Failed to delete namespace: {}", e)))
     }
 
+    /// Enable native LLM entity extraction using Qwen3 models
+    ///
+    /// This uses native Rust inference with llama-cpp-2 for entity extraction
+    /// at ingestion time. Much more accurate than the Python SLM approach.
+    ///
+    /// Args:
+    ///     model_path: Path to the GGUF model file (e.g., Qwen3-4B-Instruct-2507.Q4_K_M.gguf)
+    ///     tier: Model tier - "balanced" (4B) or "quality" (8B)
+    ///
+    /// Returns:
+    ///     True if successfully enabled
+    ///
+    /// Example:
+    ///     >>> memory.enable_llm_entity_extraction("models/qwen3-4b/Qwen3-4B-Instruct-2507.Q4_K_M.gguf", "balanced")
+    #[cfg(feature = "entity-extraction")]
+    #[pyo3(signature = (model_path, tier="balanced"))]
+    fn enable_llm_entity_extraction(&self, model_path: &str, tier: &str) -> PyResult<bool> {
+        use mnemefusion_core::extraction::ModelTier;
+
+        let model_tier = match tier {
+            "balanced" | "4b" => ModelTier::Balanced,
+            "quality" | "8b" => ModelTier::Quality,
+            _ => return Err(PyValueError::new_err(
+                "tier must be 'balanced' (4B) or 'quality' (8B)"
+            )),
+        };
+
+        let mut engine_opt = self.engine.borrow_mut();
+        if engine_opt.is_none() {
+            return Err(PyRuntimeError::new_err("Database is closed"));
+        }
+
+        let engine = engine_opt.take().unwrap();
+        let new_engine = engine
+            .with_llm_entity_extraction_from_path(model_path, model_tier)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to enable LLM extraction: {}", e)))?;
+
+        *engine_opt = Some(new_engine);
+        Ok(true)
+    }
+
     /// Close the database and save all indexes
     ///
     /// Example:

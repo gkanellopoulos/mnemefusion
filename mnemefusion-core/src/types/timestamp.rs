@@ -3,12 +3,13 @@
 //! This module provides timestamp handling with microsecond precision.
 
 use crate::{Error, Result};
+use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Timestamp with microsecond precision
 ///
 /// Used for temporal indexing and decay calculations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Timestamp(u64); // microseconds since UNIX_EPOCH
 
 impl Timestamp {
