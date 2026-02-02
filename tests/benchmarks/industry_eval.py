@@ -47,7 +47,23 @@ from collections import defaultdict
 import tempfile
 
 # Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "mnemefusion-python"))
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root / "mnemefusion-python"))
+sys.path.insert(0, str(project_root))
+
+# CUDA Support: Pre-load CUDA DLLs if available (enables GPU acceleration)
+try:
+    from mnemefusion_cuda_wrapper import mnemefusion
+    print("[CUDA] GPU acceleration enabled via wrapper")
+except ImportError:
+    # Fallback to standard import if wrapper not available
+    try:
+        import mnemefusion
+        print("[INFO] Using standard CPU-only import (CUDA wrapper not available)")
+    except ImportError:
+        print("ERROR: mnemefusion not installed.")
+        print("Install with: cd mnemefusion-python && pip install -e .")
+        sys.exit(1)
 
 # Check dependencies
 try:
@@ -63,13 +79,6 @@ try:
 except ImportError:
     print("ERROR: OpenAI package not installed.")
     print("Install with: pip install openai")
-    sys.exit(1)
-
-try:
-    import mnemefusion
-except ImportError:
-    print("ERROR: mnemefusion not installed.")
-    print("Install with: cd mnemefusion-python && pip install -e .")
     sys.exit(1)
 
 
@@ -338,7 +347,8 @@ class MnemeFusionEvaluator:
         self.memory = None
         self.db_path = None
 
-    def create_memory_store(self, db_path: str, use_slm: bool = False, slm_model_path: str = None):
+    def create_memory_store(self, db_path: str, use_slm: bool = False, slm_model_path: str = None,
+                            use_llm: bool = False, llm_model_path: str = None, llm_tier: str = "balanced"):
         """Create a new MnemeFusion memory store"""
         self.db_path = db_path
 
@@ -355,19 +365,33 @@ class MnemeFusionEvaluator:
 
         print(f"  [DEBUG] Config: {config}")
         self.memory = mnemefusion.Memory(db_path, config)
+
+        # Enable native LLM entity extraction if requested
+        if use_llm and llm_model_path:
+            try:
+                print(f"  [LLM] Loading Qwen3 model: {llm_model_path}")
+                self.memory.enable_llm_entity_extraction(llm_model_path, llm_tier)
+                print(f"  [LLM] Enabled {llm_tier} tier extraction")
+            except Exception as e:
+                print(f"  [LLM] Warning: Failed to enable LLM extraction: {e}")
+                print(f"  [LLM] Make sure the wheel was built with --features entity-extraction")
+
         print(f"  [OK] Created memory store at {db_path}")
 
-    def ingest_documents(self, documents: List[Tuple[str, str, Dict]]) -> float:
+    def ingest_documents(self, documents: List[Tuple[str, str, Dict]], use_llm: bool = False) -> float:
         """
         Ingest documents into memory store.
 
         Args:
             documents: List of (doc_id, content, metadata) tuples
+            use_llm: If True, use individual add() for LLM extraction (slower but enables extraction)
 
         Returns:
             Total ingestion time in seconds
         """
         print(f"\nIngesting {len(documents)} documents...")
+        if use_llm:
+            print("  [LLM] Using individual add() for LLM extraction (slower)")
         start_time = time.time()
 
         # Reserve capacity for vector index
@@ -393,22 +417,48 @@ class MnemeFusionEvaluator:
 
         # Ingest into MnemeFusion
         print("  Adding to memory store...")
-        memories_to_add = []
-        for i, (doc_id, content, metadata) in enumerate(documents):
-            memories_to_add.append({
-                "content": content,
-                "embedding": all_embeddings[i],
-                "metadata": metadata
-            })
 
-        # Use batch add
-        result = self.memory.add_batch(memories_to_add)
+        if use_llm:
+            # Use individual add() to enable LLM extraction
+            # This is much slower but extracts entity profiles
+            created_count = 0
+            error_count = 0
+            for i, (doc_id, content, metadata) in enumerate(documents):
+                try:
+                    self.memory.add(content, all_embeddings[i], metadata)
+                    created_count += 1
+                except Exception as e:
+                    error_count += 1
+                    if error_count <= 5:
+                        print(f"    [WARN] Failed to add doc {i}: {e}")
 
-        elapsed = time.time() - start_time
-        print(f"  [OK] Ingested {result['created_count']} documents in {elapsed:.1f}s")
+                # Progress reporting
+                if (i + 1) % 100 == 0:
+                    elapsed_so_far = time.time() - start_time
+                    rate = (i + 1) / elapsed_so_far
+                    remaining = (len(documents) - i - 1) / rate if rate > 0 else 0
+                    print(f"    Progress: {i + 1}/{len(documents)} ({rate:.1f} docs/s, ~{remaining:.0f}s remaining)")
 
-        if result.get('errors'):
-            print(f"  [WARN] {len(result['errors'])} errors during ingestion")
+            elapsed = time.time() - start_time
+            print(f"  [OK] Ingested {created_count} documents in {elapsed:.1f}s")
+            if error_count > 0:
+                print(f"  [WARN] {error_count} errors during ingestion")
+        else:
+            # Use batch add for fast ingestion (no LLM extraction)
+            memories_to_add = []
+            for i, (doc_id, content, metadata) in enumerate(documents):
+                memories_to_add.append({
+                    "content": content,
+                    "embedding": all_embeddings[i],
+                    "metadata": metadata
+                })
+
+            result = self.memory.add_batch(memories_to_add)
+            elapsed = time.time() - start_time
+            print(f"  [OK] Ingested {result['created_count']} documents in {elapsed:.1f}s")
+
+            if result.get('errors'):
+                print(f"  [WARN] {len(result['errors'])} errors during ingestion")
 
         return elapsed
 
@@ -563,6 +613,9 @@ def run_evaluation(
     top_k: int = 10,
     use_slm: bool = False,
     slm_model_path: str = None,
+    use_llm: bool = False,
+    llm_model_path: str = None,
+    llm_tier: str = "balanced",
     output_path: str = None,
     verbose: bool = False
 ) -> EvaluationResults:
@@ -575,8 +628,11 @@ def run_evaluation(
         max_questions: Limit number of questions (None = all)
         categories: List of categories to evaluate (None = all, 1-4 are standard)
         top_k: Number of memories to retrieve
-        use_slm: Whether to use SLM for metadata extraction
+        use_slm: Whether to use SLM for metadata extraction (Python subprocess)
         slm_model_path: Path to SLM model (required if use_slm=True)
+        use_llm: Whether to use native LLM extraction (Qwen3 via llama-cpp-2)
+        llm_model_path: Path to GGUF model file (required if use_llm=True)
+        llm_tier: Model tier - "balanced" (4B) or "quality" (8B)
         output_path: Path to save detailed results
         verbose: Print detailed progress
 
@@ -588,7 +644,13 @@ def run_evaluation(
     print("=" * 70)
     print(f"Methodology: Mem0-compatible (LLM-Judge, F1, BLEU)")
     print(f"Dataset: LoCoMo")
-    print(f"LLM: GPT-4o-mini")
+    print(f"Judge LLM: GPT-4o-mini")
+    if use_llm:
+        print(f"Entity Extraction: Qwen3 Native LLM ({llm_tier} tier)")
+    elif use_slm:
+        print(f"Entity Extraction: Python SLM (0.6B)")
+    else:
+        print(f"Entity Extraction: Disabled (baseline)")
     print("=" * 70)
 
     # Load dataset
@@ -618,10 +680,17 @@ def run_evaluation(
     # Create temporary database
     with tempfile.TemporaryDirectory() as temp_dir:
         db_path = os.path.join(temp_dir, "eval.mfdb")
-        evaluator.create_memory_store(db_path, use_slm=use_slm, slm_model_path=slm_model_path)
+        evaluator.create_memory_store(
+            db_path,
+            use_slm=use_slm,
+            slm_model_path=slm_model_path,
+            use_llm=use_llm,
+            llm_model_path=llm_model_path,
+            llm_tier=llm_tier
+        )
 
-        # Ingest documents
-        ingestion_time = evaluator.ingest_documents(documents)
+        # Ingest documents (use individual add if LLM extraction is enabled)
+        ingestion_time = evaluator.ingest_documents(documents, use_llm=use_llm)
 
         # Evaluate each question
         print(f"\nEvaluating {len(questions)} questions...")
@@ -855,12 +924,28 @@ Examples:
     parser.add_argument(
         "--use-slm",
         action="store_true",
-        help="Enable SLM metadata extraction"
+        help="Enable SLM metadata extraction (Python subprocess)"
     )
     parser.add_argument(
         "--slm-model",
         default=None,
         help="Path to SLM model file (.gguf)"
+    )
+    parser.add_argument(
+        "--use-llm",
+        action="store_true",
+        help="Enable native LLM entity extraction (Qwen3 via llama-cpp-2)"
+    )
+    parser.add_argument(
+        "--llm-model",
+        default=None,
+        help="Path to GGUF model file (e.g., models/qwen3-4b/Qwen3-4B-Instruct-2507.Q4_K_M.gguf)"
+    )
+    parser.add_argument(
+        "--llm-tier",
+        default="balanced",
+        choices=["balanced", "quality"],
+        help="LLM model tier: balanced (4B) or quality (8B)"
     )
     parser.add_argument(
         "--output",
@@ -874,7 +959,7 @@ Examples:
     )
 
     args = parser.parse_args()
-    print(f"[DEBUG] Parsed args: use_slm={args.use_slm}, slm_model={args.slm_model}")
+    print(f"[DEBUG] Parsed args: use_slm={args.use_slm}, slm_model={args.slm_model}, use_llm={args.use_llm}, llm_model={args.llm_model}")
 
     # Check API key
     if not os.environ.get("OPENAI_API_KEY"):
@@ -891,6 +976,9 @@ Examples:
         top_k=args.top_k,
         use_slm=args.use_slm,
         slm_model_path=args.slm_model,
+        use_llm=args.use_llm,
+        llm_model_path=args.llm_model,
+        llm_tier=args.llm_tier,
         output_path=args.output,
         verbose=args.verbose
     )

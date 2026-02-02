@@ -1,0 +1,24 @@
+# Cargo build configuration for MnemeFusion
+# Controls compilation of dependencies like llama-cpp-2
+
+[build]
+# Set RUSTFLAGS for linking configuration
+rustflags = [
+    "-l", "cuda",
+    "-l", "cublas",
+    "-l", "cublasLt",
+    "-L", "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.1/lib/x64",
+]
+
+[env]
+# CUDA environment variables for CMake-based builds
+CUDA_PATH = "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.1"
+CUDA_TOOLKIT_ROOT_DIR = "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.1"
+CMAKE_CUDA_COMPILER = "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.1\\bin\\nvcc.exe"
+
+# CMake configuration for proper CUDA support
+CMAKE_CUDA_ARCHITECTURES = "75"  # GTX 1650 Ti
+CMAKE_PREFIX_PATH = "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.1"
+
+# llama-cpp-2 specific
+LLAMA_CPP_CUDA_PATH = "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.1"
