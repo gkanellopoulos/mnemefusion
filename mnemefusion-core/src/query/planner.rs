@@ -9,6 +9,7 @@ use crate::{
     index::{TemporalIndex, VectorIndex},
     ingest::{get_causal_extractor, EntityExtractor, SimpleEntityExtractor, SlmMetadata},
     query::{
+        aggregator::MultiTurnAggregator,
         fusion::{FusedResult, FusionEngine},
         intent::{IntentClassification, IntentClassifier},
         profile_search::ProfileSearch,
@@ -249,10 +250,18 @@ impl QueryPlanner {
                 .or_insert(profile_score);
         }
 
-        // Step 2.3: Pre-fusion semantic filtering (Sprint 18 Task 18.1)
-        // Filter out low-quality semantic matches before fusion to improve precision
-        if self.semantic_prefilter_threshold > 0.0 {
-            semantic_scores.retain(|_id, score| *score >= self.semantic_prefilter_threshold);
+        // Step 2.3: Adaptive pre-fusion semantic filtering
+        // Aggregation queries ("What activities does X do?") need more recall — answer
+        // docs mention specific instances with only moderate similarity to the category
+        // query. Use 0.5x threshold for those. Extraction/Hypothetical keep strict
+        // threshold for precision (avoids noise that hurts multi-hop reasoning).
+        let effective_prefilter = if MultiTurnAggregator::is_aggregation(&query_text.to_lowercase()) {
+            self.semantic_prefilter_threshold * 0.5
+        } else {
+            self.semantic_prefilter_threshold
+        };
+        if effective_prefilter > 0.0 {
+            semantic_scores.retain(|_id, score| *score >= effective_prefilter);
         }
 
         // Step 2.5: Filter by namespace if provided

@@ -90,7 +90,7 @@ impl MultiTurnAggregator {
     }
 
     /// Check if query is an aggregation/list query
-    fn is_aggregation(query: &str) -> bool {
+    pub fn is_aggregation(query: &str) -> bool {
         // Explicit list indicators
         if query.contains("list all")
             || query.contains("show all")
