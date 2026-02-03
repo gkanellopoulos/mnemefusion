@@ -198,24 +198,35 @@ impl QueryPlanner {
         let intent = self.classify_intent(query_text)?;
 
         // Step 1.5: Entity-first retrieval path (Sprint 18 Task 18.4)
-        // If query has entity_focus, fetch ALL memories mentioning that entity
-        // This bypasses top-K semantic search to get complete entity information
+        // If query has entity_focus AND entity exists in graph, fetch ALL memories
+        // mentioning that entity. Falls through to standard path if entity not in graph
+        // (e.g., baseline benchmark without LLM entity extraction).
         if let Some(entity_name) = intent.entity_focus.clone() {
-            return self.retrieve_entity_focused(
-                &entity_name,
-                query_text,
-                query_embedding,
-                limit,
-                namespace,
-                filters,
-                intent,
-            );
+            if self.storage.find_entity_by_name(&entity_name)?.is_some() {
+                return self.retrieve_entity_focused(
+                    &entity_name,
+                    query_text,
+                    query_embedding,
+                    limit,
+                    namespace,
+                    filters,
+                    intent,
+                );
+            }
+            // Entity not in graph — fall through to standard multi-dimensional retrieval
         }
+
+        // Step 1.7: Detect target entity for speaker-aware retrieval.
+        // Used both to increase candidate pool (more docs to compensate for penalty)
+        // and in Step 3.7 for the actual speaker reranking.
+        let target_entity = Self::extract_query_entity(query_text);
 
         // Step 2: Retrieve from all dimensions (fetch more to account for filtering)
         let needs_filtering =
             namespace.is_some() || (filters.is_some() && !filters.unwrap().is_empty());
-        let fetch_multiplier = if needs_filtering { 5 } else { 3 };
+        // When speaker filtering is active, ~half of candidates will be penalized,
+        // so fetch more to maintain effective candidate depth for the target speaker.
+        let fetch_multiplier = if needs_filtering || target_entity.is_some() { 5 } else { 3 };
         let mut semantic_scores =
             self.semantic_search(query_embedding, limit * fetch_multiplier)?;
         let mut bm25_scores = self.bm25_search(query_text, limit * fetch_multiplier)?;
@@ -380,7 +391,7 @@ impl QueryPlanner {
         // information source — so "What's your best camping memory?" (asked by Caroline)
         // ranks high for "Where has Melanie camped?" despite containing no answer.
         // Penalizing non-target speakers corrects this without filtering.
-        if let Some(target_entity) = Self::extract_query_entity(query_text) {
+        if let Some(ref target_entity) = target_entity {
             let target_lower = target_entity.to_lowercase();
             let mut any_speaker_data = false;
             for result in &mut fused_results {
