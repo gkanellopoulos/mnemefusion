@@ -374,8 +374,36 @@ impl QueryPlanner {
             b.fused_score.partial_cmp(&a.fused_score).unwrap_or(std::cmp::Ordering::Equal)
         });
 
+        // Step 3.7: Speaker-aware reranking
+        // When query asks about a specific person (e.g., "What did Melanie paint?"),
+        // penalize results from other speakers. Semantic search matches on topic, not
+        // information source — so "What's your best camping memory?" (asked by Caroline)
+        // ranks high for "Where has Melanie camped?" despite containing no answer.
+        // Penalizing non-target speakers corrects this without filtering.
+        if let Some(target_entity) = Self::extract_query_entity(query_text) {
+            let target_lower = target_entity.to_lowercase();
+            let mut any_speaker_data = false;
+            for result in &mut fused_results {
+                if let Ok(Some(memory)) = self.storage.get_memory_by_u64(result.id.to_u64()) {
+                    if let Some(speaker) = memory.get_metadata("speaker") {
+                        any_speaker_data = true;
+                        if speaker.to_lowercase() != target_lower {
+                            // Non-target speaker: reduce score to deprioritize
+                            result.fused_score *= 0.4;
+                        }
+                    }
+                }
+            }
+            if any_speaker_data {
+                fused_results.sort_by(|a, b| {
+                    b.fused_score
+                        .partial_cmp(&a.fused_score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+            }
+        }
+
         // Step 4: Multi-turn aggregation for list/collection queries
-        // Note: Currently has minimal impact but kept for future improvement
         let aggregator = crate::query::aggregator::MultiTurnAggregator::default();
         let query_type = aggregator.classify_query(query_text);
         let final_results = aggregator.aggregate(
@@ -534,6 +562,75 @@ impl QueryPlanner {
         let final_results = scored_results.into_iter().take(limit).collect();
 
         Ok((intent, final_results))
+    }
+
+    /// Extract the primary person entity from query text for speaker-aware reranking.
+    ///
+    /// Detects Title Case proper nouns, filtering out sentence-starting words and
+    /// honorific-modified names (e.g., "Dr. Seuss"). Returns Some(name) only when
+    /// exactly one entity is found — queries mentioning multiple people return None
+    /// to avoid incorrect speaker filtering.
+    fn extract_query_entity(query_text: &str) -> Option<String> {
+        const SKIP_WORDS: &[&str] = &[
+            "What", "When", "Where", "How", "Why", "Who", "Which", "Would", "Could", "Should",
+            "Is", "Are", "Was", "Were", "Do", "Does", "Did", "Has", "Have", "Had", "Can", "Will",
+            "The", "In", "For", "From", "After", "Before", "During", "About", "With", "Into",
+            "Between", "January", "February", "March", "April", "May", "June", "July", "August",
+            "September", "October", "November", "December", "Monday", "Tuesday", "Wednesday",
+            "Thursday", "Friday", "Saturday", "Sunday",
+        ];
+        const HONORIFICS: &[&str] = &["Dr", "Mr", "Mrs", "Ms", "Prof"];
+
+        let words: Vec<&str> = query_text.split_whitespace().collect();
+        let mut entities: Vec<String> = Vec::new();
+        let mut skip_next = false;
+
+        for word in &words {
+            if skip_next {
+                skip_next = false;
+                continue;
+            }
+
+            // Strip trailing punctuation
+            let clean = word.trim_end_matches(|c: char| !c.is_alphanumeric());
+            // Strip possessive suffix
+            let clean = clean
+                .strip_suffix("'s")
+                .or_else(|| clean.strip_suffix("\u{2019}s"))
+                .unwrap_or(clean);
+
+            if clean.is_empty() {
+                continue;
+            }
+
+            // Honorifics: the next word is a title-attached name, skip it
+            if HONORIFICS.contains(&clean) {
+                skip_next = true;
+                continue;
+            }
+
+            if clean.len() < 4 {
+                continue;
+            }
+
+            // Must be Title Case: first char uppercase, at least one lowercase after
+            let first = clean.chars().next().unwrap();
+            if !first.is_uppercase() || !clean.chars().skip(1).any(|c| c.is_lowercase()) {
+                continue;
+            }
+
+            if SKIP_WORDS.contains(&clean) {
+                continue;
+            }
+
+            entities.push(clean.to_string());
+        }
+
+        if entities.len() == 1 {
+            Some(entities[0].clone())
+        } else {
+            None
+        }
     }
 
     /// Perform semantic similarity search
@@ -2389,5 +2486,86 @@ mod tests {
 
         // Should return empty results
         assert_eq!(results.len(), 0, "Should return empty for non-existent entity");
+    }
+
+    // --- extract_query_entity tests ---
+
+    #[test]
+    fn test_extract_query_entity_single_name() {
+        assert_eq!(
+            QueryPlanner::extract_query_entity("What books has Melanie read?"),
+            Some("Melanie".to_string())
+        );
+        assert_eq!(
+            QueryPlanner::extract_query_entity("Where has Melanie camped?"),
+            Some("Melanie".to_string())
+        );
+        assert_eq!(
+            QueryPlanner::extract_query_entity("What did Caroline research?"),
+            Some("Caroline".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_query_entity_possessive() {
+        assert_eq!(
+            QueryPlanner::extract_query_entity("What is Caroline's relationship status?"),
+            Some("Caroline".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_query_entity_two_names_returns_none() {
+        // Queries about multiple people should not trigger speaker filtering
+        assert_eq!(
+            QueryPlanner::extract_query_entity(
+                "When did Caroline and Melanie go to a pride festival together?"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn test_extract_query_entity_honorific_skipped() {
+        // "Dr. Seuss" should not count as a detected entity; only Caroline remains
+        assert_eq!(
+            QueryPlanner::extract_query_entity(
+                "Would Caroline likely have Dr. Seuss books on her bookshelf?"
+            ),
+            Some("Caroline".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_query_entity_no_entity() {
+        // Generic queries without proper nouns
+        assert_eq!(
+            QueryPlanner::extract_query_entity("What happened yesterday?"),
+            None
+        );
+        assert_eq!(
+            QueryPlanner::extract_query_entity("when did this happen?"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_extract_query_entity_allcaps_ignored() {
+        // All-caps words like LGBTQ are not person names
+        assert_eq!(
+            QueryPlanner::extract_query_entity(
+                "What LGBTQ+ events has Caroline participated in?"
+            ),
+            Some("Caroline".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_query_entity_sentence_starters_skipped() {
+        // Sentence-starting words like "Would", "What" are not entities
+        assert_eq!(
+            QueryPlanner::extract_query_entity("Would Caroline pursue writing as a career?"),
+            Some("Caroline".to_string())
+        );
     }
 }

@@ -36,7 +36,7 @@ impl Default for MultiTurnAggregator {
     fn default() -> Self {
         Self {
             max_combination_size: 5,
-            min_turn_score: 0.1,
+            min_turn_score: 0.0, // RRF scores are ~0.006 max; fusion already filters via semantic_threshold
             candidate_depth: 20,
         }
     }
@@ -216,7 +216,6 @@ impl MultiTurnAggregator {
                 content_map.insert(result.id.to_string(), memory.content);
             }
         }
-
         // Greedy selection loop
         while selected.len() < limit && !remaining.is_empty() {
             let mut best_idx = 0;
@@ -252,7 +251,6 @@ impl MultiTurnAggregator {
 
             // Early stopping if no significant new coverage
             if selected.len() > 1 && covered_terms.len() < selected.len() {
-                // We're adding turns without adding new terms - diminishing returns
                 break;
             }
         }

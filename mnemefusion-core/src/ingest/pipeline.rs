@@ -599,7 +599,21 @@ impl IngestionPipeline {
                 continue;
             }
 
-            // Step 4: Extract and link entities (if enabled)
+            // Step 4: Add to BM25 index
+            if let Err(e) = self.bm25_index.add(&id, &memory.content) {
+                result.errors.push(BatchError::with_id(
+                    index,
+                    format!("BM25 index failed: {}", e),
+                    id.clone(),
+                ));
+                // Rollback: remove from storage, vector, and temporal indexes
+                let _ = self.storage.delete_memory(&id);
+                let _ = vector_index.remove(&id);
+                let _ = self.temporal_index.remove(&id);
+                continue;
+            }
+
+            // Step 5: Extract and link entities (if enabled)
             if self.entity_extraction_enabled {
                 if let Err(e) = self.extract_and_link_entities(&id, &memory.content) {
                     result.errors.push(BatchError::with_id(
@@ -611,6 +625,7 @@ impl IngestionPipeline {
                     let _ = self.storage.delete_memory(&id);
                     let _ = vector_index.remove(&id);
                     let _ = self.temporal_index.remove(&id);
+                    let _ = self.bm25_index.remove(&id);
                     continue;
                 }
             }

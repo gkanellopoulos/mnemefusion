@@ -843,6 +843,7 @@ impl PyMemory {
 
                     let scores_dict = PyDict::new(py);
                     scores_dict.set_item("semantic_score", fused_result.semantic_score)?;
+                    scores_dict.set_item("bm25_score", fused_result.bm25_score)?;
                     scores_dict.set_item("temporal_score", fused_result.temporal_score)?;
                     scores_dict.set_item("causal_score", fused_result.causal_score)?;
                     scores_dict.set_item("entity_score", fused_result.entity_score)?;
