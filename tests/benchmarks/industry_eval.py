@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass, field, asdict
 from collections import defaultdict
+import contextlib
 import tempfile
 
 # Add parent directory to path
@@ -617,7 +618,9 @@ def run_evaluation(
     llm_model_path: str = None,
     llm_tier: str = "balanced",
     output_path: str = None,
-    verbose: bool = False
+    verbose: bool = False,
+    db_path: str = None,
+    skip_ingestion: bool = False
 ) -> EvaluationResults:
     """
     Run full industry-standard evaluation.
@@ -677,20 +680,30 @@ def run_evaluation(
     evaluator = MnemeFusionEvaluator()
     llm = LLMClient(model="gpt-4o-mini")
 
-    # Create temporary database
-    with tempfile.TemporaryDirectory() as temp_dir:
-        db_path = os.path.join(temp_dir, "eval.mfdb")
+    # Database: --db-path for persistent storage, else temporary (auto-cleanup)
+    _temp_ctx = tempfile.TemporaryDirectory() if not db_path else contextlib.nullcontext()
+    with _temp_ctx as _temp_dir:
+        if not db_path:
+            db_path = os.path.join(_temp_dir, "eval.mfdb")
+
+        # Skip ingestion when reusing an existing persistent DB
+        _ingest_now = not (skip_ingestion and os.path.exists(db_path))
+
         evaluator.create_memory_store(
             db_path,
-            use_slm=use_slm,
+            use_slm=use_slm and _ingest_now,
             slm_model_path=slm_model_path,
-            use_llm=use_llm,
+            use_llm=use_llm and _ingest_now,
             llm_model_path=llm_model_path,
             llm_tier=llm_tier
         )
 
-        # Ingest documents (use individual add if LLM extraction is enabled)
-        ingestion_time = evaluator.ingest_documents(documents, use_llm=use_llm)
+        if _ingest_now:
+            # Ingest documents (use individual add if LLM extraction is enabled)
+            ingestion_time = evaluator.ingest_documents(documents, use_llm=use_llm)
+        else:
+            print(f"  [SKIP] Using existing DB at {db_path} — skipping ingestion")
+            ingestion_time = 0.0
 
         # Evaluate each question
         print(f"\nEvaluating {len(questions)} questions...")
@@ -957,6 +970,17 @@ Examples:
         action="store_true",
         help="Print detailed progress"
     )
+    parser.add_argument(
+        "--db-path",
+        default=None,
+        help="Persistent DB path. DB survives after run, enabling --skip-ingestion next time. "
+             "Example: tests/benchmarks/fixtures/eval_baseline.mfdb"
+    )
+    parser.add_argument(
+        "--skip-ingestion",
+        action="store_true",
+        help="Skip ingestion if --db-path DB already exists. For fast re-evaluation with same data."
+    )
 
     args = parser.parse_args()
     print(f"[DEBUG] Parsed args: use_slm={args.use_slm}, slm_model={args.slm_model}, use_llm={args.use_llm}, llm_model={args.llm_model}")
@@ -980,7 +1004,9 @@ Examples:
         llm_model_path=args.llm_model,
         llm_tier=args.llm_tier,
         output_path=args.output,
-        verbose=args.verbose
+        verbose=args.verbose,
+        db_path=args.db_path,
+        skip_ingestion=args.skip_ingestion
     )
 
 
