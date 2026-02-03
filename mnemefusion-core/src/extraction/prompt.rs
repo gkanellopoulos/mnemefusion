@@ -40,7 +40,7 @@ fact_type must be one of: occupation, research_topic, goal, preference, location
 /// Build a few-shot prompt with example for better extraction quality
 pub fn build_fewshot_extraction_prompt(content: &str) -> String {
     // Truncate content if too long
-    let max_content_len = 1200; // Shorter to leave room for examples
+    let max_content_len = 1000; // Shorter to leave room for examples
     let truncated_content = if content.len() > max_content_len {
         format!("{}...", &content[..max_content_len])
     } else {
@@ -49,11 +49,29 @@ pub fn build_fewshot_extraction_prompt(content: &str) -> String {
 
     format!(
         r#"<|im_start|>system
-You are an entity extraction system. Extract entities and facts from text into structured JSON.<|im_end|>
+You are an expert entity extraction system. Extract entities and facts from text into valid JSON format.
+
+CRITICAL REQUIREMENTS:
+1. Return valid JSON only - MUST be parseable
+2. For each entity found, extract 2-5 SPECIFIC facts about it
+3. entity_facts MUST NEVER be empty if entities are found - extract facts for every entity
+4. fact_type MUST be EXACTLY one of these values (no other values allowed):
+   - occupation: job/profession/role
+   - research_topic: subject being studied/researched
+   - goal: what person wants to achieve
+   - preference: likes/dislikes/preferences
+   - location: where person lives/works/is from
+   - relationship: connections to other people/organizations
+   - interest: hobbies/interests/passions
+   - affiliation: organization/group membership
+   - characteristic: personality traits/qualities
+   - action: specific activities/actions done
+5. DO NOT use values like "activity", "skill", "event", "background" - use the list above only
+6. value must be specific text from the input<|im_end|>
 <|im_start|>user
-Extract entities and facts from: "Alice works as a software engineer at Google and lives in Seattle."<|im_end|>
+Extract entities and facts from: "Alice works as a software engineer at Google and lives in Seattle. She is learning machine learning."<|im_end|>
 <|im_start|>assistant
-{{"entities":[{{"name":"Alice","type":"person"}},{{"name":"Google","type":"organization"}},{{"name":"Seattle","type":"location"}}],"entity_facts":[{{"entity":"Alice","fact_type":"occupation","value":"software engineer","confidence":0.95}},{{"entity":"Alice","fact_type":"affiliation","value":"Google","confidence":0.95}},{{"entity":"Alice","fact_type":"location","value":"Seattle","confidence":0.90}}],"topics":["employment","technology"],"importance":0.7}}<|im_end|>
+{{"entities":[{{"name":"Alice","type":"person"}},{{"name":"Google","type":"organization"}},{{"name":"Seattle","type":"location"}}],"entity_facts":[{{"entity":"Alice","fact_type":"occupation","value":"software engineer","confidence":0.95}},{{"entity":"Alice","fact_type":"affiliation","value":"Google","confidence":0.95}},{{"entity":"Alice","fact_type":"location","value":"Seattle","confidence":0.90}},{{"entity":"Alice","fact_type":"research_topic","value":"machine learning","confidence":0.90}}],"topics":["employment","technology"],"importance":0.8}}<|im_end|>
 <|im_start|>user
 Extract entities and facts from: "{content}"<|im_end|>
 <|im_start|>assistant
