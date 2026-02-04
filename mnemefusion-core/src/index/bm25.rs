@@ -85,6 +85,18 @@ type InvertedIndex = HashMap<String, Vec<(MemoryId, usize)>>;
 /// Document frequency: term → number of documents containing term
 type DocumentFrequency = HashMap<String, usize>;
 
+/// Serializable snapshot of BM25 index state.
+/// Uses Vec<(K,V)> instead of HashMap where K = MemoryId because serde_json
+/// cannot deserialize newtype-wrapped keys from JSON object strings.
+#[derive(Serialize, Deserialize)]
+struct Bm25State {
+    inverted_index: Vec<(String, Vec<(MemoryId, usize)>)>,
+    doc_frequency: Vec<(String, usize)>,
+    doc_stats: Vec<(MemoryId, DocumentStats)>,
+    num_docs: usize,
+    avg_doc_length: f32,
+}
+
 /// BM25 search result
 #[derive(Debug, Clone)]
 pub struct BM25Result {
@@ -410,6 +422,63 @@ impl BM25Index {
     pub fn avg_doc_length(&self) -> f32 {
         *self.avg_doc_length.read().unwrap()
     }
+
+    /// Persist BM25 index state to the storage layer.
+    ///
+    /// Serializes the inverted index, document frequencies, and document
+    /// statistics to redb via the METADATA_TABLE. Call after mutations to
+    /// ensure durability across restarts.
+    pub fn save(&self) -> Result<()> {
+        let state = Bm25State {
+            inverted_index: self
+                .inverted_index
+                .read()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            doc_frequency: self
+                .doc_frequency
+                .read()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| (k.clone(), *v))
+                .collect(),
+            doc_stats: self
+                .doc_stats
+                .read()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            num_docs: *self.num_docs.read().unwrap(),
+            avg_doc_length: *self.avg_doc_length.read().unwrap(),
+        };
+
+        let data =
+            serde_json::to_vec(&state).map_err(|e| crate::Error::Serialization(e.to_string()))?;
+        self.storage.store_bm25_index(&data)
+    }
+
+    /// Load BM25 index state from the storage layer.
+    ///
+    /// If no previously saved state exists, the index remains empty (as
+    /// constructed). Call once after `new()` to restore a persisted index.
+    pub fn load(&self) -> Result<()> {
+        if let Some(data) = self.storage.load_bm25_index()? {
+            let state: Bm25State = serde_json::from_slice(&data)
+                .map_err(|e| crate::Error::Deserialization(e.to_string()))?;
+
+            *self.inverted_index.write().unwrap() =
+                state.inverted_index.into_iter().collect();
+            *self.doc_frequency.write().unwrap() =
+                state.doc_frequency.into_iter().collect();
+            *self.doc_stats.write().unwrap() = state.doc_stats.into_iter().collect();
+            *self.num_docs.write().unwrap() = state.num_docs;
+            *self.avg_doc_length.write().unwrap() = state.avg_doc_length;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -544,6 +613,50 @@ mod tests {
         // id2 should score higher (more term frequency)
         assert_eq!(results[0].memory_id, id2);
         assert!(results[0].score > results[1].score);
+    }
+
+    #[test]
+    fn test_save_and_load_round_trip() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.mfdb");
+        let storage = Arc::new(StorageEngine::open(&db_path).unwrap());
+
+        // Populate index
+        let index = BM25Index::new(Arc::clone(&storage), BM25Config::default());
+        let id1 = MemoryId::new();
+        let id2 = MemoryId::new();
+        index
+            .add(&id1, "The quick brown fox jumps over the lazy dog")
+            .unwrap();
+        index
+            .add(&id2, "A quick brown dog runs in the park")
+            .unwrap();
+
+        // Save
+        index.save().unwrap();
+        assert_eq!(index.num_docs(), 2);
+
+        // Create fresh index on same storage and load
+        let restored = BM25Index::new(Arc::clone(&storage), BM25Config::default());
+        assert_eq!(restored.num_docs(), 0); // empty before load
+        restored.load().unwrap();
+        assert_eq!(restored.num_docs(), 2);
+
+        // Search should return same results
+        let results = restored.search("quick brown", 10).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results[0].score > 0.0);
+    }
+
+    #[test]
+    fn test_load_on_empty_db_is_noop() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.mfdb");
+        let storage = Arc::new(StorageEngine::open(&db_path).unwrap());
+
+        let index = BM25Index::new(Arc::clone(&storage), BM25Config::default());
+        index.load().unwrap(); // no saved state — should not error
+        assert_eq!(index.num_docs(), 0);
     }
 
     #[test]

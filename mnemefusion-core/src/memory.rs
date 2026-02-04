@@ -91,9 +91,10 @@ impl MemoryEngine {
         vector_index.load()?;
         let vector_index = Arc::new(RwLock::new(vector_index));
 
-        // Create BM25 index
+        // Create and load BM25 index
         let bm25_config = BM25Config::default();
         let bm25_index = Arc::new(BM25Index::new(Arc::clone(&storage), bm25_config));
+        bm25_index.load()?;
 
         // Create temporal index
         let temporal_index = Arc::new(TemporalIndex::new(Arc::clone(&storage)));
@@ -1461,6 +1462,9 @@ impl MemoryEngine {
             let index = self.vector_index.read().unwrap();
             index.save()?;
         }
+
+        // Save BM25 index
+        self.bm25_index.save()?;
 
         // Save causal graph
         {

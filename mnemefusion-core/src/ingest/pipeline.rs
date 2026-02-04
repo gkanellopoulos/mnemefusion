@@ -341,6 +341,14 @@ impl IngestionPipeline {
             return Err(e);
         }
 
+        // Step 2d: Persist BM25 index for crash recovery
+        if let Err(e) = self.bm25_index.save() {
+            let _ = self.storage.delete_memory(&id);
+            let _ = self.remove_from_vector_index(&id);
+            let _ = self.bm25_index.remove(&id);
+            return Err(e);
+        }
+
         // Step 3: Add to temporal index (rollback: delete from storage + vector + BM25)
         // Note: Temporal index uses redb storage, so it's already durable
         if let Err(e) = self.temporal_index.add(&id, timestamp) {
@@ -641,6 +649,11 @@ impl IngestionPipeline {
         // Persist vector index once for entire batch
         // This is much more efficient than saving per-memory
         self.save_vector_index()?;
+
+        // Persist BM25 index once for entire batch
+        if result.created_count > 0 {
+            self.bm25_index.save()?;
+        }
 
         // Persist graph once for entire batch (if entity extraction was enabled)
         if self.entity_extraction_enabled && result.created_count > 0 {

@@ -507,6 +507,28 @@ impl StorageEngine {
         }
     }
 
+    /// Store BM25 index data
+    pub fn store_bm25_index(&self, buffer: &[u8]) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(METADATA_TABLE)?;
+            table.insert("bm25_index", buffer)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Load BM25 index data
+    pub fn load_bm25_index(&self) -> Result<Option<Vec<u8>>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(METADATA_TABLE)?;
+
+        match table.get("bm25_index")? {
+            Some(data) => Ok(Some(data.value().to_vec())),
+            None => Ok(None),
+        }
+    }
+
     /// Store causal graph data
     pub fn store_causal_graph(&self, data: &[u8]) -> Result<()> {
         let write_txn = self.db.begin_write()?;
