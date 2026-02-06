@@ -76,6 +76,10 @@ tests/benchmarks/*.log
 *.o
 build_output.txt
 
+# GGML/llama.cpp DLLs (built from source, not committed)
+ggml*.dll
+llama.dll
+
 # Temporary analysis files
 tests/benchmarks/analysis_*.txt
 tests/benchmarks/FINDINGS*.md

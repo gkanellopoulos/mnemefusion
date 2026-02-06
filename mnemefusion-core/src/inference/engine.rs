@@ -47,6 +47,9 @@ impl InferenceEngine {
         let backend =
             LlamaBackend::init().map_err(|e| Error::InferenceError(format!("Backend init: {e}")))?;
 
+        // Load ggml backends (CPU + CUDA) as dynamic libraries
+        Self::load_ggml_backends();
+
         // Configure model parameters
         let model_params = LlamaModelParams::default().with_n_gpu_layers(gpu_layers);
 
@@ -215,6 +218,70 @@ impl InferenceEngine {
             .map_err(|e| Error::InferenceError(format!("Detokenization: {e}")))?;
 
         Ok(output)
+    }
+
+    /// Load ggml backend DLLs (CPU + CUDA) from known locations
+    fn load_ggml_backends() {
+        use std::ffi::CString;
+
+        // Backend DLLs to load, in order (CPU first, then CUDA)
+        let dll_names = ["ggml-cpu.dll", "ggml-cuda.dll"];
+
+        // Search locations for ggml backend DLLs
+        let mut search_paths: Vec<std::path::PathBuf> = Vec::new();
+
+        // MNEMEFUSION_DLL_DIR env var (highest priority, user override)
+        if let Ok(dir) = std::env::var("MNEMEFUSION_DLL_DIR") {
+            search_paths.push(std::path::PathBuf::from(dir));
+        }
+
+        // Current working directory
+        if let Ok(cwd) = std::env::current_dir() {
+            search_paths.push(cwd);
+        }
+
+        // Directory of the current executable
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                search_paths.push(dir.to_path_buf());
+            }
+        }
+
+        // Workspace root (compile-time: CARGO_MANIFEST_DIR parent)
+        // DLLs are typically placed in the workspace root during development
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        if let Some(workspace) = manifest_dir.parent() {
+            search_paths.push(workspace.to_path_buf());
+            // Also check target/release where build artifacts go
+            let release_dir = workspace.join("target").join("release");
+            if release_dir.exists() {
+                search_paths.push(release_dir);
+            }
+        }
+
+        for dll_name in &dll_names {
+            let mut loaded = false;
+            for dir in &search_paths {
+                let dll_path = dir.join(dll_name);
+                if dll_path.exists() {
+                    if let Ok(path_str) = CString::new(dll_path.to_string_lossy().as_bytes()) {
+                        let reg = unsafe {
+                            llama_cpp_sys_2::ggml_backend_load(path_str.as_ptr())
+                        };
+                        if !reg.is_null() {
+                            eprintln!("[mnemefusion] Loaded backend: {} from {}", dll_name, dll_path.display());
+                            loaded = true;
+                            break;
+                        } else {
+                            eprintln!("[mnemefusion] Found but failed to load: {}", dll_path.display());
+                        }
+                    }
+                }
+            }
+            if !loaded {
+                eprintln!("[mnemefusion] Backend not found: {}", dll_name);
+            }
+        }
     }
 
     /// Get model metadata
