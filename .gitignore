@@ -85,3 +85,9 @@ tests/benchmarks/analysis_*.txt
 tests/benchmarks/FINDINGS*.md
 tests/benchmarks/INVESTIGATION*.md
 tests/benchmarks/SLM_*.md
+
+# Model files (too large for git, download separately)
+*.gguf
+*.safetensors
+models/
+opt/models/
