@@ -207,7 +207,9 @@ impl IngestionPipeline {
         #[cfg(feature = "entity-extraction")]
         let llm_extraction_result: Option<ExtractionResult> =
             if let Some(ref llm_extractor) = self.llm_extractor {
-                match llm_extractor.lock().unwrap().extract(&memory.content) {
+                // Pass speaker context so LLM attributes first-person facts correctly
+                let speaker = memory.metadata.get("speaker").map(|s| s.as_str());
+                match llm_extractor.lock().unwrap().extract(&memory.content, speaker) {
                     Ok(extraction) => {
                         // Store extraction result as JSON
                         let json = serde_json::to_string(&extraction).unwrap_or_default();

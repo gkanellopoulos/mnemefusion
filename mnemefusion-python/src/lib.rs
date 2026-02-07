@@ -967,6 +967,130 @@ impl PyMemory {
         })
     }
 
+    /// List all entity profiles in the database
+    ///
+    /// Entity profiles aggregate facts about entities across all memories,
+    /// extracted by the LLM entity extraction pipeline.
+    ///
+    /// Returns:
+    ///     List of entity profile dictionaries with keys:
+    ///         - name: Entity name (e.g., "Caroline")
+    ///         - entity_type: Type (e.g., "person", "organization")
+    ///         - facts: Dict mapping fact_type to list of fact dicts
+    ///         - source_memories: List of memory IDs that contributed facts
+    ///         - total_facts: Total number of facts in the profile
+    ///
+    /// Example:
+    ///     >>> profiles = memory.list_entity_profiles()
+    ///     >>> for p in profiles:
+    ///     >>>     print(f"{p['name']} ({p['entity_type']}): {p['total_facts']} facts")
+    fn list_entity_profiles(&self) -> PyResult<Vec<PyObject>> {
+        let engine = self.get_engine()?;
+        let profiles = engine
+            .list_entity_profiles()
+            .map_err(|e| PyIOError::new_err(format!("Failed to list entity profiles: {}", e)))?;
+
+        Python::with_gil(|py| {
+            profiles
+                .into_iter()
+                .map(|profile| {
+                    let dict = PyDict::new(py);
+                    dict.set_item("name", &profile.name)?;
+                    dict.set_item("entity_type", &profile.entity_type)?;
+                    dict.set_item("entity_id", profile.entity_id.to_string())?;
+                    dict.set_item("total_facts", profile.total_facts())?;
+
+                    // Convert source_memories to list of strings
+                    let source_ids: Vec<String> = profile
+                        .source_memories
+                        .iter()
+                        .map(|id| id.to_string())
+                        .collect();
+                    dict.set_item("source_memories", source_ids)?;
+
+                    // Convert facts HashMap to Python dict of lists
+                    let facts_dict = PyDict::new(py);
+                    for (fact_type, facts) in &profile.facts {
+                        let fact_list: Vec<PyObject> = facts
+                            .iter()
+                            .map(|fact| {
+                                let f = PyDict::new(py);
+                                f.set_item("fact_type", &fact.fact_type).ok();
+                                f.set_item("value", &fact.value).ok();
+                                f.set_item("confidence", fact.confidence).ok();
+                                f.set_item("source_memory", fact.source_memory.to_string()).ok();
+                                f.into()
+                            })
+                            .collect();
+                        facts_dict.set_item(fact_type, fact_list)?;
+                    }
+                    dict.set_item("facts", facts_dict)?;
+
+                    Ok(dict.into())
+                })
+                .collect()
+        })
+    }
+
+    /// Get an entity profile by name
+    ///
+    /// Args:
+    ///     name: Entity name (case-insensitive lookup)
+    ///
+    /// Returns:
+    ///     Entity profile dictionary (same format as list_entity_profiles), or None
+    ///
+    /// Example:
+    ///     >>> profile = memory.get_entity_profile("Caroline")
+    ///     >>> if profile:
+    ///     >>>     for fact_type, facts in profile['facts'].items():
+    ///     >>>         for f in facts:
+    ///     >>>             print(f"  {fact_type}: {f['value']} (conf={f['confidence']})")
+    fn get_entity_profile(&self, name: &str) -> PyResult<Option<PyObject>> {
+        let engine = self.get_engine()?;
+        let profile = engine
+            .get_entity_profile(name)
+            .map_err(|e| PyIOError::new_err(format!("Failed to get entity profile: {}", e)))?;
+
+        if let Some(profile) = profile {
+            Python::with_gil(|py| {
+                let dict = PyDict::new(py);
+                dict.set_item("name", &profile.name)?;
+                dict.set_item("entity_type", &profile.entity_type)?;
+                dict.set_item("entity_id", profile.entity_id.to_string())?;
+                dict.set_item("total_facts", profile.total_facts())?;
+
+                let source_ids: Vec<String> = profile
+                    .source_memories
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect();
+                dict.set_item("source_memories", source_ids)?;
+
+                let facts_dict = PyDict::new(py);
+                for (fact_type, facts) in &profile.facts {
+                    let fact_list: Vec<PyObject> = facts
+                        .iter()
+                        .map(|fact| {
+                            let f = PyDict::new(py);
+                            f.set_item("fact_type", &fact.fact_type).ok();
+                            f.set_item("value", &fact.value).ok();
+                            f.set_item("confidence", fact.confidence).ok();
+                            f.set_item("source_memory", fact.source_memory.to_string()).ok();
+                            f.into()
+                        })
+                        .collect();
+                    facts_dict.set_item(fact_type, fact_list)?;
+                }
+                dict.set_item("facts", facts_dict)?;
+
+                Ok(Some(dict.into()))
+            })
+        } else {
+            Ok(None)
+        }
+    }
+
     /// List all namespaces in the database
     ///
     /// Returns:

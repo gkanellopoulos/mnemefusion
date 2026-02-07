@@ -76,9 +76,10 @@ impl InferenceEngine {
         max_tokens: u32,
     ) -> Result<String> {
         // Create context for this generation
+        let n_batch = 512usize;
         let ctx_params = LlamaContextParams::default()
             .with_n_ctx(NonZeroU32::new(self.n_ctx))
-            .with_n_batch(512);
+            .with_n_batch(n_batch as u32);
 
         let mut ctx = self
             .model
@@ -91,18 +92,22 @@ impl InferenceEngine {
             .str_to_token(prompt, llama_cpp_2::model::AddBos::Always)
             .map_err(|e| Error::InferenceError(format!("Tokenization: {e}")))?;
 
-        // Create batch with prompt tokens
-        let mut batch = LlamaBatch::new(self.n_ctx as usize, 1);
-        for (i, token) in tokens.iter().enumerate() {
-            let is_last = i == tokens.len() - 1;
-            batch
-                .add(*token, i as i32, &[0], is_last)
-                .map_err(|e| Error::InferenceError(format!("Batch add: {e}")))?;
+        // Process prompt in chunks of n_batch (prompt may exceed n_batch)
+        let mut batch = LlamaBatch::new(n_batch, 1);
+        let mut i = 0;
+        while i < tokens.len() {
+            batch.clear();
+            let chunk_end = std::cmp::min(i + n_batch, tokens.len());
+            for j in i..chunk_end {
+                let is_last = j == tokens.len() - 1;
+                batch
+                    .add(tokens[j], j as i32, &[0], is_last)
+                    .map_err(|e| Error::InferenceError(format!("Batch add: {e}")))?;
+            }
+            ctx.decode(&mut batch)
+                .map_err(|e| Error::InferenceError(format!("Prompt decode: {e}")))?;
+            i = chunk_end;
         }
-
-        // Process the prompt
-        ctx.decode(&mut batch)
-            .map_err(|e| Error::InferenceError(format!("Prompt decode: {e}")))?;
 
         // Create sampler with grammar constraints
         let mut sampler = LlamaSampler::chain_simple([
@@ -153,9 +158,10 @@ impl InferenceEngine {
     /// Generate without grammar constraints (for testing)
     pub fn generate(&self, prompt: &str, max_tokens: u32) -> Result<String> {
         // Create context for this generation
+        let n_batch = 512usize;
         let ctx_params = LlamaContextParams::default()
             .with_n_ctx(NonZeroU32::new(self.n_ctx))
-            .with_n_batch(512);
+            .with_n_batch(n_batch as u32);
 
         let mut ctx = self
             .model
@@ -168,18 +174,22 @@ impl InferenceEngine {
             .str_to_token(prompt, llama_cpp_2::model::AddBos::Always)
             .map_err(|e| Error::InferenceError(format!("Tokenization: {e}")))?;
 
-        // Create batch with prompt tokens
-        let mut batch = LlamaBatch::new(self.n_ctx as usize, 1);
-        for (i, token) in tokens.iter().enumerate() {
-            let is_last = i == tokens.len() - 1;
-            batch
-                .add(*token, i as i32, &[0], is_last)
-                .map_err(|e| Error::InferenceError(format!("Batch add: {e}")))?;
+        // Process prompt in chunks of n_batch (prompt may exceed n_batch)
+        let mut batch = LlamaBatch::new(n_batch, 1);
+        let mut i = 0;
+        while i < tokens.len() {
+            batch.clear();
+            let chunk_end = std::cmp::min(i + n_batch, tokens.len());
+            for j in i..chunk_end {
+                let is_last = j == tokens.len() - 1;
+                batch
+                    .add(tokens[j], j as i32, &[0], is_last)
+                    .map_err(|e| Error::InferenceError(format!("Batch add: {e}")))?;
+            }
+            ctx.decode(&mut batch)
+                .map_err(|e| Error::InferenceError(format!("Prompt decode: {e}")))?;
+            i = chunk_end;
         }
-
-        // Process the prompt
-        ctx.decode(&mut batch)
-            .map_err(|e| Error::InferenceError(format!("Prompt decode: {e}")))?;
 
         // Create sampler without grammar
         let mut sampler = LlamaSampler::chain_simple([

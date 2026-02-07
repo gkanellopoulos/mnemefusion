@@ -94,22 +94,29 @@ impl LlmEntityExtractor {
 
     /// Extract entity facts from text content
     ///
-    /// Returns structured extraction result with validated JSON schema.
+    /// When `speaker` is provided, the LLM prompt includes speaker context
+    /// so that first-person statements ("I love hiking") are correctly
+    /// attributed to the speaker entity rather than to objects mentioned.
+    ///
+    /// # Arguments
+    ///
+    /// * `content` - The text to extract entities and facts from
+    /// * `speaker` - Optional name of who spoke this text (from conversation metadata)
     ///
     /// # Example
     ///
     /// ```rust,ignore
-    /// let result = extractor.extract("Alice works at Google")?;
-    /// for fact in result.entity_facts {
-    ///     println!("{}: {} = {}", fact.entity, fact.fact_type, fact.value);
-    /// }
+    /// let result = extractor.extract("Alice works at Google", None)?;
+    /// // With speaker context:
+    /// let result = extractor.extract("I'm researching adoption", Some("Caroline"))?;
+    /// // Facts correctly attributed to Caroline, not to "adoption"
     /// ```
-    pub fn extract(&self, content: &str) -> Result<ExtractionResult> {
+    pub fn extract(&self, content: &str, speaker: Option<&str>) -> Result<ExtractionResult> {
         if content.trim().is_empty() {
             return Ok(ExtractionResult::empty());
         }
 
-        let prompt = build_fewshot_extraction_prompt(content);
+        let prompt = build_fewshot_extraction_prompt(content, speaker);
 
         // Generate without grammar (Qwen3 produces valid JSON naturally)
         // Grammar-constrained sampling has compatibility issues on some platforms

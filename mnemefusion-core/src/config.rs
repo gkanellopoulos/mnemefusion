@@ -153,7 +153,7 @@ impl Default for Config {
             hnsw_ef_search: 64,
             indexed_metadata: Vec::new(), // No indexed fields by default
             fusion_semantic_threshold: 0.15, // 15% minimum semantic relevance
-            semantic_prefilter_threshold: 0.3, // 30% pre-fusion filter; aggregation queries use 0.5x via adaptive logic in planner
+            semantic_prefilter_threshold: 0.3, // 30% pre-fusion filter; aggregation queries use 0.5x (0.15) via adaptive logic in planner
             fusion_strategy: FusionStrategy::default(), // RRF by default
             rrf_k: 60.0, // From RRF paper
             slm_config: None, // SLM disabled by default
