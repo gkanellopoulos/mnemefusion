@@ -888,14 +888,48 @@ impl MemoryEngine {
         filters: Option<&[MetadataFilter]>,
     ) -> Result<(IntentClassification, Vec<(Memory, FusedResult)>)> {
         // Execute query using query planner
-        let (intent, fused_results) =
+        let (intent, fused_results, matched_facts) =
             self.query_planner
                 .query(query_text, query_embedding, limit, namespace, filters)?;
+
+        // Prepend synthetic profile facts (not counted against limit)
+        // These are EXTRA — they don't displace real memories
+        let mut results = Vec::new();
+        for fact in &matched_facts {
+            let content = format!(
+                "{}'s {}: {}",
+                fact.entity_name,
+                fact.fact_type.replace('_', " "),
+                fact.value
+            );
+            let mut metadata = HashMap::new();
+            metadata.insert("_source".into(), "profile_fact".into());
+            metadata.insert("_entity".into(), fact.entity_name.clone());
+            metadata.insert("_fact_type".into(), fact.fact_type.clone());
+
+            let memory = Memory {
+                id: MemoryId::new(),
+                content,
+                embedding: vec![],
+                created_at: Timestamp::now(),
+                metadata,
+            };
+            let fused = FusedResult {
+                id: memory.id.clone(),
+                semantic_score: 0.0,
+                bm25_score: 0.0,
+                temporal_score: 0.0,
+                causal_score: 0.0,
+                entity_score: 1.0,
+                fused_score: 1.0 + fact.score,
+                confidence: 1.0,
+            };
+            results.push((memory, fused));
+        }
 
         // Retrieve full memory records using u64 key lookup
         // Note: Vector index returns partial MemoryIds (first 8 bytes only),
         // so we use get_memory_by_u64 which looks up the full UUID from the index table
-        let mut results = Vec::with_capacity(fused_results.len());
         for fused_result in fused_results {
             let key = fused_result.id.to_u64();
             if let Some(memory) = self.storage.get_memory_by_u64(key)? {

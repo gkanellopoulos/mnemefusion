@@ -1188,6 +1188,224 @@ impl PyMemory {
         Ok(true)
     }
 
+    /// Get the N most recent memories
+    ///
+    /// Args:
+    ///     n: Number of recent memories to retrieve
+    ///     namespace: Optional namespace filter
+    ///
+    /// Returns:
+    ///     List of (memory_dict, timestamp) tuples, sorted newest first
+    ///
+    /// Example:
+    ///     >>> recent = memory.get_recent(10)
+    ///     >>> for mem, ts in recent:
+    ///     >>>     print(f"{ts}: {mem['content']}")
+    #[pyo3(signature = (n, namespace=None))]
+    fn get_recent(&self, n: usize, namespace: Option<&str>) -> PyResult<Vec<PyObject>> {
+        let engine = self.get_engine()?;
+        let results = engine
+            .get_recent(n, namespace)
+            .map_err(|e| PyIOError::new_err(format!("Failed to get recent: {}", e)))?;
+
+        Python::with_gil(|py| {
+            results
+                .into_iter()
+                .map(|(memory, timestamp)| {
+                    let dict = PyDict::new(py);
+                    dict.set_item("id", memory.id.to_string())?;
+                    dict.set_item("content", memory.content.clone())?;
+                    dict.set_item("embedding", memory.embedding.clone())?;
+                    dict.set_item("metadata", memory.metadata.clone())?;
+                    dict.set_item("created_at", memory.created_at.as_unix_secs())?;
+                    dict.set_item("namespace", memory.get_namespace())?;
+
+                    if let Ok(Some(source)) = memory.get_source() {
+                        let source_dict = source_to_pydict(py, &source)?;
+                        dict.set_item("source", source_dict)?;
+                    } else {
+                        dict.set_item("source", py.None())?;
+                    }
+
+                    let tuple = (dict, timestamp.as_unix_secs());
+                    Ok(tuple.into_py(py))
+                })
+                .collect()
+        })
+    }
+
+    /// Get memories within a time range
+    ///
+    /// Args:
+    ///     start: Start timestamp (Unix seconds, float)
+    ///     end: End timestamp (Unix seconds, float)
+    ///     limit: Maximum number of results
+    ///     namespace: Optional namespace filter
+    ///
+    /// Returns:
+    ///     List of (memory_dict, timestamp) tuples, sorted newest first
+    ///
+    /// Example:
+    ///     >>> import time
+    ///     >>> end = time.time()
+    ///     >>> start = end - 86400  # Last 24 hours
+    ///     >>> results = memory.get_range(start, end, 100)
+    #[pyo3(signature = (start, end, limit, namespace=None))]
+    fn get_range(
+        &self,
+        start: f64,
+        end: f64,
+        limit: usize,
+        namespace: Option<&str>,
+    ) -> PyResult<Vec<PyObject>> {
+        let engine = self.get_engine()?;
+        let results = engine
+            .get_range(
+                Timestamp::from_unix_secs(start),
+                Timestamp::from_unix_secs(end),
+                limit,
+                namespace,
+            )
+            .map_err(|e| PyIOError::new_err(format!("Failed to get range: {}", e)))?;
+
+        Python::with_gil(|py| {
+            results
+                .into_iter()
+                .map(|(memory, timestamp)| {
+                    let dict = PyDict::new(py);
+                    dict.set_item("id", memory.id.to_string())?;
+                    dict.set_item("content", memory.content.clone())?;
+                    dict.set_item("embedding", memory.embedding.clone())?;
+                    dict.set_item("metadata", memory.metadata.clone())?;
+                    dict.set_item("created_at", memory.created_at.as_unix_secs())?;
+                    dict.set_item("namespace", memory.get_namespace())?;
+
+                    if let Ok(Some(source)) = memory.get_source() {
+                        let source_dict = source_to_pydict(py, &source)?;
+                        dict.set_item("source", source_dict)?;
+                    } else {
+                        dict.set_item("source", py.None())?;
+                    }
+
+                    let tuple = (dict, timestamp.as_unix_secs());
+                    Ok(tuple.into_py(py))
+                })
+                .collect()
+        })
+    }
+
+    /// Get all memories mentioning an entity
+    ///
+    /// Args:
+    ///     entity_name: Name of the entity (case-insensitive)
+    ///
+    /// Returns:
+    ///     List of memory dictionaries
+    ///
+    /// Example:
+    ///     >>> memories = memory.get_entity_memories("Alice")
+    ///     >>> for mem in memories:
+    ///     >>>     print(mem['content'])
+    fn get_entity_memories(&self, entity_name: &str) -> PyResult<Vec<PyObject>> {
+        let engine = self.get_engine()?;
+        let memories = engine
+            .get_entity_memories(entity_name)
+            .map_err(|e| PyIOError::new_err(format!("Failed to get entity memories: {}", e)))?;
+
+        Python::with_gil(|py| {
+            memories
+                .into_iter()
+                .map(|memory| {
+                    let dict = PyDict::new(py);
+                    dict.set_item("id", memory.id.to_string())?;
+                    dict.set_item("content", memory.content.clone())?;
+                    dict.set_item("embedding", memory.embedding.clone())?;
+                    dict.set_item("metadata", memory.metadata.clone())?;
+                    dict.set_item("created_at", memory.created_at.as_unix_secs())?;
+                    dict.set_item("namespace", memory.get_namespace())?;
+
+                    if let Ok(Some(source)) = memory.get_source() {
+                        let source_dict = source_to_pydict(py, &source)?;
+                        dict.set_item("source", source_dict)?;
+                    } else {
+                        dict.set_item("source", py.None())?;
+                    }
+
+                    Ok(dict.into())
+                })
+                .collect()
+        })
+    }
+
+    /// Get all entities mentioned in a specific memory
+    ///
+    /// Args:
+    ///     memory_id: Memory ID string
+    ///
+    /// Returns:
+    ///     List of entity dictionaries
+    ///
+    /// Example:
+    ///     >>> entities = memory.get_memory_entities(memory_id)
+    ///     >>> for e in entities:
+    ///     >>>     print(f"{e['name']} ({e['mention_count']} mentions)")
+    fn get_memory_entities(&self, memory_id: &str) -> PyResult<Vec<PyObject>> {
+        let engine = self.get_engine()?;
+        let id = MemoryId::parse(memory_id)
+            .map_err(|e| PyValueError::new_err(format!("Invalid memory ID: {}", e)))?;
+
+        let entities = engine
+            .get_memory_entities(&id)
+            .map_err(|e| PyIOError::new_err(format!("Failed to get memory entities: {}", e)))?;
+
+        Python::with_gil(|py| {
+            entities
+                .into_iter()
+                .map(|entity| {
+                    let dict = PyDict::new(py);
+                    dict.set_item("id", entity.id.to_string())?;
+                    dict.set_item("name", entity.name)?;
+                    dict.set_item("mention_count", entity.mention_count)?;
+                    dict.set_item("metadata", entity.metadata)?;
+                    Ok(dict.into())
+                })
+                .collect()
+        })
+    }
+
+    /// Count entity profiles in the database
+    ///
+    /// Returns:
+    ///     Number of entity profiles
+    ///
+    /// Example:
+    ///     >>> count = memory.count_entity_profiles()
+    ///     >>> print(f"Total profiles: {count}")
+    fn count_entity_profiles(&self) -> PyResult<usize> {
+        let engine = self.get_engine()?;
+        engine
+            .count_entity_profiles()
+            .map_err(|e| PyIOError::new_err(format!("Failed to count entity profiles: {}", e)))
+    }
+
+    /// List all memory IDs in the database
+    ///
+    /// Warning: Loads all IDs into memory. Use with caution on large databases.
+    ///
+    /// Returns:
+    ///     List of memory ID strings
+    ///
+    /// Example:
+    ///     >>> ids = memory.list_ids()
+    ///     >>> print(f"Total memories: {len(ids)}")
+    fn list_ids(&self) -> PyResult<Vec<String>> {
+        let engine = self.get_engine()?;
+        let ids = engine
+            .list_ids()
+            .map_err(|e| PyIOError::new_err(format!("Failed to list IDs: {}", e)))?;
+        Ok(ids.into_iter().map(|id| id.to_string()).collect())
+    }
+
     /// Close the database and save all indexes
     ///
     /// Example:

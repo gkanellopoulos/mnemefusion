@@ -23,5 +23,5 @@ pub use fusion::{
 pub use graph_traversal::{GraphTraversal, TraversalConfig};
 pub use intent::{IntentClassification, IntentClassifier, QueryIntent};
 pub use planner::QueryPlanner;
-pub use profile_search::ProfileSearch;
+pub use profile_search::{MatchedProfileFact, ProfileSearch, ProfileSearchResult};
 pub use reranker::HeuristicReranker;

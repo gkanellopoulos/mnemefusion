@@ -194,7 +194,7 @@ impl QueryPlanner {
         limit: usize,
         namespace: Option<&str>,
         filters: Option<&[MetadataFilter]>,
-    ) -> Result<(IntentClassification, Vec<FusedResult>)> {
+    ) -> Result<(IntentClassification, Vec<FusedResult>, Vec<crate::query::profile_search::MatchedProfileFact>)> {
         // Step 1: Classify intent (try SLM first, fallback to patterns)
         let intent = self.classify_intent(query_text)?;
 
@@ -216,6 +216,7 @@ impl QueryPlanner {
             }
             // Entity not in graph — fall through to standard multi-dimensional retrieval
         }
+
 
         // Step 1.7: Detect target entity for speaker-aware retrieval.
         // Used both to increase candidate pool (more docs to compensate for penalty)
@@ -262,8 +263,9 @@ impl QueryPlanner {
         // "instruments" matches "instrument", "books" matches "book", etc.
         // Uses max() to ensure fact-matched memories rank AT LEAST as high as the
         // 2.0 baseline (never clamped below it).
-        let profile_scores = self.profile_search(query_text, limit * fetch_multiplier)?;
-        for (memory_id, profile_score) in profile_scores {
+        let profile_result = self.profile_search.search(query_text, limit * fetch_multiplier)?;
+        let matched_facts = profile_result.matched_facts;
+        for (memory_id, profile_score) in profile_result.source_scores {
             let boosted = 2.0 + profile_score; // fact-matched get 2.0-3.0
             entity_scores
                 .entry(memory_id)
@@ -544,7 +546,7 @@ impl QueryPlanner {
             limit,
         )?;
 
-        Ok((intent, final_results))
+        Ok((intent, final_results, matched_facts))
     }
 
     /// Entity-first retrieval path (Sprint 18 Task 18.4)
@@ -565,13 +567,13 @@ impl QueryPlanner {
         namespace: Option<&str>,
         filters: Option<&[MetadataFilter]>,
         intent: IntentClassification,
-    ) -> Result<(IntentClassification, Vec<FusedResult>)> {
+    ) -> Result<(IntentClassification, Vec<FusedResult>, Vec<crate::query::profile_search::MatchedProfileFact>)> {
         // Step 1: Find entity by name (case-insensitive)
         let entity = self.storage.find_entity_by_name(entity_name)?;
 
         if entity.is_none() {
             // Entity not found - return empty results
-            return Ok((intent, vec![]));
+            return Ok((intent, vec![], vec![]));
         }
 
         let entity = entity.unwrap();
@@ -595,7 +597,7 @@ impl QueryPlanner {
         }
 
         if memory_id_set.is_empty() {
-            return Ok((intent, vec![]));
+            return Ok((intent, vec![], vec![]));
         }
 
         let memory_ids: Vec<MemoryId> = memory_id_set.into_iter().collect();
@@ -605,6 +607,9 @@ impl QueryPlanner {
         // No hardcoded keyword→fact_type mapping needed.
         let profile_boost_memories: HashMap<MemoryId, f32> =
             self.profile_search.compute_fact_boosts(entity_name, query_text)?;
+
+        // Also get matched facts for synthetic injection
+        let matched_facts = self.profile_search.search(query_text, limit)?.matched_facts;
 
         // Step 3: Calculate scores for each memory
         let mut scored_results = Vec::new();
@@ -695,7 +700,7 @@ impl QueryPlanner {
 
         let final_results = scored_results.into_iter().take(limit).collect();
 
-        Ok((intent, final_results))
+        Ok((intent, final_results, matched_facts))
     }
 
     /// Extract the primary person entity from query text for speaker-aware reranking.
@@ -1087,17 +1092,6 @@ impl QueryPlanner {
     ///
     /// Looks up Entity Profiles for entities mentioned in the query and
     /// returns source memories of matching facts. This enables direct fact
-    /// lookup instead of relying on semantic similarity.
-    ///
-    /// For example, query "What is Caroline researching?" will:
-    /// 1. Detect entity "Caroline"
-    /// 2. Look up Caroline's profile
-    /// 3. Match query words against all facts by word overlap
-    /// 4. Return memories whose facts overlap with the query
-    fn profile_search(&self, query_text: &str, limit: usize) -> Result<HashMap<MemoryId, f32>> {
-        self.profile_search.search(query_text, limit)
-    }
-
     /// Perform causal language-based search using SLM metadata with pattern fallback
     ///
     /// Uses SLM-extracted causal metadata (relationships, density, implicit causation)
@@ -1653,7 +1647,7 @@ mod tests {
             .unwrap();
 
         // Execute query
-        let (intent, results) = planner
+        let (intent, results, _matched_facts) = planner
             .query("test query", &vec![0.1; 384], 10, None, None)
             .unwrap();
 
@@ -1734,7 +1728,7 @@ mod tests {
             .unwrap();
 
         // Query with ns1 filter
-        let (_, results) = planner
+        let (_, results, _) = planner
             .query("test", &vec![0.1; 384], 10, Some("ns1"), None)
             .unwrap();
 
@@ -1743,7 +1737,7 @@ mod tests {
         assert!(results.iter().all(|r| r.id == mem1_id));
 
         // Query with ns2 filter
-        let (_, results) = planner
+        let (_, results, _) = planner
             .query("test", &vec![0.1; 384], 10, Some("ns2"), None)
             .unwrap();
 
@@ -1752,7 +1746,7 @@ mod tests {
         assert!(results.iter().all(|r| r.id == mem2_id));
 
         // Query with default namespace filter
-        let (_, results) = planner
+        let (_, results, _) = planner
             .query("test", &vec![0.1; 384], 10, Some(""), None)
             .unwrap();
 
@@ -2615,7 +2609,7 @@ mod tests {
 
         // Query with entity-focused pattern (should trigger entity-first retrieval)
         let query_embedding = vec![0.15; 384];
-        let (intent, results) = planner
+        let (intent, results, _matched_facts) = planner
             .query("What does Alice like?", &query_embedding, 10, None, None)
             .unwrap();
 
@@ -2651,7 +2645,7 @@ mod tests {
 
         // Query for non-existent entity
         let query_embedding = vec![0.1; 384];
-        let (_intent, results) = planner
+        let (_intent, results, _matched_facts) = planner
             .query("What does NonExistentEntity like?", &query_embedding, 10, None, None)
             .unwrap();
 

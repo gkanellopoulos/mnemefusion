@@ -63,6 +63,24 @@ fn word_overlap_score(query_words: &HashSet<String>, fact_words: &HashSet<String
     (overlap as f32 / norm as f32).min(1.0)
 }
 
+/// A single matched fact from a profile search
+#[derive(Debug, Clone)]
+pub struct MatchedProfileFact {
+    pub entity_name: String,
+    pub fact_type: String,
+    pub value: String,
+    pub score: f32,
+    pub source_memory: MemoryId,
+}
+
+/// Result of a profile search containing both source scores (for RRF boosting)
+/// and matched facts (for synthetic memory injection)
+#[derive(Debug, Clone)]
+pub struct ProfileSearchResult {
+    pub source_scores: HashMap<MemoryId, f32>,
+    pub matched_facts: Vec<MatchedProfileFact>,
+}
+
 /// Profile-based search engine (open-vocabulary)
 ///
 /// Searches Entity Profiles to find memories that are sources of
@@ -93,21 +111,22 @@ impl ProfileSearch {
     /// This is domain-agnostic: any fact_type the LLM generates (instrument,
     /// pet_name, art_style, miniature_painting, etc.) is automatically searchable
     /// without needing a hardcoded keyword mapping.
-    pub fn search(&self, query_text: &str, limit: usize) -> Result<HashMap<MemoryId, f32>> {
+    pub fn search(&self, query_text: &str, limit: usize) -> Result<ProfileSearchResult> {
         let mut scores: HashMap<MemoryId, f32> = HashMap::new();
+        let mut matched_facts: Vec<MatchedProfileFact> = Vec::new();
 
         // Step 1: Extract entities from query
         let query_entities = self.entity_extractor.extract(query_text)?;
 
         if query_entities.is_empty() {
-            return Ok(scores);
+            return Ok(ProfileSearchResult { source_scores: scores, matched_facts });
         }
 
         // Step 2: Tokenize the query
         let query_words = tokenize(query_text);
 
         if query_words.is_empty() {
-            return Ok(scores);
+            return Ok(ProfileSearchResult { source_scores: scores, matched_facts });
         }
 
         // Step 3: Look up profiles and score all facts by word overlap
@@ -136,6 +155,15 @@ impl ProfileSearch {
                                 .entry(fact.source_memory.clone())
                                 .and_modify(|s| *s = (*s + fact_score).min(1.0))
                                 .or_insert(fact_score);
+
+                            // Collect matched fact for synthetic injection
+                            matched_facts.push(MatchedProfileFact {
+                                entity_name: entity_name.clone(),
+                                fact_type: fact_type.clone(),
+                                value: fact.value.clone(),
+                                score: fact_score,
+                                source_memory: fact.source_memory.clone(),
+                            });
                         }
                     }
                 }
@@ -153,14 +181,22 @@ impl ProfileSearch {
             }
         }
 
-        // Limit results
+        // Limit source_scores
         if scores.len() > limit {
             let mut sorted: Vec<_> = scores.into_iter().collect();
             sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             scores = sorted.into_iter().take(limit).collect();
         }
 
-        Ok(scores)
+        // Dedup matched_facts by (entity_name, fact_type, value), keep highest score
+        matched_facts.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        let mut seen = HashSet::new();
+        matched_facts.retain(|f| {
+            seen.insert((f.entity_name.clone(), f.fact_type.clone(), f.value.clone()))
+        });
+        matched_facts.truncate(5);
+
+        Ok(ProfileSearchResult { source_scores: scores, matched_facts })
     }
 
     /// Compute open-vocabulary profile boost for a specific entity's facts
@@ -323,10 +359,10 @@ mod tests {
 
         let search = ProfileSearch::new(storage);
         // "research" in query matches "research" in fact_type "research_topic"
-        let results = search.search("What is Caroline researching?", 10).unwrap();
+        let result = search.search("What is Caroline researching?", 10).unwrap();
 
-        assert!(!results.is_empty(), "Should find results via fact_type word overlap");
-        assert!(results.contains_key(&memory_id));
+        assert!(!result.source_scores.is_empty(), "Should find results via fact_type word overlap");
+        assert!(result.source_scores.contains_key(&memory_id));
     }
 
     #[test]
@@ -350,10 +386,10 @@ mod tests {
 
         let search = ProfileSearch::new(storage);
         // "guitar" in query matches "guitar" in fact value
-        let results = search.search("Does Caroline play guitar?", 10).unwrap();
+        let result = search.search("Does Caroline play guitar?", 10).unwrap();
 
-        assert!(!results.is_empty(), "Should find results via value word overlap");
-        assert!(results.contains_key(&memory_id));
+        assert!(!result.source_scores.is_empty(), "Should find results via value word overlap");
+        assert!(result.source_scores.contains_key(&memory_id));
     }
 
     #[test]
@@ -378,10 +414,10 @@ mod tests {
 
         let search = ProfileSearch::new(storage);
         // "painting" in query matches "painting" in fact_type "miniature_painting"
-        let results = search.search("Tell me about Alice painting hobby", 10).unwrap();
+        let result = search.search("Tell me about Alice painting hobby", 10).unwrap();
 
-        assert!(!results.is_empty(), "Should find novel fact types via word overlap");
-        assert!(results.contains_key(&memory_id));
+        assert!(!result.source_scores.is_empty(), "Should find novel fact types via word overlap");
+        assert!(result.source_scores.contains_key(&memory_id));
     }
 
     #[test]
@@ -399,9 +435,9 @@ mod tests {
         storage.store_entity_profile(&profile).unwrap();
 
         let search = ProfileSearch::new(storage);
-        let results = search.search("What is Bob researching?", 10).unwrap();
+        let result = search.search("What is Bob researching?", 10).unwrap();
 
-        assert!(results.is_empty(), "Should not find results for unknown entity");
+        assert!(result.source_scores.is_empty(), "Should not find results for unknown entity");
     }
 
     #[test]
@@ -425,11 +461,11 @@ mod tests {
 
         let search = ProfileSearch::new(storage);
         // Query has zero word overlap with "zodiac sign capricorn"
-        let results = search.search("Tell me everything about Alice", 10).unwrap();
+        let result = search.search("Tell me everything about Alice", 10).unwrap();
 
         // Should fallback to boosting all source memories
-        assert!(!results.is_empty(), "Should fallback boost for entity with no fact overlap");
-        assert!(results[&memory_id] < 0.5, "Fallback score should be low (0.3)");
+        assert!(!result.source_scores.is_empty(), "Should fallback boost for entity with no fact overlap");
+        assert!(result.source_scores[&memory_id] < 0.5, "Fallback score should be low (0.3)");
     }
 
     #[test]
@@ -450,15 +486,15 @@ mod tests {
         storage.store_entity_profile(&profile).unwrap();
 
         let search = ProfileSearch::new(storage);
-        let results = search.search("What instrument does Caroline play?", 10).unwrap();
+        let result = search.search("What instrument does Caroline play?", 10).unwrap();
 
         // "instrument" matches instrument fact, "play" doesn't match pet fact
-        assert!(results.contains_key(&mem_guitar), "Should find instrument memory");
+        assert!(result.source_scores.contains_key(&mem_guitar), "Should find instrument memory");
         // pet fact might or might not match depending on word overlap
         // But instrument memory should have higher score
-        if results.contains_key(&mem_pet) {
+        if result.source_scores.contains_key(&mem_pet) {
             assert!(
-                results[&mem_guitar] >= results[&mem_pet],
+                result.source_scores[&mem_guitar] >= result.source_scores[&mem_pet],
                 "Instrument memory should score higher for instrument query"
             );
         }
