@@ -248,7 +248,7 @@ class LLMClient:
             Tuple of (answer, tokens_used)
         """
         # Format context
-        context_str = "\n".join([f"- {c}" for c in context[:15]])  # Top-15 for better coverage
+        context_str = "\n".join([f"- {c}" for c in context[:25]])  # 20 memories + up to 5 profile facts
 
         prompt = f"""You are a helpful assistant answering questions based on conversation history.
 
@@ -527,6 +527,83 @@ class MnemeFusionEvaluator:
 
         return contents, dialog_ids, latency_ms
 
+    def get_profile_fact_memories(self, question: str) -> List[str]:
+        """
+        Extract entity name from question and return matched profile facts
+        formatted as synthetic memory lines (same format as retrieved memories).
+        Only returns facts with word overlap to the question.
+        Returns empty list if no relevant facts found.
+        """
+        if self.memory is None:
+            return []
+
+        import re
+
+        # Extract entity names mentioned in the question
+        candidate_names = re.findall(r"[A-Z][a-z]+", question)
+        skip_words = {"What", "When", "Where", "Who", "How", "Which", "Does",
+                      "Did", "Has", "Have", "Are", "Is", "The", "LGBTQ", "October",
+                      "January", "February", "March", "April", "May", "June",
+                      "July", "August", "September", "November", "December",
+                      "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday",
+                      "Friday", "Saturday"}
+
+        # Simple stemming: strip common suffixes for matching
+        def stem(w):
+            w = w.lower()
+            for suffix in ["ies", "es", "ing", "ed", "s"]:
+                if w.endswith(suffix) and len(w) - len(suffix) >= 3:
+                    return w[:-len(suffix)]
+            return w
+
+        # Tokenize and stem question words
+        stop_words = {"a", "an", "the", "is", "are", "was", "were", "do", "does",
+                      "did", "has", "have", "had", "what", "when", "where", "who",
+                      "how", "which", "in", "on", "at", "to", "for", "of", "and",
+                      "or", "but", "not", "with", "from", "by", "that", "this",
+                      "been", "being", "some", "any", "her", "his", "their", "its",
+                      "she", "he", "they", "them", "about", "than", "like"}
+        query_stems = set()
+        for w in re.findall(r"[a-zA-Z]+", question.lower()):
+            if w not in stop_words and len(w) > 1:
+                query_stems.add(stem(w))
+
+        synthetic_memories = []
+        for word in candidate_names:
+            if word in skip_words:
+                continue
+            try:
+                profile = self.memory.get_entity_profile(word)
+                if not profile or profile.get("total_facts", 0) == 0:
+                    continue
+
+                facts_dict = profile.get("facts", {})
+                for fact_type, facts_list in facts_dict.items():
+                    # Stem fact_type words
+                    type_stems = set(stem(w) for w in re.findall(r"[a-z]+", fact_type.lower()))
+                    for fact in facts_list:
+                        val = fact["value"]
+                        # Skip junk values
+                        if val.lower() in ("none", ""):
+                            continue
+                        value_stems = set(stem(w) for w in re.findall(r"[a-z]+", val.lower()))
+                        fact_stems = type_stems | value_stems
+                        overlap = len(query_stems & fact_stems)
+                        if overlap > 0:
+                            # Format as a synthetic memory line
+                            synthetic_memories.append(
+                                (overlap, f"{word}'s {fact_type}: {val}")
+                            )
+            except Exception:
+                continue
+
+        if not synthetic_memories:
+            return []
+
+        # Sort by relevance, take top 5 to not overwhelm
+        synthetic_memories.sort(key=lambda x: -x[0])
+        return [mem for _, mem in synthetic_memories[:5]]
+
 
 # =============================================================================
 # Dataset Loading
@@ -762,9 +839,13 @@ def run_evaluation(
                 r_at_10 = found_at_10 / len(evidence_set)
                 r_at_20 = found_at_20 / len(evidence_set)
 
-            # Generate answer (use only top_k results, not the full recall_k)
+            # Prepend matched profile facts + all real memories (no displacement)
+            profile_memories = evaluator.get_profile_fact_memories(question)
+            context_with_facts = profile_memories + retrieved_content[:top_k]
+
+            # Generate answer
             gen_start = time.time()
-            answer, tokens = llm.generate_answer(question, retrieved_content[:top_k])
+            answer, tokens = llm.generate_answer(question, context_with_facts)
             gen_latency = (time.time() - gen_start) * 1000
 
             # Judge
