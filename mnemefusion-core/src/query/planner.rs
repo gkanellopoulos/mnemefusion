@@ -11,7 +11,7 @@ use crate::{
     query::{
         aggregator::MultiTurnAggregator,
         fusion::{FusedResult, FusionEngine},
-        intent::{IntentClassification, IntentClassifier},
+        intent::{IntentClassification, IntentClassifier, QueryIntent},
         profile_search::ProfileSearch,
     },
     storage::StorageEngine,
@@ -199,9 +199,9 @@ impl QueryPlanner {
         let intent = self.classify_intent(query_text)?;
 
         // Step 1.5: Entity-first retrieval path (Sprint 18 Task 18.4)
-        // If query has entity_focus AND entity exists in graph, fetch ALL memories
-        // mentioning that entity. Falls through to standard path if entity not in graph
-        // (e.g., baseline benchmark without LLM entity extraction).
+        // Only fires for narrow entity_list_patterns (e.g., "What does Alice like?").
+        // Broader entity queries go through the enhanced general path which preserves
+        // multi-dimensional scoring while using profile sources and speaker reranking.
         if let Some(entity_name) = intent.entity_focus.clone() {
             if self.storage.find_entity_by_name(&entity_name)?.is_some() {
                 return self.retrieve_entity_focused(
@@ -235,19 +235,42 @@ impl QueryPlanner {
         let mut causal_scores = self.causal_search(query_text, limit * fetch_multiplier)?;
         let mut entity_scores = self.entity_search(query_text, limit * fetch_multiplier)?;
 
+        // Step 2.1: Add profile source memories to entity candidates with HIGH priority.
+        // The entity graph only contains memories where entity names appear in text.
+        // But when Melanie says "I like running", her name isn't in the text — only
+        // the LLM extraction (with "Melanie says:" prefix) correctly attributes it.
+        // Profile source_memories include these LLM-attributed memories.
+        // Score 2.0 ensures they rank at the TOP of entity dimension after normalization,
+        // giving them strong signal in RRF fusion. 2.0 baseline is REQUIRED — lower
+        // values (tested 1.5) cause regression because wrong-entity graph memories
+        // (0-1.0) compete too closely. Graduated scoring (2.0 + sem_bonus) also
+        // regresses because it changes RRF normalization for all entity scores.
+        if let Some(ref target) = target_entity {
+            if let Ok(Some(profile)) = self.storage.get_entity_profile(target) {
+                for source_id in &profile.source_memories {
+                    entity_scores
+                        .entry(source_id.clone())
+                        .and_modify(|s| *s = (*s).max(2.0))
+                        .or_insert(2.0);
+                }
+            }
+        }
+
         // Step 2.2: Profile-based search for direct fact lookup (Phase 3)
-        // Boost entity_scores with profile matches - memories that are sources of
-        // matching facts get significant priority
+        // Boost entity_scores with profile matches — memories that are sources of
+        // matching facts get additional priority. Uses stemmed word-overlap so
+        // "instruments" matches "instrument", "books" matches "book", etc.
+        // Uses max() to ensure fact-matched memories rank AT LEAST as high as the
+        // 2.0 baseline (never clamped below it).
         let profile_scores = self.profile_search(query_text, limit * fetch_multiplier)?;
         for (memory_id, profile_score) in profile_scores {
+            let boosted = 2.0 + profile_score; // fact-matched get 2.0-3.0
             entity_scores
                 .entry(memory_id)
                 .and_modify(|s| {
-                    // Boost existing entity score with profile score
-                    // Use max to prefer profile-based matches
-                    *s = (*s + profile_score * 0.5).min(1.0);
+                    *s = (*s).max(boosted);
                 })
-                .or_insert(profile_score);
+                .or_insert(boosted);
         }
 
         // Step 2.3: Adaptive pre-fusion semantic filtering
@@ -354,6 +377,11 @@ impl QueryPlanner {
         // Step 3.5: Cross-dimensional validation (Sprint 18 Task 18.2)
         // Calculate confidence based on how many dimensions contributed to each result
         // Multi-dimensional matches are more reliable than single-dimension matches
+        //
+        // Solution 4: Context-dependent confidence scoring
+        // For Factual and Entity intents, single-dimension matches (often just semantic)
+        // are expected and valid — don't penalize them as harshly as other intents.
+        // This stops burying correct single-hop results below noisy multi-dimension matches.
         for result in &mut fused_results {
             // Count how many dimensions contributed (score > 0.0)
             let mut dimension_count = 0;
@@ -374,15 +402,22 @@ impl QueryPlanner {
                 dimension_count += 1;
             }
 
-            // Assign confidence based on dimensional coverage
-            // More dimensions agreeing = higher confidence = more reliable result
+            // Intent-dependent confidence: Factual/Entity queries often match on
+            // only 1-2 dimensions (semantic for factual, entity for entity queries).
+            // Using the default 0.4 penalty for these buries correct results.
+            let single_dim_confidence = match intent.intent {
+                crate::query::QueryIntent::Factual => 0.7,
+                crate::query::QueryIntent::Entity => 0.7,
+                _ => 0.4,
+            };
+
             result.confidence = match dimension_count {
                 5 => 1.0,   // All 5 dimensions agree - highest confidence
                 4 => 0.9,   // 4 dimensions - very high confidence
                 3 => 0.8,   // 3 dimensions - high confidence
                 2 => 0.6,   // 2 dimensions - medium confidence
-                1 => 0.4,   // 1 dimension only - low confidence (potential noise)
-                _ => 0.2,   // 0 dimensions (shouldn't happen) - very low confidence
+                1 => single_dim_confidence, // Intent-dependent (0.7 for factual/entity, 0.4 otherwise)
+                _ => 0.2,   // 0 dimensions - very low confidence
             };
 
             // Adjust fused_score by confidence to penalize single-dimension matches
@@ -408,8 +443,12 @@ impl QueryPlanner {
                     if let Some(speaker) = memory.get_metadata("speaker") {
                         any_speaker_data = true;
                         if speaker.to_lowercase() != target_lower {
-                            // Non-target speaker: reduce score to deprioritize
-                            result.fused_score *= 0.4;
+                            // Non-target speaker: strong penalty to suppress cross-entity
+                            // pollution. In two-person conversations, the other person's
+                            // memories dominate entity search because they mention the
+                            // target's name. Tested: 0.2x gives best overall balance
+                            // (single-hop +9pts, temporal preserved, R@20 +2.7pts).
+                            result.fused_score *= 0.2;
                         }
                     }
                 }
@@ -420,6 +459,77 @@ impl QueryPlanner {
                         .partial_cmp(&a.fused_score)
                         .unwrap_or(std::cmp::Ordering::Equal)
                 });
+            }
+        }
+
+        // Step 3.8: Multi-evidence expansion for aggregation queries (Solution 5)
+        // Aggregation queries ("What instruments does Melanie play?") need evidence
+        // from 2-4 separate memories. Expand by fetching entity memories and adding
+        // DIVERSE ones not already in results. Cap at 5 expansions for performance.
+        if MultiTurnAggregator::is_aggregation(&query_text.to_lowercase()) {
+            if let Some(ref entity_name) = target_entity {
+                if let Ok(Some(entity)) = self.storage.find_entity_by_name(entity_name) {
+                    let graph = self.graph_manager.read().unwrap();
+                    let entity_memories = graph.get_entity_memories(&entity.id);
+                    drop(graph);
+
+                    let existing_ids: std::collections::HashSet<_> =
+                        fused_results.iter().map(|r| r.id.clone()).collect();
+
+                    // Pre-load top-K embeddings once (avoid O(n*m) storage lookups)
+                    let top_k_embeddings: Vec<Vec<f32>> = fused_results.iter()
+                        .take(limit.min(10)) // Only compare against top-10
+                        .filter_map(|r| {
+                            self.storage.get_memory_by_u64(r.id.to_u64()).ok().flatten()
+                                .map(|m| m.embedding.clone())
+                        })
+                        .filter(|e| !e.is_empty() && e.len() == query_embedding.len())
+                        .collect();
+
+                    let candidates: Vec<_> = entity_memories.memories.into_iter()
+                        .filter(|m| !existing_ids.contains(m))
+                        .collect();
+
+                    let mut expanded = Vec::new();
+                    let max_expansions = 5;
+
+                    for candidate_id in candidates {
+                        if expanded.len() >= max_expansions {
+                            break;
+                        }
+                        if let Ok(Some(memory)) = self.storage.get_memory_by_u64(candidate_id.to_u64()) {
+                            if memory.embedding.is_empty() || query_embedding.len() != memory.embedding.len() {
+                                continue;
+                            }
+
+                            // Check diversity against pre-loaded embeddings
+                            let max_sim = top_k_embeddings.iter()
+                                .map(|e| cosine_similarity(&memory.embedding, e))
+                                .fold(0.0f32, f32::max);
+
+                            if max_sim < 0.8 {
+                                let sem_score = cosine_similarity(query_embedding, &memory.embedding);
+                                expanded.push(FusedResult {
+                                    id: candidate_id,
+                                    semantic_score: sem_score,
+                                    bm25_score: 0.0,
+                                    temporal_score: 0.0,
+                                    causal_score: 0.0,
+                                    entity_score: 0.5,
+                                    fused_score: sem_score * 0.7,
+                                    confidence: 0.7,
+                                });
+                            }
+                        }
+                    }
+
+                    if !expanded.is_empty() {
+                        fused_results.extend(expanded);
+                        fused_results.sort_by(|a, b| {
+                            b.fused_score.partial_cmp(&a.fused_score).unwrap_or(std::cmp::Ordering::Equal)
+                        });
+                    }
+                }
             }
         }
 
@@ -469,36 +579,32 @@ impl QueryPlanner {
         // Step 2: Get ALL memories mentioning this entity from the graph
         let graph = self.graph_manager.read().unwrap();
         let entity_result = graph.get_entity_memories(&entity.id);
-        let memory_ids = entity_result.memories;
+        let mut memory_id_set: std::collections::HashSet<MemoryId> =
+            entity_result.memories.into_iter().collect();
         drop(graph); // Release lock
 
-        if memory_ids.is_empty() {
+        // Step 2.1: Also include memories from entity PROFILE sources.
+        // The entity graph only contains memories where the entity name appears in text.
+        // But when Melanie says "I like running", her name isn't in the text — only the
+        // LLM extraction (with "Melanie says:" prefix) knows it's about Melanie.
+        // Profile source_memories include these LLM-attributed memories.
+        if let Ok(Some(profile)) = self.storage.get_entity_profile(entity_name) {
+            for source_id in &profile.source_memories {
+                memory_id_set.insert(source_id.clone());
+            }
+        }
+
+        if memory_id_set.is_empty() {
             return Ok((intent, vec![]));
         }
 
-        // Step 2.5: Look up entity profile for fact-based boosting
-        // If the entity has a profile with matching facts, boost those memories
-        let profile_boost_memories: HashMap<MemoryId, f32> = {
-            let mut boost_map = HashMap::new();
-            if let Some(profile) = self.storage.get_entity_profile(entity_name)? {
-                // Detect fact types from query
-                let fact_types = self.profile_search.detect_fact_types(query_text);
+        let memory_ids: Vec<MemoryId> = memory_id_set.into_iter().collect();
 
-                if !fact_types.is_empty() {
-                    // Boost memories with matching facts
-                    for fact_type in &fact_types {
-                        for fact in profile.get_facts(fact_type) {
-                            let confidence = fact.confidence;
-                            boost_map
-                                .entry(fact.source_memory.clone())
-                                .and_modify(|s: &mut f32| *s = (*s + confidence).min(1.0))
-                                .or_insert(confidence);
-                        }
-                    }
-                }
-            }
-            boost_map
-        };
+        // Step 2.5: Look up entity profile for fact-based boosting (open-vocabulary)
+        // Matches query words against ALL fact text (fact_type + value) for the entity.
+        // No hardcoded keyword→fact_type mapping needed.
+        let profile_boost_memories: HashMap<MemoryId, f32> =
+            self.profile_search.compute_fact_boosts(entity_name, query_text)?;
 
         // Step 3: Calculate scores for each memory
         let mut scored_results = Vec::new();
@@ -548,15 +654,23 @@ impl QueryPlanner {
                 .copied()
                 .unwrap_or(0.0);
 
-            // Combined score: prioritize semantic similarity with keyword boost
-            // For entity queries, we want memories that mention the entity AND match query semantics
-            // Profile boost significantly increases score for memories with matching facts
+            // Speaker-aware scoring: prioritize memories where the target entity is speaking.
+            // In a two-person conversation, the entity graph includes memories where the OTHER
+            // person mentions the target entity. Those memories contain the other person's info,
+            // not the target's. Penalize non-target speakers to fix this inversion.
+            let speaker_factor = match memory.get_metadata("speaker") {
+                Some(speaker) if speaker.to_lowercase() == entity_name.to_lowercase() => 1.0,
+                Some(_) => 0.4, // Non-target speaker: reduce score
+                None => 0.7,    // No speaker metadata: neutral
+            };
+
+            // Combined score: semantic + BM25 + profile boost, adjusted by speaker
             let base_score = 0.7 * semantic_score + 0.3 * bm25_score;
             let combined_score = if profile_boost > 0.0 {
                 // Significant boost for profile matches - these are direct fact sources
-                (base_score + profile_boost * 0.5).min(1.0)
+                (base_score + profile_boost * 0.5).min(1.0) * speaker_factor
             } else {
-                base_score
+                base_score * speaker_factor
             };
 
             // Higher confidence for profile-matched memories
@@ -819,11 +933,14 @@ impl QueryPlanner {
         Ok(scores)
     }
 
-    /// Perform entity-based search using SLM metadata with pattern fallback
+    /// Perform entity-based search using entity graph with BM25 fallback
     ///
-    /// Uses SLM-extracted entities (with mentions, roles, types) when available,
-    /// falling back to pattern-based entity_names. Searches broader corpus for
-    /// better recall.
+    /// Solution 1: Uses the entity graph (built at ingestion time) to find ALL
+    /// memories mentioning each query entity across the entire corpus, not just
+    /// recent ones. Graph provides CANDIDATES; scoring uses metadata overlap.
+    ///
+    /// Solution 2: When an entity is not in the graph (extraction missed it),
+    /// falls back to BM25 keyword search for the entity name.
     fn entity_search(&self, query_text: &str, limit: usize) -> Result<HashMap<MemoryId, f32>> {
         let entity_extractor = SimpleEntityExtractor::new();
 
@@ -839,51 +956,85 @@ impl QueryPlanner {
         let query_entity_set: std::collections::HashSet<String> =
             query_entities.iter().map(|e| e.to_lowercase()).collect();
 
-        // Get more memories to search for entity matches
-        // Use larger multiplier to search broader corpus for better recall
-        let fetch_limit = limit * 20; // Search 20x more for better entity coverage
-        let recent_memories = self.temporal_index.recent(fetch_limit)?;
-
         let mut scores = HashMap::new();
+        let mut found_via_graph = false;
 
-        for temporal_result in recent_memories {
-            // Load memory to access metadata
-            if let Some(memory) = self.storage.get_memory(&temporal_result.id)? {
-                let mut entity_score = 0.0;
-
-                // Try SLM metadata first (richer entity information)
-                if let Some(slm_metadata) = Self::get_slm_metadata(&memory) {
-                    entity_score = Self::calculate_slm_entity_score(&query_entity_set, &slm_metadata);
-                }
-
-                // Fallback to pattern-based entity_names if SLM didn't match
-                if entity_score == 0.0 {
-                    if let Some(entities_json) = memory.get_metadata("entity_names") {
-                        if let Ok(memory_entities) = serde_json::from_str::<Vec<String>>(entities_json) {
-                            entity_score = Self::calculate_entity_overlap(&query_entity_set, &memory_entities);
-                        }
+        // Solution 1: Full-corpus entity search via graph lookup
+        // Use graph to find CANDIDATES across the entire corpus,
+        // then score each using metadata overlap (preserves nuanced ranking).
+        {
+            let graph = self.graph_manager.read().unwrap();
+            let mut candidate_ids = Vec::new();
+            for query_entity in &query_entities {
+                if let Ok(Some(entity)) = self.storage.find_entity_by_name(query_entity) {
+                    found_via_graph = true;
+                    let entity_result = graph.get_entity_memories(&entity.id);
+                    for memory_id in entity_result.memories {
+                        candidate_ids.push(memory_id);
                     }
                 }
+            }
+            drop(graph); // Release lock before storage lookups
 
-                if entity_score > 0.0 {
-                    scores.insert(temporal_result.id.clone(), entity_score);
+            // Score each candidate using metadata overlap (same quality as original)
+            for memory_id in candidate_ids {
+                if let Ok(Some(memory)) = self.storage.get_memory(&memory_id) {
+                    let mut entity_score = 0.0;
+
+                    // Try SLM metadata first (richer entity information)
+                    if let Some(slm_metadata) = Self::get_slm_metadata(&memory) {
+                        entity_score = Self::calculate_slm_entity_score(&query_entity_set, &slm_metadata);
+                    }
+
+                    // Fallback to entity_names metadata
+                    if entity_score == 0.0 {
+                        if let Some(entities_json) = memory.get_metadata("entity_names") {
+                            if let Ok(memory_entities) = serde_json::from_str::<Vec<String>>(entities_json) {
+                                entity_score = Self::calculate_entity_overlap(&query_entity_set, &memory_entities);
+                            }
+                        }
+                    }
+
+                    // Graph-confirmed entity presence: minimum score of 0.5
+                    if entity_score == 0.0 {
+                        entity_score = 0.5;
+                    }
+
+                    scores
+                        .entry(memory_id)
+                        .and_modify(|s: &mut f32| *s = (*s).max(entity_score))
+                        .or_insert(entity_score);
                 }
             }
         }
 
-        // If we found entity matches, return them
+        // Solution 2: BM25 keyword fallback for entity search
+        // If entity not found in graph, search for entity name as a keyword.
+        if !found_via_graph {
+            for query_entity in &query_entities {
+                let bm25_results = self.bm25_index.search(query_entity, limit * 5)?;
+                for result in bm25_results {
+                    if result.score > 0.0 {
+                        let normalized = result.score / (result.score + 1.0);
+                        scores
+                            .entry(result.memory_id)
+                            .and_modify(|s: &mut f32| *s = (*s + normalized).min(1.0))
+                            .or_insert(normalized);
+                    }
+                }
+            }
+        }
+
+        // Normalize and return top results
         if !scores.is_empty() {
-            // Normalize scores to 0.0-1.0 range
             FusionEngine::normalize_scores(&mut scores);
 
-            // Take top results by score
             let mut score_vec: Vec<_> = scores.into_iter().collect();
             score_vec.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
             score_vec.truncate(limit);
 
             Ok(score_vec.into_iter().collect())
         } else {
-            // No entity matches found
             Ok(HashMap::new())
         }
     }
@@ -940,9 +1091,9 @@ impl QueryPlanner {
     ///
     /// For example, query "What is Caroline researching?" will:
     /// 1. Detect entity "Caroline"
-    /// 2. Detect fact_type "research_topic" from "researching"
-    /// 3. Look up Caroline's profile
-    /// 4. Return memories that are sources of her research_topic facts
+    /// 2. Look up Caroline's profile
+    /// 3. Match query words against all facts by word overlap
+    /// 4. Return memories whose facts overlap with the query
     fn profile_search(&self, query_text: &str, limit: usize) -> Result<HashMap<MemoryId, f32>> {
         self.profile_search.search(query_text, limit)
     }

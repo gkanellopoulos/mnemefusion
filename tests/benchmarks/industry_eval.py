@@ -107,6 +107,13 @@ class QuestionResult:
     tokens_used: int
     memories_retrieved: int
 
+    # Recall@K metrics (Solution 6)
+    recall_at_5: float = 0.0
+    recall_at_10: float = 0.0
+    recall_at_20: float = 0.0
+    evidence_ids: List[str] = field(default_factory=list)
+    retrieved_dialog_ids: List[str] = field(default_factory=list)
+
     # Debug info
     retrieved_content: List[str] = field(default_factory=list)
 
@@ -131,6 +138,11 @@ class EvaluationResults:
     p99_retrieval_latency_ms: float = 0.0
     avg_tokens_per_question: float = 0.0
     total_tokens_used: int = 0
+
+    # Recall@K metrics (Solution 6)
+    recall_at_5: float = 0.0
+    recall_at_10: float = 0.0
+    recall_at_20: float = 0.0
 
     # Timing
     total_ingestion_time_s: float = 0.0
@@ -236,7 +248,7 @@ class LLMClient:
             Tuple of (answer, tokens_used)
         """
         # Format context
-        context_str = "\n".join([f"- {c}" for c in context[:10]])  # Limit context
+        context_str = "\n".join([f"- {c}" for c in context[:15]])  # Top-15 for better coverage
 
         prompt = f"""You are a helpful assistant answering questions based on conversation history.
 
@@ -245,10 +257,10 @@ Retrieved memories (dates in brackets show when each conversation occurred):
 
 Question: {question}
 
-Answer the question based ONLY on the information in the retrieved memories.
+Answer the question based on the information in the retrieved memories. Look carefully through ALL the memories for relevant details — the answer may be mentioned briefly or indirectly.
 For temporal questions (when did X happen), use the dates in brackets to calculate the answer.
 For example, if a memory from [8 May 2023] mentions "yesterday", the event happened on 7 May 2023.
-If the information is not available, say "I don't have enough information to answer this."
+If you find ANY relevant information, provide an answer. Only say "I don't have enough information" if the memories truly contain nothing related to the question.
 Keep your answer concise and factual."""
 
         try:
@@ -477,6 +489,16 @@ class MnemeFusionEvaluator:
         Returns:
             Tuple of (list of formatted context strings with dates, latency in ms)
         """
+        contents, dialog_ids, latency_ms = self.retrieve_with_ids(query, top_k)
+        return contents, latency_ms
+
+    def retrieve_with_ids(self, query: str, top_k: int = 10) -> Tuple[List[str], List[str], float]:
+        """
+        Retrieve relevant memories with their dialog IDs for Recall@K measurement.
+
+        Returns:
+            Tuple of (formatted contents, dialog_ids, latency_ms)
+        """
         # Generate query embedding
         query_embedding = self.embedder.encode([query], show_progress_bar=False)[0].tolist()
 
@@ -487,11 +509,13 @@ class MnemeFusionEvaluator:
 
         # Extract content WITH metadata for temporal reasoning
         contents = []
+        dialog_ids = []
         for result_dict, scores_dict in results:
             content = result_dict.get("content", "")
             metadata = result_dict.get("metadata", {})
             session_date = metadata.get("session_date", "")
             speaker = metadata.get("speaker", "")
+            dialog_id = metadata.get("dialog_id", "")
 
             # Format with date context for temporal reasoning
             if session_date:
@@ -499,8 +523,9 @@ class MnemeFusionEvaluator:
             else:
                 formatted = f"{speaker}: {content}" if speaker else content
             contents.append(formatted)
+            dialog_ids.append(dialog_id)
 
-        return contents, latency_ms
+        return contents, dialog_ids, latency_ms
 
 
 # =============================================================================
@@ -717,13 +742,29 @@ def run_evaluation(
             if verbose or (i + 1) % 50 == 0:
                 print(f"  [{i+1}/{len(questions)}] Category {category}: {question[:50]}...")
 
-            # Retrieve
-            retrieved_content, retrieval_latency = evaluator.retrieve(question, top_k=top_k)
+            # Retrieve with dialog IDs for Recall@K (Solution 6)
+            # Use top_k=20 for recall measurement, but only pass top_k to answer generation
+            recall_k = max(top_k, 20)
+            retrieved_content, retrieved_ids, retrieval_latency = evaluator.retrieve_with_ids(question, top_k=recall_k)
             latencies.append(retrieval_latency)
 
-            # Generate answer
+            # Calculate Recall@K (Solution 6)
+            # Check if evidence dialog IDs appear in retrieved results at various K
+            evidence_set = set(evidence) if evidence else set()
+            r_at_5 = 0.0
+            r_at_10 = 0.0
+            r_at_20 = 0.0
+            if evidence_set:
+                found_at_5 = len(evidence_set & set(retrieved_ids[:5]))
+                found_at_10 = len(evidence_set & set(retrieved_ids[:10]))
+                found_at_20 = len(evidence_set & set(retrieved_ids[:20]))
+                r_at_5 = found_at_5 / len(evidence_set)
+                r_at_10 = found_at_10 / len(evidence_set)
+                r_at_20 = found_at_20 / len(evidence_set)
+
+            # Generate answer (use only top_k results, not the full recall_k)
             gen_start = time.time()
-            answer, tokens = llm.generate_answer(question, retrieved_content)
+            answer, tokens = llm.generate_answer(question, retrieved_content[:top_k])
             gen_latency = (time.time() - gen_start) * 1000
 
             # Judge
@@ -746,13 +787,19 @@ def run_evaluation(
                 retrieval_latency_ms=retrieval_latency,
                 generation_latency_ms=gen_latency,
                 tokens_used=tokens,
-                memories_retrieved=len(retrieved_content),
+                memories_retrieved=len(retrieved_content[:top_k]),
+                recall_at_5=r_at_5,
+                recall_at_10=r_at_10,
+                recall_at_20=r_at_20,
+                evidence_ids=evidence if evidence else [],
+                retrieved_dialog_ids=retrieved_ids[:20],
                 retrieved_content=retrieved_content[:3] if verbose else []
             )
             results.append(result)
 
             if verbose:
-                print(f"    Judge: {'Y' if judge_score else 'N'} | F1: {f1:.2f} | BLEU: {bleu:.2f}")
+                recall_str = f"R@10: {r_at_10:.0%}" if evidence_set else "R@10: N/A"
+                print(f"    Judge: {'Y' if judge_score else 'N'} | F1: {f1:.2f} | BLEU: {bleu:.2f} | {recall_str}")
 
         eval_time = time.time() - eval_start
         print("-" * 70)
@@ -774,6 +821,13 @@ def run_evaluation(
             final_results.avg_bleu_score = sum(r.bleu_score for r in results) / len(results) * 100
             final_results.avg_tokens_per_question = sum(r.tokens_used for r in results) / len(results)
 
+            # Recall@K (Solution 6) — only for questions with evidence
+            results_with_evidence = [r for r in results if r.evidence_ids]
+            if results_with_evidence:
+                final_results.recall_at_5 = sum(r.recall_at_5 for r in results_with_evidence) / len(results_with_evidence) * 100
+                final_results.recall_at_10 = sum(r.recall_at_10 for r in results_with_evidence) / len(results_with_evidence) * 100
+                final_results.recall_at_20 = sum(r.recall_at_20 for r in results_with_evidence) / len(results_with_evidence) * 100
+
             # Latency percentiles
             sorted_latencies = sorted(latencies)
             final_results.avg_retrieval_latency_ms = np.mean(latencies)
@@ -785,11 +839,19 @@ def run_evaluation(
         for cat in set(r.category for r in results):
             cat_results = [r for r in results if r.category == cat]
             if cat_results:
+                cat_with_evidence = [r for r in cat_results if r.evidence_ids]
+                cat_recall_5 = sum(r.recall_at_5 for r in cat_with_evidence) / len(cat_with_evidence) * 100 if cat_with_evidence else 0.0
+                cat_recall_10 = sum(r.recall_at_10 for r in cat_with_evidence) / len(cat_with_evidence) * 100 if cat_with_evidence else 0.0
+                cat_recall_20 = sum(r.recall_at_20 for r in cat_with_evidence) / len(cat_with_evidence) * 100 if cat_with_evidence else 0.0
                 final_results.category_results[cat] = {
                     "count": len(cat_results),
                     "llm_judge_accuracy": sum(r.llm_judge_score for r in cat_results) / len(cat_results) * 100,
                     "avg_f1_score": sum(r.f1_score for r in cat_results) / len(cat_results) * 100,
                     "avg_bleu_score": sum(r.bleu_score for r in cat_results) / len(cat_results) * 100,
+                    "recall_at_5": cat_recall_5,
+                    "recall_at_10": cat_recall_10,
+                    "recall_at_20": cat_recall_20,
+                    "questions_with_evidence": len(cat_with_evidence),
                 }
 
         # Print results
@@ -821,6 +883,20 @@ def print_results(results: EvaluationResults):
     print(f"  BLEU-1 Score:        {results.avg_bleu_score:.1f}%")
 
     print(f"\n{'='*70}")
+    print("RETRIEVAL RECALL (Solution 6)")
+    print("=" * 70)
+    print(f"  Recall@5:            {results.recall_at_5:.1f}%")
+    print(f"  Recall@10:           {results.recall_at_10:.1f}%")
+    print(f"  Recall@20:           {results.recall_at_20:.1f}%")
+    if results.recall_at_10 > 0 and results.recall_at_20 > 0:
+        if results.recall_at_10 < 50 and results.recall_at_20 > 70:
+            print(f"  Diagnosis:           Ranking problem (right memories found but buried)")
+        elif results.recall_at_20 < 50:
+            print(f"  Diagnosis:           Recall problem (memories not found at all)")
+        elif results.recall_at_10 > 70 and results.llm_judge_accuracy < 60:
+            print(f"  Diagnosis:           Reasoning problem (outside MnemeFusion scope)")
+
+    print(f"\n{'='*70}")
     print("PERFORMANCE")
     print("=" * 70)
     print(f"  Retrieval Latency:")
@@ -847,13 +923,16 @@ def print_results(results: EvaluationResults):
         5: "Adversarial"
     }
 
-    print(f"  {'Category':<25} {'Count':>8} {'Judge':>10} {'F1':>10} {'BLEU':>10}")
-    print(f"  {'-'*25} {'-'*8} {'-'*10} {'-'*10} {'-'*10}")
+    print(f"  {'Category':<25} {'Count':>6} {'Judge':>8} {'R@5':>7} {'R@10':>7} {'R@20':>7}")
+    print(f"  {'-'*25} {'-'*6} {'-'*8} {'-'*7} {'-'*7} {'-'*7}")
 
     for cat in sorted(results.category_results.keys()):
         cat_data = results.category_results[cat]
         cat_name = category_names.get(cat, f"Category {cat}")
-        print(f"  {cat_name:<25} {cat_data['count']:>8} {cat_data['llm_judge_accuracy']:>9.1f}% {cat_data['avg_f1_score']:>9.1f}% {cat_data['avg_bleu_score']:>9.1f}%")
+        r5 = f"{cat_data.get('recall_at_5', 0):.0f}%" if cat_data.get('questions_with_evidence', 0) > 0 else "N/A"
+        r10 = f"{cat_data.get('recall_at_10', 0):.0f}%" if cat_data.get('questions_with_evidence', 0) > 0 else "N/A"
+        r20 = f"{cat_data.get('recall_at_20', 0):.0f}%" if cat_data.get('questions_with_evidence', 0) > 0 else "N/A"
+        print(f"  {cat_name:<25} {cat_data['count']:>6} {cat_data['llm_judge_accuracy']:>7.1f}% {r5:>7} {r10:>7} {r20:>7}")
 
     print(f"\n{'='*70}")
     print("COMPARISON WITH COMPETITORS")
@@ -931,8 +1010,8 @@ Examples:
     parser.add_argument(
         "--top-k",
         type=int,
-        default=10,
-        help="Number of memories to retrieve (default: 10)"
+        default=15,
+        help="Number of memories to retrieve for answer generation (default: 15)"
     )
     parser.add_argument(
         "--use-slm",

@@ -118,11 +118,95 @@ impl EntityProfile {
     ///
     /// assert_eq!(profile.facts.len(), 1);
     /// ```
-    pub fn add_fact(&mut self, fact: EntityFact) {
-        self.facts
-            .entry(fact.fact_type.clone())
-            .or_default()
-            .push(fact);
+    pub fn add_fact(&mut self, mut fact: EntityFact) {
+        // --- Junk filtering ---
+
+        let trimmed_value = fact.value.trim();
+
+        // Reject values shorter than 3 characters
+        if trimmed_value.len() < 3 {
+            return;
+        }
+
+        // Reject pronoun-only values
+        let lower_value = trimmed_value.to_lowercase();
+        const PRONOUNS: &[&str] = &[
+            "i", "me", "my", "myself", "you", "your", "he", "him", "his",
+            "she", "her", "they", "them", "we", "us", "it",
+        ];
+        if PRONOUNS.contains(&lower_value.as_str()) {
+            return;
+        }
+
+        // Reject "action" facts that are conversational filler
+        if fact.fact_type == "action" {
+            let action_lower = lower_value.as_str();
+            if action_lower.starts_with("says")
+                || action_lower.starts_with("said")
+                || action_lower.starts_with("tells")
+                || action_lower.starts_with("asks")
+                || action_lower.starts_with("asked")
+            {
+                return;
+            }
+        }
+
+        // Guard confidence > 1.0 (handles malformed extraction like 95.00)
+        if fact.confidence > 1.0 {
+            fact.confidence = fact.confidence.min(1.0);
+        }
+
+        // --- Cross-type dedup: specific types override generic types ---
+        const SPECIFIC_TYPES: &[&str] = &[
+            "instrument", "pet", "book", "sport", "food", "hobby", "travel",
+            "occupation", "affiliation", "research_topic", "family",
+            "relationship_status", "career_goal", "event",
+        ];
+        const GENERIC_TYPES: &[&str] = &[
+            "interest", "preference", "action", "characteristic",
+        ];
+
+        let normalized_value = lower_value.clone();
+        let is_incoming_specific = SPECIFIC_TYPES.contains(&fact.fact_type.as_str());
+        let is_incoming_generic = GENERIC_TYPES.contains(&fact.fact_type.as_str());
+
+        if is_incoming_generic {
+            // If incoming is generic, check if value already exists under a specific type → reject
+            for (existing_type, existing_facts) in &self.facts {
+                if SPECIFIC_TYPES.contains(&existing_type.as_str()) {
+                    if existing_facts
+                        .iter()
+                        .any(|f| f.value.trim().to_lowercase() == normalized_value)
+                    {
+                        return; // Specific type already has this value
+                    }
+                }
+            }
+        } else if is_incoming_specific {
+            // If incoming is specific, remove matching value from any generic type
+            for generic_type in GENERIC_TYPES {
+                if let Some(generic_facts) = self.facts.get_mut(*generic_type) {
+                    generic_facts.retain(|f| f.value.trim().to_lowercase() != normalized_value);
+                }
+            }
+        }
+
+        // --- Same-type dedup (existing logic) ---
+        let facts = self.facts.entry(fact.fact_type.clone()).or_default();
+
+        // If a fact with the same normalized value already exists, update it
+        if let Some(existing) = facts
+            .iter_mut()
+            .find(|f| f.value.trim().to_lowercase() == normalized_value)
+        {
+            // Keep the higher confidence
+            if fact.confidence > existing.confidence {
+                existing.confidence = fact.confidence;
+            }
+            return;
+        }
+
+        facts.push(fact);
         self.updated_at = Timestamp::now();
     }
 
@@ -411,7 +495,7 @@ mod tests {
         ));
         profile.add_fact(EntityFact::new(
             "skill",
-            "Go",
+            "Golang",
             0.8,
             MemoryId::new(),
         ));
@@ -419,7 +503,7 @@ mod tests {
         let skills = profile.get_facts("skill");
         assert_eq!(skills.len(), 3);
         assert_eq!(skills[0].value, "Python"); // 0.95
-        assert_eq!(skills[1].value, "Go"); // 0.8
+        assert_eq!(skills[1].value, "Golang"); // 0.8
         assert_eq!(skills[2].value, "Rust"); // 0.7
     }
 
@@ -594,6 +678,79 @@ mod tests {
     }
 
     #[test]
+    fn test_entity_profile_dedup_same_type_and_value() {
+        let mut profile =
+            EntityProfile::new(EntityId::new(), "Alice".to_string(), "person".to_string());
+
+        // Add same fact twice with different confidence
+        profile.add_fact(EntityFact::new(
+            "hobby",
+            "painting",
+            0.7,
+            MemoryId::new(),
+        ));
+        profile.add_fact(EntityFact::new(
+            "hobby",
+            "painting",
+            0.9,
+            MemoryId::new(),
+        ));
+
+        // Should be deduplicated: only 1 fact, with higher confidence
+        let hobbies = profile.get_facts("hobby");
+        assert_eq!(hobbies.len(), 1);
+        assert_eq!(hobbies[0].value, "painting");
+        assert_eq!(hobbies[0].confidence, 0.9);
+    }
+
+    #[test]
+    fn test_entity_profile_dedup_case_insensitive() {
+        let mut profile =
+            EntityProfile::new(EntityId::new(), "Alice".to_string(), "person".to_string());
+
+        profile.add_fact(EntityFact::new(
+            "hobby",
+            "Painting",
+            0.8,
+            MemoryId::new(),
+        ));
+        profile.add_fact(EntityFact::new(
+            "hobby",
+            "painting",
+            0.6,
+            MemoryId::new(),
+        ));
+
+        // "Painting" and "painting" are the same normalized value
+        let hobbies = profile.get_facts("hobby");
+        assert_eq!(hobbies.len(), 1);
+        assert_eq!(hobbies[0].confidence, 0.8); // keeps higher
+    }
+
+    #[test]
+    fn test_entity_profile_dedup_different_values_kept() {
+        let mut profile =
+            EntityProfile::new(EntityId::new(), "Alice".to_string(), "person".to_string());
+
+        profile.add_fact(EntityFact::new(
+            "hobby",
+            "painting",
+            0.8,
+            MemoryId::new(),
+        ));
+        profile.add_fact(EntityFact::new(
+            "hobby",
+            "running",
+            0.7,
+            MemoryId::new(),
+        ));
+
+        // Different values → both kept
+        let hobbies = profile.get_facts("hobby");
+        assert_eq!(hobbies.len(), 2);
+    }
+
+    #[test]
     fn test_entity_fact_new() {
         let memory_id = MemoryId::new();
         let fact = EntityFact::new("occupation", "engineer", 0.95, memory_id.clone());
@@ -657,5 +814,95 @@ mod tests {
         assert_eq!(parsed.fact_type, "skill");
         assert_eq!(parsed.value, "Rust");
         assert_eq!(parsed.confidence, 0.95);
+    }
+
+    #[test]
+    fn test_junk_filter_short_values() {
+        let mut profile =
+            EntityProfile::new(EntityId::new(), "Alice".to_string(), "person".to_string());
+
+        profile.add_fact(EntityFact::new("hobby", "ab", 0.9, MemoryId::new()));
+        assert!(profile.is_empty()); // "ab" is too short (< 3 chars)
+
+        profile.add_fact(EntityFact::new("hobby", "art", 0.9, MemoryId::new()));
+        assert_eq!(profile.total_facts(), 1); // "art" is exactly 3 chars, allowed
+    }
+
+    #[test]
+    fn test_junk_filter_pronouns() {
+        let mut profile =
+            EntityProfile::new(EntityId::new(), "Alice".to_string(), "person".to_string());
+
+        for pronoun in &["I", "me", "you", "he", "she", "they", "it"] {
+            profile.add_fact(EntityFact::new("interest", *pronoun, 0.9, MemoryId::new()));
+        }
+        assert!(profile.is_empty()); // All pronouns rejected
+    }
+
+    #[test]
+    fn test_junk_filter_action_filler() {
+        let mut profile =
+            EntityProfile::new(EntityId::new(), "Alice".to_string(), "person".to_string());
+
+        profile.add_fact(EntityFact::new("action", "says 'Wow!'", 0.8, MemoryId::new()));
+        profile.add_fact(EntityFact::new("action", "said hello", 0.8, MemoryId::new()));
+        profile.add_fact(EntityFact::new("action", "tells a joke", 0.8, MemoryId::new()));
+        profile.add_fact(EntityFact::new("action", "asks about weather", 0.8, MemoryId::new()));
+        assert!(profile.is_empty()); // All conversational filler rejected
+
+        profile.add_fact(EntityFact::new("action", "went hiking", 0.8, MemoryId::new()));
+        assert_eq!(profile.total_facts(), 1); // Non-filler action kept
+    }
+
+    #[test]
+    fn test_junk_filter_high_confidence() {
+        let mut profile =
+            EntityProfile::new(EntityId::new(), "Alice".to_string(), "person".to_string());
+
+        // Confidence 95.00 (malformed) should be clamped to 1.0
+        let mut fact = EntityFact {
+            fact_type: "hobby".to_string(),
+            value: "painting".to_string(),
+            confidence: 95.0, // Bypass EntityFact::new clamping
+            source_memory: MemoryId::new(),
+            extracted_at: Timestamp::now(),
+        };
+        // Simulate malformed confidence from extraction
+        profile.add_fact(fact);
+        let hobbies = profile.get_facts("hobby");
+        assert_eq!(hobbies.len(), 1);
+        assert!(hobbies[0].confidence <= 1.0);
+    }
+
+    #[test]
+    fn test_cross_type_dedup_generic_rejected() {
+        let mut profile =
+            EntityProfile::new(EntityId::new(), "Alice".to_string(), "person".to_string());
+
+        // Add specific type first
+        profile.add_fact(EntityFact::new("hobby", "painting", 0.9, MemoryId::new()));
+        // Try to add generic type with same value → should be rejected
+        profile.add_fact(EntityFact::new("interest", "painting", 0.8, MemoryId::new()));
+
+        assert_eq!(profile.total_facts(), 1);
+        assert_eq!(profile.get_facts("hobby").len(), 1);
+        assert!(profile.get_facts("interest").is_empty());
+    }
+
+    #[test]
+    fn test_cross_type_dedup_specific_replaces_generic() {
+        let mut profile =
+            EntityProfile::new(EntityId::new(), "Alice".to_string(), "person".to_string());
+
+        // Add generic type first
+        profile.add_fact(EntityFact::new("interest", "painting", 0.8, MemoryId::new()));
+        assert_eq!(profile.get_facts("interest").len(), 1);
+
+        // Add specific type → should remove the generic
+        profile.add_fact(EntityFact::new("hobby", "painting", 0.9, MemoryId::new()));
+
+        assert_eq!(profile.total_facts(), 1);
+        assert_eq!(profile.get_facts("hobby").len(), 1);
+        assert!(profile.get_facts("interest").is_empty());
     }
 }

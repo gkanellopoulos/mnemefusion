@@ -42,7 +42,7 @@ Output JSON with:
 - topics: main subjects discussed
 - importance: 0.0-1.0 score
 
-fact_type must be one of: occupation, research_topic, goal, preference, location, relationship, interest, affiliation, characteristic, action<|im_end|>
+fact_type must be one of: occupation, research_topic, goal, career_goal, preference, location, relationship, relationship_status, interest, affiliation, characteristic, action, instrument, sport, pet, book, food, hobby, travel, family, event<|im_end|>
 <|im_start|>assistant
 "#,
         speaker_instruction = speaker_instruction,
@@ -50,15 +50,17 @@ fact_type must be one of: occupation, research_topic, goal, preference, location
     )
 }
 
-/// Build a few-shot prompt with example for better extraction quality
+/// Build a few-shot prompt with examples for entity extraction quality
 ///
-/// When `speaker` is provided, the prompt instructs the LLM to attribute
-/// first-person statements to the speaker. This is critical for conversation
-/// data where turns are first-person ("I love hiking") but the speaker's
-/// identity is only known from metadata.
+/// Uses two examples: Alice (third-person, general facts) and Bob (third-person,
+/// specific biographical facts like instruments, pets, books). The two-shot approach
+/// teaches the model both general and specific fact extraction patterns.
+///
+/// When `speaker` is provided, adds a speaker attribution rule so first-person
+/// speech gets correctly attributed to the named speaker.
 pub fn build_fewshot_extraction_prompt(content: &str, speaker: Option<&str>) -> String {
     // Truncate content if too long
-    let max_content_len = 1000; // Shorter to leave room for examples
+    let max_content_len = 800; // Shorter to leave room for two examples
     let truncated_content = if content.len() > max_content_len {
         format!("{}...", &content[..max_content_len])
     } else {
@@ -67,45 +69,90 @@ pub fn build_fewshot_extraction_prompt(content: &str, speaker: Option<&str>) -> 
 
     let speaker_rule = if let Some(name) = speaker {
         format!(
-            "\n7. SPEAKER CONTEXT: This text was spoken by {name}. First-person references (\"I\", \"my\", \"me\") refer to {name}. \
-             Attribute facts about the speaker to \"{name}\" as the entity, NOT to the objects mentioned. \
-             Example: if {name} says \"Researching adoption agencies\", extract entity=\"{name}\", fact_type=research_topic, value=\"adoption agencies\".",
+            "\n\nSPEAKER: This text was spoken by {name}. \
+             \"I\"/\"my\"/\"me\" = {name}. Attribute all facts to {name}.",
             name = name
         )
     } else {
         String::new()
     };
 
+    // Example 1: Alice — general facts (occupation, affiliation, location)
+    let example1_input = "Alice works as a software engineer at Google and lives in Seattle. She is learning machine learning.";
+    let example1_output = "{{\"entities\":[{{\"name\":\"Alice\",\"type\":\"person\"}},{{\"name\":\"Google\",\"type\":\"organization\"}},{{\"name\":\"Seattle\",\"type\":\"location\"}}],\"entity_facts\":[{{\"entity\":\"Alice\",\"fact_type\":\"occupation\",\"value\":\"software engineer\",\"confidence\":0.95}},{{\"entity\":\"Alice\",\"fact_type\":\"affiliation\",\"value\":\"Google\",\"confidence\":0.95}},{{\"entity\":\"Alice\",\"fact_type\":\"location\",\"value\":\"Seattle\",\"confidence\":0.90}},{{\"entity\":\"Alice\",\"fact_type\":\"research_topic\",\"value\":\"machine learning\",\"confidence\":0.90}}],\"topics\":[\"employment\",\"technology\"],\"importance\":0.8}}";
+
+    // Example 2: Bob — specific biographical facts (instrument, pet, book, food)
+    let example2_input = "Bob plays guitar and has a hamster named Squeaky. He just finished reading The Hobbit and loves cooking Italian food.";
+    let example2_output = "{{\"entities\":[{{\"name\":\"Bob\",\"type\":\"person\"}}],\"entity_facts\":[{{\"entity\":\"Bob\",\"fact_type\":\"instrument\",\"value\":\"guitar\",\"confidence\":0.95}},{{\"entity\":\"Bob\",\"fact_type\":\"pet\",\"value\":\"hamster named Squeaky\",\"confidence\":0.95}},{{\"entity\":\"Bob\",\"fact_type\":\"book\",\"value\":\"The Hobbit\",\"confidence\":0.95}},{{\"entity\":\"Bob\",\"fact_type\":\"food\",\"value\":\"Italian food\",\"confidence\":0.90}}],\"topics\":[\"music\",\"pets\",\"reading\",\"cooking\"],\"importance\":0.7}}";
+
+    // Example 3: Charlie — family, relationship status, career goal, event
+    let example3_input = "Charlie is single and has 3 kids who love dinosaurs. He goes running to destress and took his family camping last weekend.";
+    let example3_output = "{{\"entities\":[{{\"name\":\"Charlie\",\"type\":\"person\"}}],\"entity_facts\":[{{\"entity\":\"Charlie\",\"fact_type\":\"relationship_status\",\"value\":\"single\",\"confidence\":0.95}},{{\"entity\":\"Charlie\",\"fact_type\":\"family\",\"value\":\"3 children\",\"confidence\":0.95}},{{\"entity\":\"Charlie\",\"fact_type\":\"interest\",\"value\":\"dinosaurs (children)\",\"confidence\":0.80}},{{\"entity\":\"Charlie\",\"fact_type\":\"hobby\",\"value\":\"running\",\"confidence\":0.90}},{{\"entity\":\"Charlie\",\"fact_type\":\"event\",\"value\":\"family camping trip\",\"confidence\":0.85}}],\"topics\":[\"family\",\"hobbies\",\"outdoors\"],\"importance\":0.7}}";
+
     format!(
         r#"<|im_start|>system
-You are an expert entity extraction system. Extract entities and facts from text into valid JSON format.
+You are a biographical fact extraction specialist. Extract SPECIFIC biographical details from text into valid JSON.
 
-CRITICAL REQUIREMENTS:
-1. Return valid JSON only - MUST be parseable
-2. For each entity found, extract 2-5 SPECIFIC facts about it
-3. entity_facts MUST NEVER be empty if entities are found - extract facts for every entity
-4. fact_type MUST be EXACTLY one of these values (no other values allowed):
-   - occupation: job/profession/role
-   - research_topic: subject being studied/researched
-   - goal: what person wants to achieve
-   - preference: likes/dislikes/preferences
-   - location: where person lives/works/is from
-   - relationship: connections to other people/organizations
-   - interest: hobbies/interests/passions
-   - affiliation: organization/group membership
-   - characteristic: personality traits/qualities
-   - action: specific activities/actions done
-5. DO NOT use values like "activity", "skill", "event", "background" - use the list above only
-6. value must be specific text from the input{speaker_rule}<|im_end|>
+ALWAYS use the MOST SPECIFIC fact_type available:
+- instrument: musical instruments played (guitar, piano, violin, clarinet)
+- pet: pets owned (include name if given, e.g. "dog named Max")
+- book: books read/recommended (include title)
+- sport: sports played/watched
+- food: food preferences/cooking
+- hobby: recreational activities (painting, pottery, running)
+- travel: places visited/traveled to
+- relationship_status: dating/marital status (single, married, divorced, engaged)
+- relationship: connections to specific people (friend, sibling, colleague)
+- family: family members and counts (e.g. "3 children", "sister named Amy")
+- event: specific events attended or activities done (camping trip, concert, museum visit)
+- career_goal: career aspirations or career path chosen
+- location: where someone lives/is from/moved from
+- occupation: job/profession
+- affiliation: organization membership
+- goal: general objectives/plans (ONLY if career_goal doesn't fit)
+- research_topic: topics being studied
+- preference: likes/dislikes
+- interest: general interests (ONLY if no specific type above fits)
+- characteristic: personality traits
+- action: specific actions done (ONLY if no specific type above fits)
+
+WRONG: "I play guitar" -> interest "playing guitar"
+RIGHT: "I play guitar" -> instrument "guitar"
+WRONG: "My dog Buddy is cute" -> preference "dogs"
+RIGHT: "My dog Buddy is cute" -> pet "dog named Buddy"
+WRONG: "I read The Hobbit" -> interest "reading"
+RIGHT: "I read The Hobbit" -> book "The Hobbit"
+WRONG: "I'm single" -> relationship "single"
+RIGHT: "I'm single" -> relationship_status "single"
+WRONG: "I want to be a counselor" -> goal "be a counselor"
+RIGHT: "I want to be a counselor" -> career_goal "counseling"
+WRONG: "We went camping" -> action "went camping"
+RIGHT: "We went camping" -> event "camping trip"
+WRONG: "I have 3 kids" -> characteristic "has children"
+RIGHT: "I have 3 kids" -> family "3 children"{speaker_rule}<|im_end|>
 <|im_start|>user
-Extract entities and facts from: "Alice works as a software engineer at Google and lives in Seattle. She is learning machine learning."<|im_end|>
+Extract entities and facts from: "{example1_input}"<|im_end|>
 <|im_start|>assistant
-{{"entities":[{{"name":"Alice","type":"person"}},{{"name":"Google","type":"organization"}},{{"name":"Seattle","type":"location"}}],"entity_facts":[{{"entity":"Alice","fact_type":"occupation","value":"software engineer","confidence":0.95}},{{"entity":"Alice","fact_type":"affiliation","value":"Google","confidence":0.95}},{{"entity":"Alice","fact_type":"location","value":"Seattle","confidence":0.90}},{{"entity":"Alice","fact_type":"research_topic","value":"machine learning","confidence":0.90}}],"topics":["employment","technology"],"importance":0.8}}<|im_end|>
+{example1_output}<|im_end|>
+<|im_start|>user
+Extract entities and facts from: "{example2_input}"<|im_end|>
+<|im_start|>assistant
+{example2_output}<|im_end|>
+<|im_start|>user
+Extract entities and facts from: "{example3_input}"<|im_end|>
+<|im_start|>assistant
+{example3_output}<|im_end|>
 <|im_start|>user
 Extract entities and facts from: "{content}"<|im_end|>
 <|im_start|>assistant
 "#,
         speaker_rule = speaker_rule,
+        example1_input = example1_input,
+        example1_output = example1_output,
+        example2_input = example2_input,
+        example2_output = example2_output,
+        example3_input = example3_input,
+        example3_output = example3_output,
         content = truncated_content
     )
 }
@@ -141,18 +188,34 @@ mod tests {
 
     #[test]
     fn test_fewshot_prompt() {
-        let prompt = build_fewshot_extraction_prompt("Bob works at Microsoft", None);
-        assert!(prompt.contains("Bob works at Microsoft"));
-        assert!(prompt.contains("Alice works as a software engineer")); // Example
-        assert!(prompt.contains("Google")); // From example
+        let prompt = build_fewshot_extraction_prompt("Dave works at Microsoft", None);
+        assert!(prompt.contains("Dave works at Microsoft"));
+        // Three examples: Alice (general), Bob (specific), Charlie (family/status)
+        assert!(prompt.contains("Alice works as a software engineer"));
+        assert!(prompt.contains("Bob plays guitar"));
+        assert!(prompt.contains("Charlie is single"));
+        // Contrastive WRONG/RIGHT examples in system message
+        assert!(prompt.contains("WRONG"));
+        assert!(prompt.contains("RIGHT"));
+        // Specific fact types demonstrated
+        assert!(prompt.contains("instrument"));
+        assert!(prompt.contains("pet"));
+        assert!(prompt.contains("book"));
+        // New fact types
+        assert!(prompt.contains("relationship_status"));
+        assert!(prompt.contains("family"));
+        assert!(prompt.contains("career_goal"));
+        assert!(prompt.contains("event"));
     }
 
     #[test]
     fn test_fewshot_prompt_with_speaker() {
         let prompt = build_fewshot_extraction_prompt("Researching adoption agencies", Some("Caroline"));
         assert!(prompt.contains("Researching adoption agencies"));
-        assert!(prompt.contains("SPEAKER CONTEXT"));
         assert!(prompt.contains("spoken by Caroline"));
-        assert!(prompt.contains("entity=\"Caroline\""));
+        assert!(prompt.contains("Attribute all facts to Caroline"));
+        // Same two examples for both paths
+        assert!(prompt.contains("Alice works as a software engineer"));
+        assert!(prompt.contains("Bob plays guitar"));
     }
 }

@@ -116,24 +116,109 @@ impl LlmEntityExtractor {
             return Ok(ExtractionResult::empty());
         }
 
-        let prompt = build_fewshot_extraction_prompt(content, speaker);
+        // Prepend speaker name to content so the model sees it in the text,
+        // improving entity attribution for first-person speech.
+        let attributed_content = if let Some(name) = speaker {
+            format!("{} says: {}", name, content)
+        } else {
+            content.to_string()
+        };
 
-        // Generate without grammar (Qwen3 produces valid JSON naturally)
-        // Grammar-constrained sampling has compatibility issues on some platforms
+        let prompt = build_fewshot_extraction_prompt(&attributed_content, speaker);
+
+        // Generate without grammar — grammar-constrained sampling crashes on some platforms.
+        // We fix malformed JSON in post-processing instead.
         let raw_output = self.engine.generate(&prompt, self.tier.max_tokens())?;
 
+        // Fix common JSON malformations from the model
+        let fixed_output = Self::fix_json(&raw_output);
+
         // Extract JSON from output (may have extra text)
-        let json_output = Self::extract_json(&raw_output)?;
+        let json_output = Self::extract_json(&fixed_output)?;
 
         // Parse and validate
-        let result: ExtractionResult = serde_json::from_str(&json_output).map_err(|e| {
+        let mut result: ExtractionResult = serde_json::from_str(&json_output).map_err(|e| {
             Error::InferenceError(format!(
                 "JSON parsing failed: {}. Output was: {}",
-                e, raw_output
+                e, fixed_output
             ))
         })?;
 
+        // Post-process: fix entity attribution for first-person speech.
+        // The model often generates entity="I"/"me"/"my" instead of the speaker name.
+        if let Some(name) = speaker {
+            let name_lower = name.to_lowercase();
+            for fact in &mut result.entity_facts {
+                let entity_lower = fact.entity.to_lowercase();
+                if entity_lower == "i" || entity_lower == "me" || entity_lower == "my"
+                    || entity_lower == "myself" || entity_lower == "the speaker"
+                {
+                    fact.entity = name.to_string();
+                }
+            }
+            // Also fix entity list
+            for entity in &mut result.entities {
+                let entity_lower = entity.name.to_lowercase();
+                if entity_lower == "i" || entity_lower == "me" || entity_lower == "my"
+                    || entity_lower == "myself" || entity_lower == "the speaker"
+                {
+                    entity.name = name.to_string();
+                }
+            }
+            // Ensure speaker is in entities list if they have facts
+            let has_speaker_facts = result.entity_facts.iter().any(|f| f.entity.to_lowercase() == name_lower);
+            let speaker_in_entities = result.entities.iter().any(|e| e.name.to_lowercase() == name_lower);
+            if has_speaker_facts && !speaker_in_entities {
+                result.entities.push(crate::extraction::output::ExtractedEntity {
+                    name: name.to_string(),
+                    entity_type: "person".to_string(),
+                });
+            }
+        }
+
         Ok(result)
+    }
+
+    /// Fix common JSON malformations produced by the model
+    ///
+    /// Handles:
+    /// - `0-0.8` → `0.8` (model generates dash between digits in numbers)
+    /// - `{{` → `{` and `}}` → `}` (double braces from format string mimicry)
+    /// - Trailing commas before `]` or `}`
+    fn fix_json(output: &str) -> String {
+        let mut fixed = output.to_string();
+
+        // Fix double braces (model mimics Rust format string escaping)
+        // Only fix if the output has `{{` patterns that aren't inside strings
+        if fixed.contains("{{") && fixed.contains("}}") {
+            fixed = fixed.replace("{{", "{").replace("}}", "}");
+        }
+
+        // Fix malformed numbers like `0-0.8` → `0.8` (model generates `0-` prefix)
+        // Pattern: digit(s)-digit(s).digit(s) where the first part before `-` is spurious
+        let mut result = String::with_capacity(fixed.len());
+        let chars: Vec<char> = fixed.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            // Look for pattern: `:` ws `0-0.` or `:` ws `0-1`
+            if i + 3 < chars.len() && chars[i].is_ascii_digit() && chars[i + 1] == '-' && chars[i + 2].is_ascii_digit() {
+                // Check if this is inside a number context (after `:` or `,`)
+                let prev_non_ws = result.trim_end().chars().last();
+                if prev_non_ws == Some(':') || prev_non_ws == Some(',') {
+                    // Skip the `0-` prefix, keep the rest of the number
+                    i += 2; // skip the digit and dash
+                    continue;
+                }
+            }
+            result.push(chars[i]);
+            i += 1;
+        }
+
+        // Fix trailing commas: `[..., ]` → `[...]` and `{..., }` → `{...}`
+        result = result.replace(", ]", "]").replace(",]", "]")
+                       .replace(", }", "}").replace(",}", "}");
+
+        result
     }
 
     /// Extract JSON object from model output

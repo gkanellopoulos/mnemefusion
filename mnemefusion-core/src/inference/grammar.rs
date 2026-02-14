@@ -34,7 +34,7 @@ facts-array ::= "[" ws (fact-obj ("," ws fact-obj)*)? ws "]"
 fact-obj ::= "{" ws fact-entity "," ws fact-type-field "," ws fact-value "," ws fact-confidence ws "}"
 fact-entity ::= "\"entity\"" ws ":" ws string
 fact-type-field ::= "\"fact_type\"" ws ":" ws fact-type-value
-fact-type-value ::= "\"occupation\"" | "\"research_topic\"" | "\"goal\"" | "\"preference\"" | "\"location\"" | "\"relationship\"" | "\"interest\"" | "\"affiliation\"" | "\"characteristic\"" | "\"action\""
+fact-type-value ::= "\"occupation\"" | "\"research_topic\"" | "\"goal\"" | "\"career_goal\"" | "\"preference\"" | "\"location\"" | "\"relationship\"" | "\"relationship_status\"" | "\"interest\"" | "\"affiliation\"" | "\"characteristic\"" | "\"action\"" | "\"instrument\"" | "\"sport\"" | "\"pet\"" | "\"book\"" | "\"food\"" | "\"hobby\"" | "\"travel\"" | "\"family\"" | "\"event\""
 fact-value ::= "\"value\"" ws ":" ws string
 fact-confidence ::= "\"confidence\"" ws ":" ws number
 
