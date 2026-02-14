@@ -5,6 +5,7 @@
 use crate::error::{Error, Result};
 use crate::inference::JsonGrammar;
 use llama_cpp_2::context::params::LlamaContextParams;
+use llama_cpp_2::context::LlamaContext;
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
@@ -13,14 +14,27 @@ use llama_cpp_2::sampling::LlamaSampler;
 use llama_cpp_2::token::LlamaToken;
 use std::num::NonZeroU32;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Native LLM inference engine with grammar-constrained decoding
+///
+/// Reuses a single GPU context across generate() calls to prevent
+/// GPU memory fragmentation from repeated allocation/deallocation.
 pub struct InferenceEngine {
     backend: LlamaBackend,
+    // SAFETY: ctx borrows from model via Arc. Declared before model so it's
+    // dropped first. Lifetime erased via transmute since Arc guarantees the
+    // model outlives the engine. See get_or_create_ctx().
+    ctx: Mutex<Option<LlamaContext<'static>>>,
     model: Arc<LlamaModel>,
     n_ctx: u32,
 }
+
+// SAFETY: LlamaContext contains NonNull<llama_context> which is !Send, but:
+// 1. The context is behind a Mutex, ensuring exclusive access
+// 2. llama.cpp contexts are safe to move between threads when not in active use
+// 3. PyO3's #[pyclass] requires Send for the containing MemoryEngine
+unsafe impl Send for InferenceEngine {}
 
 impl InferenceEngine {
     /// Load model from a GGUF file
@@ -61,9 +75,45 @@ impl InferenceEngine {
 
         Ok(Self {
             backend,
+            ctx: Mutex::new(None),
             model: Arc::new(model),
             n_ctx,
         })
+    }
+
+    /// Get or create a reusable context, clearing KV cache between calls.
+    ///
+    /// On first call, allocates a GPU context. On subsequent calls, reuses it
+    /// with a KV cache clear — avoiding the GPU memory fragmentation that
+    /// causes crashes after ~400 allocation/deallocation cycles.
+    ///
+    /// # Safety
+    /// The returned `&mut LlamaContext<'static>` is transmuted from `LlamaContext<'model>`.
+    /// This is sound because:
+    /// - `model` is behind `Arc`, guaranteed to outlive any context usage
+    /// - `ctx` is declared before `model` in the struct, so it's dropped first
+    /// - The C library context holds a raw pointer internally, not a Rust reference
+    fn get_or_create_ctx(&self) -> Result<std::sync::MutexGuard<'_, Option<LlamaContext<'static>>>> {
+        let mut guard = self.ctx.lock().unwrap();
+        if guard.is_some() {
+            guard.as_mut().unwrap().clear_kv_cache();
+        } else {
+            let n_batch = 512u32;
+            let ctx_params = LlamaContextParams::default()
+                .with_n_ctx(NonZeroU32::new(self.n_ctx))
+                .with_n_batch(n_batch);
+
+            let new_ctx = self
+                .model
+                .new_context(&self.backend, ctx_params)
+                .map_err(|e| Error::InferenceError(format!("Context creation: {e}")))?;
+
+            // SAFETY: model is behind Arc, guaranteed to live as long as InferenceEngine.
+            // See struct-level safety comment.
+            let static_ctx: LlamaContext<'static> = unsafe { std::mem::transmute(new_ctx) };
+            *guard = Some(static_ctx);
+        }
+        Ok(guard)
     }
 
     /// Generate text with JSON grammar constraints
@@ -75,16 +125,9 @@ impl InferenceEngine {
         grammar: &JsonGrammar,
         max_tokens: u32,
     ) -> Result<String> {
-        // Create context for this generation
         let n_batch = 512usize;
-        let ctx_params = LlamaContextParams::default()
-            .with_n_ctx(NonZeroU32::new(self.n_ctx))
-            .with_n_batch(n_batch as u32);
-
-        let mut ctx = self
-            .model
-            .new_context(&self.backend, ctx_params)
-            .map_err(|e| Error::InferenceError(format!("Context creation: {e}")))?;
+        let mut ctx_guard = self.get_or_create_ctx()?;
+        let ctx = ctx_guard.as_mut().unwrap();
 
         // Tokenize the prompt
         let tokens = self
@@ -157,16 +200,9 @@ impl InferenceEngine {
 
     /// Generate without grammar constraints (for testing)
     pub fn generate(&self, prompt: &str, max_tokens: u32) -> Result<String> {
-        // Create context for this generation
         let n_batch = 512usize;
-        let ctx_params = LlamaContextParams::default()
-            .with_n_ctx(NonZeroU32::new(self.n_ctx))
-            .with_n_batch(n_batch as u32);
-
-        let mut ctx = self
-            .model
-            .new_context(&self.backend, ctx_params)
-            .map_err(|e| Error::InferenceError(format!("Context creation: {e}")))?;
+        let mut ctx_guard = self.get_or_create_ctx()?;
+        let ctx = ctx_guard.as_mut().unwrap();
 
         // Tokenize the prompt
         let tokens = self
