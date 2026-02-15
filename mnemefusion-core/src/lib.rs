@@ -67,7 +67,7 @@ pub use error::{Error, Result};
 pub use graph::{CausalEdge, CausalPath, CausalTraversalResult, EntityQueryResult, GraphManager};
 pub use index::{TemporalIndex, TemporalResult, VectorIndex, VectorIndexConfig, VectorResult};
 pub use ingest::{EntityExtractor, SimpleEntityExtractor};
-pub use memory::{EmbeddingFn, MemoryEngine, ScopedMemory};
+pub use memory::{contextualize_for_embedding, EmbeddingFn, MemoryEngine, ScopedMemory};
 pub use query::{
     AdaptiveWeightConfig, FusedResult, FusionEngine, IntentClassification, IntentClassifier,
     IntentWeights, QueryIntent, QueryPlanner,

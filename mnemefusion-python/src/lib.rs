@@ -1502,10 +1502,26 @@ impl PyMemory {
     }
 }
 
+/// Build contextual text for embedding by prepending speaker metadata.
+///
+/// Call this on content before computing embeddings to make them speaker-aware.
+/// The raw content should still be passed to add() for storage.
+///
+/// Example:
+///     >>> ctx_text = mnemefusion.contextualize_for_embedding("I love hiking", {"speaker": "Melanie"})
+///     >>> # ctx_text = "Melanie: I love hiking"
+///     >>> embedding = model.encode(ctx_text)
+///     >>> memory.add("I love hiking", embedding, {"speaker": "Melanie"})
+#[pyfunction]
+fn contextualize_for_embedding(content: &str, metadata: HashMap<String, String>) -> String {
+    mnemefusion_core::contextualize_for_embedding(content, &metadata)
+}
+
 /// MnemeFusion Python module
 #[pymodule]
 fn mnemefusion(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyMemory>()?;
+    m.add_function(wrap_pyfunction!(contextualize_for_embedding, m)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

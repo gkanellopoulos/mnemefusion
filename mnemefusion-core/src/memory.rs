@@ -36,6 +36,22 @@ use std::sync::Mutex;
 /// Called for each fact text during ingestion to compute fact embeddings.
 pub type EmbeddingFn = Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync>;
 
+/// Build contextual text for embedding by prepending speaker metadata.
+///
+/// When computing embeddings, prepending the speaker name helps the embedding model
+/// distinguish between the same statement made by different people. The original
+/// content is stored as-is; only the embedding carries the speaker context.
+///
+/// Returns the original content unchanged if no "speaker" key exists in metadata.
+pub fn contextualize_for_embedding(content: &str, metadata: &HashMap<String, String>) -> String {
+    if let Some(speaker) = metadata.get("speaker") {
+        if !speaker.is_empty() {
+            return format!("{}: {}", speaker, content);
+        }
+    }
+    content.to_string()
+}
+
 /// Main memory engine interface
 ///
 /// This is the primary entry point for all MnemeFusion operations.

@@ -248,7 +248,7 @@ class LLMClient:
             Tuple of (answer, tokens_used)
         """
         # Format context
-        context_str = "\n".join([f"- {c}" for c in context[:25]])  # 20 memories + up to 5 profile facts
+        context_str = "\n".join([f"- {c}" for c in context[:25]])  # 20 memories + up to 10 profile facts
 
         prompt = f"""You are a helpful assistant answering questions based on conversation history.
 
@@ -436,14 +436,25 @@ class MnemeFusionEvaluator:
         contents = [doc[1] for doc in documents]
         metadatas = [doc[2] for doc in documents]
 
-        # Generate embeddings in batches
-        print("  Generating embeddings...")
+        # Generate embeddings in batches (with contextual speaker prepending)
+        print("  Generating embeddings (contextual)...")
         batch_size = 64
         all_embeddings = []
 
         for i in range(0, len(contents), batch_size):
-            batch = contents[i:i+batch_size]
-            embeddings = self.embedder.encode(batch, show_progress_bar=False)
+            batch_contents = contents[i:i+batch_size]
+            batch_metadatas = metadatas[i:i+batch_size]
+
+            # Prepend speaker context before embedding
+            contextual_batch = []
+            for content, meta in zip(batch_contents, batch_metadatas):
+                speaker = meta.get("speaker", "")
+                if speaker:
+                    contextual_batch.append(f"{speaker}: {content}")
+                else:
+                    contextual_batch.append(content)
+
+            embeddings = self.embedder.encode(contextual_batch, show_progress_bar=False)
             all_embeddings.extend(embeddings.tolist())
 
             if (i + batch_size) % 500 == 0:

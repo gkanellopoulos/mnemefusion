@@ -280,13 +280,21 @@ impl QueryPlanner {
         // docs mention specific instances with only moderate similarity to the category
         // query. Use 0.5x threshold for those. Extraction/Hypothetical keep strict
         // threshold for precision (avoids noise that hurts multi-hop reasoning).
+        //
+        // EXEMPTION: Memories with entity_score > 0 bypass this filter. These memories
+        // matched a target entity (via profile source injection or entity graph), so they
+        // are relevant even if semantically distant from the query phrasing. Without this,
+        // ~60-80% of entity-matched candidates die before RRF fusion can help them.
         let effective_prefilter = if MultiTurnAggregator::is_aggregation(&query_text.to_lowercase()) {
             self.semantic_prefilter_threshold * 0.5
         } else {
             self.semantic_prefilter_threshold
         };
         if effective_prefilter > 0.0 {
-            semantic_scores.retain(|_id, score| *score >= effective_prefilter);
+            semantic_scores.retain(|id, score| {
+                *score >= effective_prefilter
+                    || entity_scores.get(id).copied().unwrap_or(0.0) > 0.0
+            });
         }
 
         // Step 2.5: Filter by namespace if provided
@@ -533,6 +541,79 @@ impl QueryPlanner {
                     }
                 }
             }
+        }
+
+        // Step 3.9: MMR Diversity Reranking
+        // After all scoring/penalties, apply Maximal Marginal Relevance to break ties
+        // among entity-matched memories (168-205 memories at flat 2.0 compete randomly).
+        // MMR ensures diverse context: pottery + camping + painting, not 5× pottery.
+        // Formula: score = λ × rrf_score - (1-λ) × max_cosine(doc, already_selected)
+        // λ=0.7 favors relevance, 0.3 weight on diversity.
+        // Only applied when we have enough candidates to benefit from diversity.
+        const MMR_LAMBDA: f32 = 0.7;
+        const MMR_POOL_SIZE: usize = 50;
+        if fused_results.len() > limit {
+            let pool_size = fused_results.len().min(MMR_POOL_SIZE);
+            let pool = &fused_results[..pool_size];
+
+            // Load embeddings for the candidate pool
+            let pool_embeddings: Vec<Option<Vec<f32>>> = pool
+                .iter()
+                .map(|r| {
+                    self.storage
+                        .get_memory_by_u64(r.id.to_u64())
+                        .ok()
+                        .flatten()
+                        .map(|m| m.embedding)
+                        .filter(|e| !e.is_empty() && e.len() == query_embedding.len())
+                })
+                .collect();
+
+            let mut selected: Vec<usize> = Vec::with_capacity(limit);
+            let mut remaining: Vec<usize> = (0..pool_size).collect();
+
+            // Greedily select limit items by MMR score
+            while selected.len() < limit && !remaining.is_empty() {
+                let mut best_idx_in_remaining = 0;
+                let mut best_mmr_score = f32::NEG_INFINITY;
+
+                for (ri, &cand_idx) in remaining.iter().enumerate() {
+                    let relevance = pool[cand_idx].fused_score;
+
+                    // Max cosine similarity to any already-selected document
+                    let max_sim = if selected.is_empty() {
+                        0.0
+                    } else if let Some(ref cand_emb) = pool_embeddings[cand_idx] {
+                        selected
+                            .iter()
+                            .filter_map(|&sel_idx| {
+                                pool_embeddings[sel_idx]
+                                    .as_ref()
+                                    .map(|sel_emb| cosine_similarity(cand_emb, sel_emb))
+                            })
+                            .fold(0.0f32, f32::max)
+                    } else {
+                        0.0 // No embedding — treat as fully diverse
+                    };
+
+                    let mmr_score = MMR_LAMBDA * relevance - (1.0 - MMR_LAMBDA) * max_sim;
+                    if mmr_score > best_mmr_score {
+                        best_mmr_score = mmr_score;
+                        best_idx_in_remaining = ri;
+                    }
+                }
+
+                let chosen = remaining.swap_remove(best_idx_in_remaining);
+                selected.push(chosen);
+            }
+
+            // Rebuild fused_results in MMR order, then append any remaining beyond pool
+            let mut mmr_results: Vec<FusedResult> =
+                selected.into_iter().map(|i| pool[i].clone()).collect();
+            if pool_size < fused_results.len() {
+                mmr_results.extend(fused_results[pool_size..].iter().cloned());
+            }
+            fused_results = mmr_results;
         }
 
         // Step 4: Multi-turn aggregation for list/collection queries
