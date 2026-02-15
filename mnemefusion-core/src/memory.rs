@@ -277,6 +277,15 @@ impl MemoryEngine {
         self.pipeline.set_embedding_fn(f);
     }
 
+    /// Reset the LLM GPU context to prevent memory fragmentation.
+    ///
+    /// Call periodically during long ingestion runs (e.g., every 200 docs)
+    /// to prevent CUDA crashes from GPU memory fragmentation after ~400 inferences.
+    #[cfg(feature = "entity-extraction")]
+    pub fn reset_llm_context(&self) {
+        self.pipeline.reset_llm_context();
+    }
+
     /// Precompute missing fact embeddings for all entity profiles.
     ///
     /// Iterates all stored profiles, checks each fact for a stored embedding,

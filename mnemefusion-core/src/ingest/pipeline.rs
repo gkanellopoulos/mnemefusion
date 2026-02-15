@@ -159,6 +159,19 @@ impl IngestionPipeline {
         self
     }
 
+    /// Reset the LLM GPU context to prevent memory fragmentation.
+    ///
+    /// Call periodically during long ingestion runs (e.g., every 200 docs)
+    /// to prevent CUDA crashes from GPU memory fragmentation.
+    #[cfg(feature = "entity-extraction")]
+    pub fn reset_llm_context(&self) {
+        if let Some(ref extractor) = self.llm_extractor {
+            if let Ok(guard) = extractor.lock() {
+                guard.reset_context();
+            }
+        }
+    }
+
     /// Set the embedding function for computing fact embeddings at ingestion time.
     pub fn set_embedding_fn(&mut self, f: EmbeddingFn) {
         self.embedding_fn = Some(f);

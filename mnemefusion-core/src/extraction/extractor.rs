@@ -255,6 +255,11 @@ impl LlmEntityExtractor {
         Ok(output[start..=end].to_string())
     }
 
+    /// Reset the GPU context to prevent memory fragmentation during long ingestion runs.
+    pub fn reset_context(&self) {
+        self.engine.reset_context();
+    }
+
     /// Get the model tier being used
     pub fn tier(&self) -> ModelTier {
         self.tier

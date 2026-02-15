@@ -466,28 +466,78 @@ class MnemeFusionEvaluator:
         if use_llm:
             # Use individual add() to enable LLM extraction
             # This is much slower but extracts entity profiles
+            #
+            # Checkpoint/resume: saves progress to a file so overnight runs
+            # survive crashes (llama-cpp GPU crash at ~398 docs).
+            # GPU context reset: every 200 docs to prevent memory fragmentation.
+            checkpoint_path = self.db_path + ".checkpoint" if self.db_path else None
+            completed_indices = set()
+
+            # Load checkpoint if resuming
+            if checkpoint_path and os.path.exists(checkpoint_path):
+                try:
+                    with open(checkpoint_path) as f:
+                        completed_indices = set(json.load(f))
+                    print(f"  [Checkpoint] Resuming from checkpoint: {len(completed_indices)} docs already ingested")
+                except Exception:
+                    completed_indices = set()
+
             created_count = 0
             error_count = 0
+            skipped_count = len(completed_indices)
+
             for i, (doc_id, content, metadata) in enumerate(documents):
+                # Skip already-ingested docs (checkpoint resume)
+                if i in completed_indices:
+                    continue
+
                 try:
                     self.memory.add(content, all_embeddings[i], metadata)
                     created_count += 1
+                    completed_indices.add(i)
                 except Exception as e:
                     error_count += 1
                     if error_count <= 5:
                         print(f"    [WARN] Failed to add doc {i}: {e}")
 
+                # GPU context reset every 200 docs to prevent CUDA memory fragmentation
+                if created_count > 0 and created_count % 200 == 0:
+                    try:
+                        self.memory.reset_llm_context()
+                        print(f"    [GPU] Reset LLM context at doc {i} (fragmentation prevention)")
+                    except Exception:
+                        pass  # reset_llm_context not available (CPU build)
+
+                # Save checkpoint every 50 docs
+                if checkpoint_path and created_count > 0 and created_count % 50 == 0:
+                    with open(checkpoint_path, 'w') as f:
+                        json.dump(sorted(completed_indices), f)
+
                 # Progress reporting
                 if (i + 1) % 100 == 0:
                     elapsed_so_far = time.time() - start_time
-                    rate = (i + 1) / elapsed_so_far
-                    remaining = (len(documents) - i - 1) / rate if rate > 0 else 0
-                    print(f"    Progress: {i + 1}/{len(documents)} ({rate:.1f} docs/s, ~{remaining:.0f}s remaining)")
+                    done = created_count + skipped_count
+                    rate = done / elapsed_so_far if elapsed_so_far > 0 else 0
+                    remaining = (len(documents) - done) / rate if rate > 0 else 0
+                    print(f"    Progress: {done}/{len(documents)} ({rate:.1f} docs/s, ~{remaining:.0f}s remaining)")
+
+            # Final checkpoint save
+            if checkpoint_path:
+                with open(checkpoint_path, 'w') as f:
+                    json.dump(sorted(completed_indices), f)
 
             elapsed = time.time() - start_time
-            print(f"  [OK] Ingested {created_count} documents in {elapsed:.1f}s")
+            print(f"  [OK] Ingested {created_count} new + {skipped_count} resumed = {created_count + skipped_count} total in {elapsed:.1f}s")
             if error_count > 0:
                 print(f"  [WARN] {error_count} errors during ingestion")
+
+            # Clean up checkpoint on successful completion
+            if checkpoint_path and len(completed_indices) >= len(documents) - error_count:
+                try:
+                    os.remove(checkpoint_path)
+                    print(f"  [Checkpoint] Removed (ingestion complete)")
+                except Exception:
+                    pass
         else:
             # Use batch add for fast ingestion (no LLM extraction)
             memories_to_add = []

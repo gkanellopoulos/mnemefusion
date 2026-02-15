@@ -1224,6 +1224,23 @@ impl PyMemory {
         Ok(())
     }
 
+    /// Reset the LLM GPU context to prevent memory fragmentation.
+    ///
+    /// Call periodically during long ingestion runs (e.g., every 200 docs)
+    /// to prevent CUDA crashes after ~400 inference cycles.
+    ///
+    /// Example:
+    ///     >>> for i, doc in enumerate(documents):
+    ///     >>>     if i > 0 and i % 200 == 0:
+    ///     >>>         memory.reset_llm_context()
+    ///     >>>     memory.add(doc.content, doc.embedding, doc.metadata)
+    fn reset_llm_context(&self) -> PyResult<()> {
+        let engine = self.get_engine()?;
+        #[cfg(feature = "entity-extraction")]
+        engine.reset_llm_context();
+        Ok(())
+    }
+
     /// Precompute fact embeddings for all entity profiles.
     ///
     /// Call this after set_embedding_fn() to backfill fact embeddings

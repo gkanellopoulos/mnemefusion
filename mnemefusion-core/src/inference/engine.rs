@@ -116,6 +116,16 @@ impl InferenceEngine {
         Ok(guard)
     }
 
+    /// Drop and reset the GPU context to prevent memory fragmentation.
+    ///
+    /// After ~400 inference cycles, the GPU allocator can become fragmented,
+    /// causing crashes. Calling this periodically (e.g., every 200 docs)
+    /// forces a fresh context allocation on the next generate() call.
+    pub fn reset_context(&self) {
+        let mut guard = self.ctx.lock().unwrap();
+        *guard = None;
+    }
+
     /// Generate text with JSON grammar constraints
     ///
     /// The grammar ensures the output is always valid JSON matching the schema.
