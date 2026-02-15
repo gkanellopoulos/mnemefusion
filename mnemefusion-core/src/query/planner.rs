@@ -7,7 +7,7 @@ use crate::{
     error::Result,
     graph::GraphManager,
     index::{TemporalIndex, VectorIndex},
-    ingest::{get_causal_extractor, EntityExtractor, SimpleEntityExtractor, SlmMetadata},
+    ingest::{get_causal_extractor, SlmMetadata},
     query::{
         aggregator::MultiTurnAggregator,
         fusion::{FusedResult, FusionEngine},
@@ -221,7 +221,7 @@ impl QueryPlanner {
         // Step 1.7: Detect target entity for speaker-aware retrieval.
         // Used both to increase candidate pool (more docs to compensate for penalty)
         // and in Step 3.7 for the actual speaker reranking.
-        let target_entity = Self::extract_query_entity(query_text);
+        let target_entity = self.extract_query_entity(query_text);
 
         // Step 2: Retrieve from all dimensions (fetch more to account for filtering)
         let needs_filtering =
@@ -263,7 +263,7 @@ impl QueryPlanner {
         // "instruments" matches "instrument", "books" matches "book", etc.
         // Uses max() to ensure fact-matched memories rank AT LEAST as high as the
         // 2.0 baseline (never clamped below it).
-        let profile_result = self.profile_search.search(query_text, limit * fetch_multiplier)?;
+        let profile_result = self.profile_search.search(query_text, query_embedding, limit * fetch_multiplier)?;
         let matched_facts = profile_result.matched_facts;
         for (memory_id, profile_score) in profile_result.source_scores {
             let boosted = 2.0 + profile_score; // fact-matched get 2.0-3.0
@@ -606,10 +606,10 @@ impl QueryPlanner {
         // Matches query words against ALL fact text (fact_type + value) for the entity.
         // No hardcoded keyword→fact_type mapping needed.
         let profile_boost_memories: HashMap<MemoryId, f32> =
-            self.profile_search.compute_fact_boosts(entity_name, query_text)?;
+            self.profile_search.compute_fact_boosts(entity_name, query_text, query_embedding)?;
 
         // Also get matched facts for synthetic injection
-        let matched_facts = self.profile_search.search(query_text, limit)?.matched_facts;
+        let matched_facts = self.profile_search.search(query_text, query_embedding, limit)?.matched_facts;
 
         // Step 3: Calculate scores for each memory
         let mut scored_results = Vec::new();
@@ -705,66 +705,12 @@ impl QueryPlanner {
 
     /// Extract the primary person entity from query text for speaker-aware reranking.
     ///
-    /// Detects Title Case proper nouns, filtering out sentence-starting words and
-    /// honorific-modified names (e.g., "Dr. Seuss"). Returns Some(name) only when
-    /// exactly one entity is found — queries mentioning multiple people return None
-    /// to avoid incorrect speaker filtering.
-    fn extract_query_entity(query_text: &str) -> Option<String> {
-        const SKIP_WORDS: &[&str] = &[
-            "What", "When", "Where", "How", "Why", "Who", "Which", "Would", "Could", "Should",
-            "Is", "Are", "Was", "Were", "Do", "Does", "Did", "Has", "Have", "Had", "Can", "Will",
-            "The", "In", "For", "From", "After", "Before", "During", "About", "With", "Into",
-            "Between", "January", "February", "March", "April", "May", "June", "July", "August",
-            "September", "October", "November", "December", "Monday", "Tuesday", "Wednesday",
-            "Thursday", "Friday", "Saturday", "Sunday",
-        ];
-        const HONORIFICS: &[&str] = &["Dr", "Mr", "Mrs", "Ms", "Prof"];
-
-        let words: Vec<&str> = query_text.split_whitespace().collect();
-        let mut entities: Vec<String> = Vec::new();
-        let mut skip_next = false;
-
-        for word in &words {
-            if skip_next {
-                skip_next = false;
-                continue;
-            }
-
-            // Strip trailing punctuation
-            let clean = word.trim_end_matches(|c: char| !c.is_alphanumeric());
-            // Strip possessive suffix
-            let clean = clean
-                .strip_suffix("'s")
-                .or_else(|| clean.strip_suffix("\u{2019}s"))
-                .unwrap_or(clean);
-
-            if clean.is_empty() {
-                continue;
-            }
-
-            // Honorifics: the next word is a title-attached name, skip it
-            if HONORIFICS.contains(&clean) {
-                skip_next = true;
-                continue;
-            }
-
-            if clean.len() < 4 {
-                continue;
-            }
-
-            // Must be Title Case: first char uppercase, at least one lowercase after
-            let first = clean.chars().next().unwrap();
-            if !first.is_uppercase() || !clean.chars().skip(1).any(|c| c.is_lowercase()) {
-                continue;
-            }
-
-            if SKIP_WORDS.contains(&clean) {
-                continue;
-            }
-
-            entities.push(clean.to_string());
-        }
-
+    /// Uses profile-aware entity detection (case-insensitive whole-word matching
+    /// against stored entity profile names). Returns Some(name) only when exactly
+    /// one entity is found — queries mentioning multiple people return None to
+    /// avoid incorrect speaker filtering.
+    fn extract_query_entity(&self, query_text: &str) -> Option<String> {
+        let entities = self.profile_search.detect_entities(query_text).ok()?;
         if entities.len() == 1 {
             Some(entities[0].clone())
         } else {
@@ -947,10 +893,8 @@ impl QueryPlanner {
     /// Solution 2: When an entity is not in the graph (extraction missed it),
     /// falls back to BM25 keyword search for the entity name.
     fn entity_search(&self, query_text: &str, limit: usize) -> Result<HashMap<MemoryId, f32>> {
-        let entity_extractor = SimpleEntityExtractor::new();
-
-        // Extract entities from query (with stop word filtering)
-        let query_entities = entity_extractor.extract(query_text)?;
+        // Extract entities from query using profile-aware detection
+        let query_entities = self.profile_search.detect_entities(query_text)?;
 
         // If query has no entities, return empty (no entity scoring)
         if query_entities.is_empty() {
@@ -2215,6 +2159,13 @@ mod tests {
 
         let (planner, _dir) = create_test_planner();
 
+        // Create entity profiles so profile-based detection can find them
+        planner.storage.store_entity_profile(
+            &crate::types::EntityProfile::new(
+                crate::types::EntityId::new(), "Alice".into(), "person".into(),
+            ),
+        ).unwrap();
+
         // Create ingestion pipeline with entity extraction enabled
         let pipeline = IngestionPipeline::new(
             Arc::clone(&planner.storage),
@@ -2252,7 +2203,7 @@ mod tests {
             .entity_search("Tell me about Alice and Project Alpha", 10)
             .unwrap();
 
-        // Should find mem1 (has Alice and Project Alpha)
+        // Should find mem1 (has Alice)
         assert!(
             scores.contains_key(&mem1_id),
             "Should find memory with matching entities"
@@ -2273,6 +2224,13 @@ mod tests {
 
         let (planner, _dir) = create_test_planner();
 
+        // Create entity profile for Alice
+        planner.storage.store_entity_profile(
+            &crate::types::EntityProfile::new(
+                crate::types::EntityId::new(), "Alice".into(), "person".into(),
+            ),
+        ).unwrap();
+
         let pipeline = IngestionPipeline::new(
             Arc::clone(&planner.storage),
             Arc::clone(&planner.vector_index),
@@ -2291,13 +2249,12 @@ mod tests {
         pipeline.add(mem1).unwrap();
 
         // Query with stop words - should filter them out
-        // "The" and "What" are stop words and shouldn't match
+        // "The" and "What" are not entity profile names
         let scores = planner
             .entity_search("What about Alice and The meeting?", 10)
             .unwrap();
 
-        // Should find mem1 (Alice is a real entity)
-        // Stop words "What" and "The" should be filtered out during extraction
+        // Should find mem1 (Alice is a stored entity profile)
         assert!(
             scores.contains_key(&mem1_id),
             "Should find memory with Alice, ignoring stop words"
@@ -2322,8 +2279,9 @@ mod tests {
     }
 
     #[test]
-    fn test_entity_search_partial_match() {
+    fn test_entity_search_multi_word_entity() {
         use crate::ingest::IngestionPipeline;
+        use crate::types::{EntityFact, EntityId, EntityProfile};
 
         let (planner, _dir) = create_test_planner();
 
@@ -2344,13 +2302,24 @@ mod tests {
         let mem1_id = mem1.id.clone();
         pipeline.add(mem1).unwrap();
 
-        // Query with partial entity match
-        let scores = planner.entity_search("What is Project doing?", 10).unwrap();
+        // Create entity profile for "Project Alpha"
+        let profile = EntityProfile {
+            entity_id: EntityId::new(),
+            name: "Project Alpha".to_string(),
+            entity_type: "project".to_string(),
+            facts: std::collections::HashMap::new(),
+            source_memories: vec![mem1_id.clone()],
+            updated_at: crate::types::Timestamp::now(),
+        };
+        planner.storage.store_entity_profile(&profile).unwrap();
 
-        // Should find mem1 (partial match: "Project" in "Project Alpha")
+        // Query with full multi-word entity name
+        let scores = planner.entity_search("What is Project Alpha doing?", 10).unwrap();
+
+        // Should find mem1 (exact multi-word match: "Project Alpha")
         assert!(
             scores.contains_key(&mem1_id),
-            "Should find memory with partial entity match"
+            "Should find memory with multi-word entity match"
         );
     }
 
@@ -2653,37 +2622,66 @@ mod tests {
         assert_eq!(results.len(), 0, "Should return empty for non-existent entity");
     }
 
-    // --- extract_query_entity tests ---
+    // --- extract_query_entity tests (profile-aware) ---
 
     #[test]
     fn test_extract_query_entity_single_name() {
+        let (planner, _dir) = create_test_planner();
+
+        // Store profiles for known entities
+        planner.storage.store_entity_profile(
+            &crate::types::EntityProfile::new(
+                crate::types::EntityId::new(), "Melanie".into(), "person".into(),
+            ),
+        ).unwrap();
+        planner.storage.store_entity_profile(
+            &crate::types::EntityProfile::new(
+                crate::types::EntityId::new(), "Caroline".into(), "person".into(),
+            ),
+        ).unwrap();
+
         assert_eq!(
-            QueryPlanner::extract_query_entity("What books has Melanie read?"),
-            Some("Melanie".to_string())
+            planner.extract_query_entity("What books has Melanie read?"),
+            Some("melanie".to_string())
         );
         assert_eq!(
-            QueryPlanner::extract_query_entity("Where has Melanie camped?"),
-            Some("Melanie".to_string())
-        );
-        assert_eq!(
-            QueryPlanner::extract_query_entity("What did Caroline research?"),
-            Some("Caroline".to_string())
+            planner.extract_query_entity("What did Caroline research?"),
+            Some("caroline".to_string())
         );
     }
 
     #[test]
     fn test_extract_query_entity_possessive() {
+        let (planner, _dir) = create_test_planner();
+        planner.storage.store_entity_profile(
+            &crate::types::EntityProfile::new(
+                crate::types::EntityId::new(), "Caroline".into(), "person".into(),
+            ),
+        ).unwrap();
+
         assert_eq!(
-            QueryPlanner::extract_query_entity("What is Caroline's relationship status?"),
-            Some("Caroline".to_string())
+            planner.extract_query_entity("What is Caroline's relationship status?"),
+            Some("caroline".to_string())
         );
     }
 
     #[test]
     fn test_extract_query_entity_two_names_returns_none() {
+        let (planner, _dir) = create_test_planner();
+        planner.storage.store_entity_profile(
+            &crate::types::EntityProfile::new(
+                crate::types::EntityId::new(), "Caroline".into(), "person".into(),
+            ),
+        ).unwrap();
+        planner.storage.store_entity_profile(
+            &crate::types::EntityProfile::new(
+                crate::types::EntityId::new(), "Melanie".into(), "person".into(),
+            ),
+        ).unwrap();
+
         // Queries about multiple people should not trigger speaker filtering
         assert_eq!(
-            QueryPlanner::extract_query_entity(
+            planner.extract_query_entity(
                 "When did Caroline and Melanie go to a pride festival together?"
             ),
             None
@@ -2691,46 +2689,28 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_query_entity_honorific_skipped() {
-        // "Dr. Seuss" should not count as a detected entity; only Caroline remains
-        assert_eq!(
-            QueryPlanner::extract_query_entity(
-                "Would Caroline likely have Dr. Seuss books on her bookshelf?"
-            ),
-            Some("Caroline".to_string())
-        );
-    }
-
-    #[test]
     fn test_extract_query_entity_no_entity() {
-        // Generic queries without proper nouns
+        let (planner, _dir) = create_test_planner();
+        // No profiles stored — generic queries should return None
         assert_eq!(
-            QueryPlanner::extract_query_entity("What happened yesterday?"),
-            None
-        );
-        assert_eq!(
-            QueryPlanner::extract_query_entity("when did this happen?"),
+            planner.extract_query_entity("What happened yesterday?"),
             None
         );
     }
 
     #[test]
-    fn test_extract_query_entity_allcaps_ignored() {
-        // All-caps words like LGBTQ are not person names
-        assert_eq!(
-            QueryPlanner::extract_query_entity(
-                "What LGBTQ+ events has Caroline participated in?"
+    fn test_extract_query_entity_lowercase_query() {
+        let (planner, _dir) = create_test_planner();
+        planner.storage.store_entity_profile(
+            &crate::types::EntityProfile::new(
+                crate::types::EntityId::new(), "Caroline".into(), "person".into(),
             ),
-            Some("Caroline".to_string())
-        );
-    }
+        ).unwrap();
 
-    #[test]
-    fn test_extract_query_entity_sentence_starters_skipped() {
-        // Sentence-starting words like "Would", "What" are not entities
+        // Lowercase name in query should still match
         assert_eq!(
-            QueryPlanner::extract_query_entity("Would Caroline pursue writing as a career?"),
-            Some("Caroline".to_string())
+            planner.extract_query_entity("what does caroline like?"),
+            Some("caroline".to_string())
         );
     }
 }

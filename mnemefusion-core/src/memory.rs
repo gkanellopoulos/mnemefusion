@@ -30,6 +30,12 @@ use crate::extraction::{LlmEntityExtractor, ModelTier};
 #[cfg(all(feature = "entity-extraction", not(feature = "slm")))]
 use std::sync::Mutex;
 
+/// Callback type for computing embeddings at ingestion time.
+///
+/// Provided by the caller (e.g., Python's `SentenceTransformer.encode()`).
+/// Called for each fact text during ingestion to compute fact embeddings.
+pub type EmbeddingFn = Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync>;
+
 /// Main memory engine interface
 ///
 /// This is the primary entry point for all MnemeFusion operations.
@@ -236,6 +242,23 @@ impl MemoryEngine {
 
         tracing::info!("LLM entity extractor attached to pipeline");
         Ok(self)
+    }
+
+    /// Set the embedding function for computing fact embeddings at ingestion time.
+    ///
+    /// When set, the pipeline will compute and store embeddings for each extracted
+    /// entity fact during ingestion. These embeddings enable semantic matching in
+    /// ProfileSearch (cosine similarity vs word-overlap).
+    ///
+    /// The function should return an embedding vector for the given text input.
+    /// Typically this wraps the same embedding model used for memory embeddings
+    /// (e.g., `SentenceTransformer.encode()`).
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - Embedding function: `Fn(&str) -> Vec<f32>`
+    pub fn set_embedding_fn(&mut self, f: EmbeddingFn) {
+        self.pipeline.set_embedding_fn(f);
     }
 
     /// Add a new memory to the database

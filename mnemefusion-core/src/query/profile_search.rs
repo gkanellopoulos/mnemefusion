@@ -1,23 +1,24 @@
 //! Profile-based search for entity fact lookup (open-vocabulary)
 //!
 //! This module enables direct fact retrieval from Entity Profiles using
-//! domain-agnostic word-overlap matching. Instead of requiring a hardcoded
-//! keyword→fact_type mapping, it matches query words against ALL facts
-//! (both fact_type and value text) for detected entities.
+//! embedding-based similarity matching with word-overlap fallback.
 //!
-//! Example: "What instrument does Caroline play?" matches against all of
-//! Caroline's facts. The fact `instrument=guitar` gets a high overlap score
-//! because "instrument" appears in both the query and the fact_type.
-//! Similarly, "Does Caroline play guitar?" matches because "guitar" appears
-//! in both the query and the fact value.
+//! **Entity detection** uses case-insensitive whole-word matching against stored
+//! entity profile names — no regex or capitalization heuristics. This handles
+//! any name format, language, or casing.
+//!
+//! **Fact matching** uses cosine similarity between the query embedding and
+//! precomputed fact embeddings when available. Facts without embeddings fall
+//! back to stemmed word-overlap matching for backward compatibility with
+//! existing databases.
 
 use crate::{
     error::Result,
-    ingest::{EntityExtractor, SimpleEntityExtractor},
     storage::StorageEngine,
     types::MemoryId,
 };
 use rust_stemmers::{Algorithm, Stemmer};
+use sha2::{Sha256, Digest};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -33,6 +34,10 @@ const STOP_WORDS: &[&str] = &[
     "i", "me", "my", "we", "our", "you", "your", "he", "she", "they",
     "them", "his", "her", "their", "s", "t", "re", "ve", "ll", "d",
 ];
+
+/// Minimum cosine similarity threshold for embedding-based fact matching.
+/// Below this, the match is considered noise and ignored.
+const EMBEDDING_MATCH_THRESHOLD: f32 = 0.3;
 
 /// Tokenize text into lowercase, stemmed words, removing stop words and punctuation.
 /// Uses Porter stemming so "instruments" matches "instrument", "books" matches "book", etc.
@@ -63,6 +68,34 @@ fn word_overlap_score(query_words: &HashSet<String>, fact_words: &HashSet<String
     (overlap as f32 / norm as f32).min(1.0)
 }
 
+/// Compute cosine similarity between two vectors.
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let mut dot = 0.0f32;
+    let mut norm_a = 0.0f32;
+    let mut norm_b = 0.0f32;
+    for (x, y) in a.iter().zip(b.iter()) {
+        dot += x * y;
+        norm_a += x * x;
+        norm_b += y * y;
+    }
+    let denom = norm_a.sqrt() * norm_b.sqrt();
+    if denom == 0.0 {
+        0.0
+    } else {
+        dot / denom
+    }
+}
+
+/// Compute the 16-byte hash key for a fact embedding.
+pub fn fact_embedding_key(entity: &str, fact_type: &str, value: &str) -> Vec<u8> {
+    let input = format!("{}\0{}\0{}", entity.to_lowercase(), fact_type, value.to_lowercase());
+    let hash = Sha256::digest(input.as_bytes());
+    hash[..16].to_vec()
+}
+
 /// A single matched fact from a profile search
 #[derive(Debug, Clone)]
 pub struct MatchedProfileFact {
@@ -84,91 +117,133 @@ pub struct ProfileSearchResult {
 /// Profile-based search engine (open-vocabulary)
 ///
 /// Searches Entity Profiles to find memories that are sources of
-/// matching facts. Uses word-overlap between query text and fact
-/// text (fact_type + value) instead of a hardcoded keyword map.
+/// matching facts. Uses embedding similarity when fact embeddings
+/// are available, falling back to word-overlap for backward compatibility.
+///
+/// Entity detection uses case-insensitive whole-word matching against
+/// stored entity profile names instead of regex.
 pub struct ProfileSearch {
     storage: Arc<StorageEngine>,
-    entity_extractor: SimpleEntityExtractor,
 }
 
 impl ProfileSearch {
     /// Create a new profile search engine
     pub fn new(storage: Arc<StorageEngine>) -> Self {
-        Self {
-            storage,
-            entity_extractor: SimpleEntityExtractor::new(),
-        }
+        Self { storage }
     }
 
-    /// Search for memories based on entity profiles (open-vocabulary)
+    /// Detect entities in query text by matching against stored profile names.
+    ///
+    /// Uses case-insensitive whole-word matching. Handles possessives
+    /// (e.g., "Caroline's") and punctuation boundaries.
+    fn detect_entities_in_query(&self, query_text: &str) -> Result<Vec<String>> {
+        let query_lower = query_text.to_lowercase();
+        let entity_names = self.storage.list_entity_profile_names()?;
+
+        let mut found = Vec::new();
+        for name in &entity_names {
+            // Keys are already lowercase from storage
+            if Self::contains_whole_word(&query_lower, name) {
+                found.push(name.clone());
+            }
+        }
+        Ok(found)
+    }
+
+    /// Check if `word` appears in `text` as a complete word (not substring).
+    /// Handles possessives (e.g., "caroline's") and punctuation boundaries.
+    fn contains_whole_word(text: &str, word: &str) -> bool {
+        for (idx, _) in text.match_indices(word) {
+            let before_ok = idx == 0 || !text.as_bytes()[idx - 1].is_ascii_alphanumeric();
+            let after_idx = idx + word.len();
+            let after_ok = after_idx >= text.len()
+                || !text.as_bytes()[after_idx].is_ascii_alphanumeric()
+                || text[after_idx..].starts_with("'s")
+                || text[after_idx..].starts_with("\u{2019}s");
+            if before_ok && after_ok {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Search for memories based on entity profiles
     ///
     /// This method:
-    /// 1. Extracts entity names from the query
+    /// 1. Detects entity names in the query via profile name matching
     /// 2. Looks up Entity Profiles for detected entities
-    /// 3. Scores ALL facts by word-overlap between query and "{fact_type} {value}"
+    /// 3. Scores ALL facts by embedding similarity (with word-overlap fallback)
     /// 4. Returns source memories of matching facts with scores
-    ///
-    /// This is domain-agnostic: any fact_type the LLM generates (instrument,
-    /// pet_name, art_style, miniature_painting, etc.) is automatically searchable
-    /// without needing a hardcoded keyword mapping.
-    pub fn search(&self, query_text: &str, limit: usize) -> Result<ProfileSearchResult> {
+    pub fn search(
+        &self,
+        query_text: &str,
+        query_embedding: &[f32],
+        limit: usize,
+    ) -> Result<ProfileSearchResult> {
         let mut scores: HashMap<MemoryId, f32> = HashMap::new();
         let mut matched_facts: Vec<MatchedProfileFact> = Vec::new();
 
-        // Step 1: Extract entities from query
-        let query_entities = self.entity_extractor.extract(query_text)?;
+        // Step 1: Detect entities from query using profile names
+        let query_entities = self.detect_entities_in_query(query_text)?;
 
         if query_entities.is_empty() {
             return Ok(ProfileSearchResult { source_scores: scores, matched_facts });
         }
 
-        // Step 2: Tokenize the query
+        // Step 2: Tokenize the query (for word-overlap fallback)
         let query_words = tokenize(query_text);
 
-        if query_words.is_empty() {
-            return Ok(ProfileSearchResult { source_scores: scores, matched_facts });
-        }
-
-        // Step 3: Look up profiles and score all facts by word overlap
+        // Step 3: Look up profiles and score all facts
         for entity_name in &query_entities {
             if let Some(profile) = self.storage.get_entity_profile(entity_name)? {
                 let mut has_any_match = false;
 
-                // Score every fact by word overlap with query
+                // Score every fact
                 for (fact_type, facts) in &profile.facts {
                     for fact in facts {
-                        // Build searchable text from fact_type and value
-                        // Underscores in fact_type become spaces (e.g. "research_topic" → "research topic")
-                        let fact_text = format!(
-                            "{} {}",
-                            fact_type.replace('_', " "),
-                            fact.value
-                        );
-                        let fact_words = tokenize(&fact_text);
+                        // Try embedding-based scoring first
+                        let key = fact_embedding_key(entity_name, fact_type, &fact.value);
+                        let score = if let Ok(Some(fact_emb)) = self.storage.get_fact_embedding(&key) {
+                            let sim = cosine_similarity(query_embedding, &fact_emb);
+                            if sim >= EMBEDDING_MATCH_THRESHOLD {
+                                sim * fact.confidence
+                            } else {
+                                0.0
+                            }
+                        } else {
+                            // Fallback: word-overlap (backward compat for facts without embeddings)
+                            if query_words.is_empty() {
+                                0.0
+                            } else {
+                                let fact_text = format!(
+                                    "{} {}",
+                                    fact_type.replace('_', " "),
+                                    fact.value
+                                );
+                                let fact_words = tokenize(&fact_text);
+                                word_overlap_score(&query_words, &fact_words) * fact.confidence
+                            }
+                        };
 
-                        let overlap = word_overlap_score(&query_words, &fact_words);
-                        if overlap > 0.0 {
+                        if score > 0.0 {
                             has_any_match = true;
-                            // Score = overlap * confidence
-                            let fact_score = overlap * fact.confidence;
                             scores
                                 .entry(fact.source_memory.clone())
-                                .and_modify(|s| *s = (*s + fact_score).min(1.0))
-                                .or_insert(fact_score);
+                                .and_modify(|s| *s = (*s + score).min(1.0))
+                                .or_insert(score);
 
-                            // Collect matched fact for synthetic injection
                             matched_facts.push(MatchedProfileFact {
                                 entity_name: entity_name.clone(),
                                 fact_type: fact_type.clone(),
                                 value: fact.value.clone(),
-                                score: fact_score,
+                                score,
                                 source_memory: fact.source_memory.clone(),
                             });
                         }
                     }
                 }
 
-                // Fallback: if no fact matched by word overlap, give a small boost
+                // Fallback: if no fact matched, give a small boost
                 // to all source memories (entity was mentioned but no specific fact matched)
                 if !has_any_match {
                     for memory_id in &profile.source_memories {
@@ -199,39 +274,52 @@ impl ProfileSearch {
         Ok(ProfileSearchResult { source_scores: scores, matched_facts })
     }
 
-    /// Compute open-vocabulary profile boost for a specific entity's facts
+    /// Compute profile boost for a specific entity's facts
     ///
     /// Used by the entity-focused path in QueryPlanner to boost memories
-    /// whose facts match the query by word overlap.
+    /// whose facts match the query.
     pub fn compute_fact_boosts(
         &self,
         entity_name: &str,
         query_text: &str,
+        query_embedding: &[f32],
     ) -> Result<HashMap<MemoryId, f32>> {
         let mut boost_map: HashMap<MemoryId, f32> = HashMap::new();
 
         let query_words = tokenize(query_text);
-        if query_words.is_empty() {
-            return Ok(boost_map);
-        }
 
         if let Some(profile) = self.storage.get_entity_profile(entity_name)? {
             for (fact_type, facts) in &profile.facts {
                 for fact in facts {
-                    let fact_text = format!(
-                        "{} {}",
-                        fact_type.replace('_', " "),
-                        fact.value
-                    );
-                    let fact_words = tokenize(&fact_text);
+                    // Try embedding-based scoring first
+                    let key = fact_embedding_key(entity_name, fact_type, &fact.value);
+                    let score = if let Ok(Some(fact_emb)) = self.storage.get_fact_embedding(&key) {
+                        let sim = cosine_similarity(query_embedding, &fact_emb);
+                        if sim >= EMBEDDING_MATCH_THRESHOLD {
+                            sim * fact.confidence
+                        } else {
+                            0.0
+                        }
+                    } else {
+                        // Fallback: word-overlap
+                        if query_words.is_empty() {
+                            0.0
+                        } else {
+                            let fact_text = format!(
+                                "{} {}",
+                                fact_type.replace('_', " "),
+                                fact.value
+                            );
+                            let fact_words = tokenize(&fact_text);
+                            word_overlap_score(&query_words, &fact_words) * fact.confidence
+                        }
+                    };
 
-                    let overlap = word_overlap_score(&query_words, &fact_words);
-                    if overlap > 0.0 {
-                        let fact_score = overlap * fact.confidence;
+                    if score > 0.0 {
                         boost_map
                             .entry(fact.source_memory.clone())
-                            .and_modify(|s| *s = (*s + fact_score).min(1.0))
-                            .or_insert(fact_score);
+                            .and_modify(|s| *s = (*s + score).min(1.0))
+                            .or_insert(score);
                     }
                 }
             }
@@ -240,9 +328,9 @@ impl ProfileSearch {
         Ok(boost_map)
     }
 
-    /// Get entities detected in the query
+    /// Get entities detected in the query (public API)
     pub fn detect_entities(&self, query_text: &str) -> Result<Vec<String>> {
-        self.entity_extractor.extract(query_text)
+        self.detect_entities_in_query(query_text)
     }
 }
 
@@ -325,6 +413,40 @@ mod tests {
         assert!(score > 0.0, "Value overlap should score > 0, got {}", score);
     }
 
+    // ========== Unit tests for contains_whole_word ==========
+
+    #[test]
+    fn test_contains_whole_word_basic() {
+        assert!(ProfileSearch::contains_whole_word("what does caroline play", "caroline"));
+        assert!(!ProfileSearch::contains_whole_word("what does carolina play", "caroline"));
+    }
+
+    #[test]
+    fn test_contains_whole_word_possessive() {
+        assert!(ProfileSearch::contains_whole_word("caroline's guitar", "caroline"));
+        assert!(ProfileSearch::contains_whole_word("caroline\u{2019}s guitar", "caroline"));
+    }
+
+    #[test]
+    fn test_contains_whole_word_punctuation() {
+        assert!(ProfileSearch::contains_whole_word("tell me about caroline.", "caroline"));
+        assert!(ProfileSearch::contains_whole_word("caroline, what do you think?", "caroline"));
+    }
+
+    #[test]
+    fn test_contains_whole_word_no_substring() {
+        // "carol" should NOT match inside "caroline"
+        assert!(!ProfileSearch::contains_whole_word("tell me about caroline", "carol"));
+    }
+
+    #[test]
+    fn test_fact_embedding_key_deterministic() {
+        let k1 = fact_embedding_key("Caroline", "instrument", "guitar");
+        let k2 = fact_embedding_key("caroline", "instrument", "Guitar");
+        assert_eq!(k1, k2, "Key should be case-insensitive for entity and value");
+        assert_eq!(k1.len(), 16);
+    }
+
     // ========== Integration tests with storage ==========
 
     use crate::storage::StorageEngine;
@@ -359,7 +481,7 @@ mod tests {
 
         let search = ProfileSearch::new(storage);
         // "research" in query matches "research" in fact_type "research_topic"
-        let result = search.search("What is Caroline researching?", 10).unwrap();
+        let result = search.search("What is Caroline researching?", &[], 10).unwrap();
 
         assert!(!result.source_scores.is_empty(), "Should find results via fact_type word overlap");
         assert!(result.source_scores.contains_key(&memory_id));
@@ -386,7 +508,7 @@ mod tests {
 
         let search = ProfileSearch::new(storage);
         // "guitar" in query matches "guitar" in fact value
-        let result = search.search("Does Caroline play guitar?", 10).unwrap();
+        let result = search.search("Does Caroline play guitar?", &[], 10).unwrap();
 
         assert!(!result.source_scores.is_empty(), "Should find results via value word overlap");
         assert!(result.source_scores.contains_key(&memory_id));
@@ -414,7 +536,7 @@ mod tests {
 
         let search = ProfileSearch::new(storage);
         // "painting" in query matches "painting" in fact_type "miniature_painting"
-        let result = search.search("Tell me about Alice painting hobby", 10).unwrap();
+        let result = search.search("Tell me about Alice painting hobby", &[], 10).unwrap();
 
         assert!(!result.source_scores.is_empty(), "Should find novel fact types via word overlap");
         assert!(result.source_scores.contains_key(&memory_id));
@@ -435,7 +557,7 @@ mod tests {
         storage.store_entity_profile(&profile).unwrap();
 
         let search = ProfileSearch::new(storage);
-        let result = search.search("What is Bob researching?", 10).unwrap();
+        let result = search.search("What is Bob researching?", &[], 10).unwrap();
 
         assert!(result.source_scores.is_empty(), "Should not find results for unknown entity");
     }
@@ -461,7 +583,7 @@ mod tests {
 
         let search = ProfileSearch::new(storage);
         // Query has zero word overlap with "zodiac sign capricorn"
-        let result = search.search("Tell me everything about Alice", 10).unwrap();
+        let result = search.search("Tell me everything about Alice", &[], 10).unwrap();
 
         // Should fallback to boosting all source memories
         assert!(!result.source_scores.is_empty(), "Should fallback boost for entity with no fact overlap");
@@ -486,11 +608,10 @@ mod tests {
         storage.store_entity_profile(&profile).unwrap();
 
         let search = ProfileSearch::new(storage);
-        let result = search.search("What instrument does Caroline play?", 10).unwrap();
+        let result = search.search("What instrument does Caroline play?", &[], 10).unwrap();
 
         // "instrument" matches instrument fact, "play" doesn't match pet fact
         assert!(result.source_scores.contains_key(&mem_guitar), "Should find instrument memory");
-        // pet fact might or might not match depending on word overlap
         // But instrument memory should have higher score
         if result.source_scores.contains_key(&mem_pet) {
             assert!(
@@ -515,10 +636,75 @@ mod tests {
         storage.store_entity_profile(&profile).unwrap();
 
         let search = ProfileSearch::new(storage);
-        let boosts = search.compute_fact_boosts("Caroline", "What instrument does Caroline play?").unwrap();
+        let boosts = search.compute_fact_boosts("Caroline", "What instrument does Caroline play?", &[]).unwrap();
 
         assert!(!boosts.is_empty(), "Should compute boosts");
         assert!(boosts.contains_key(&memory_id));
         assert!(boosts[&memory_id] > 0.0, "Boost should be positive");
+    }
+
+    #[test]
+    fn test_detect_entities_lowercase_query() {
+        let (storage, _dir) = create_test_storage();
+
+        let profile = EntityProfile::new(
+            EntityId::new(),
+            "Caroline".to_string(),
+            "person".to_string(),
+        );
+        storage.store_entity_profile(&profile).unwrap();
+
+        let search = ProfileSearch::new(storage);
+        let entities = search.detect_entities("what does caroline like?").unwrap();
+
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0], "caroline");
+    }
+
+    #[test]
+    fn test_detect_entities_no_substring_match() {
+        let (storage, _dir) = create_test_storage();
+
+        // Store "Caroline" but query contains "Carolina"
+        let profile = EntityProfile::new(
+            EntityId::new(),
+            "Caroline".to_string(),
+            "person".to_string(),
+        );
+        storage.store_entity_profile(&profile).unwrap();
+
+        let search = ProfileSearch::new(storage);
+        let entities = search.detect_entities("Tell me about Carolina").unwrap();
+
+        assert!(entities.is_empty(), "Should NOT match 'caroline' inside 'carolina'");
+    }
+
+    #[test]
+    fn test_embedding_based_fact_scoring() {
+        let (storage, _dir) = create_test_storage();
+
+        let memory_id = MemoryId::new();
+        let mut profile = EntityProfile::new(
+            EntityId::new(),
+            "Alice".to_string(),
+            "person".to_string(),
+        );
+        profile.add_fact(EntityFact::new("occupation", "software engineer", 0.9, memory_id.clone()));
+        profile.add_source_memory(memory_id.clone());
+        storage.store_entity_profile(&profile).unwrap();
+
+        // Store a fact embedding (simulated)
+        let key = fact_embedding_key("alice", "occupation", "software engineer");
+        let fact_emb = vec![0.5, 0.5, 0.5, 0.5]; // Simple embedding
+        storage.store_fact_embedding(&key, &fact_emb).unwrap();
+
+        let search = ProfileSearch::new(storage);
+        // Query embedding similar to fact embedding
+        let query_emb = vec![0.4, 0.5, 0.5, 0.6];
+        let result = search.search("What does Alice do for a living?", &query_emb, 10).unwrap();
+
+        // Should find the fact via embedding similarity
+        assert!(!result.source_scores.is_empty(), "Should find results via embedding similarity");
+        assert!(result.source_scores.contains_key(&memory_id));
     }
 }

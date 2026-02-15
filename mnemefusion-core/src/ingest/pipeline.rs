@@ -15,20 +15,30 @@ use crate::{
     graph::GraphManager,
     index::{BM25Index, TemporalIndex, VectorIndex},
     ingest::{get_causal_extractor, get_temporal_extractor, EntityExtractor, SimpleEntityExtractor},
+    memory::EmbeddingFn,
     storage::StorageEngine,
     types::{
-        AddResult, BatchError, BatchResult, Entity, EntityFact, EntityId, EntityProfile, Memory,
-        MemoryId, MemoryInput, Timestamp, UpsertResult,
+        AddResult, BatchError, BatchResult, Entity, Memory,
+        MemoryId, MemoryInput, UpsertResult,
     },
     util::hash,
 };
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
 #[cfg(feature = "slm")]
 use crate::ingest::{SlmMetadata, SlmMetadataExtractor};
 
 #[cfg(feature = "entity-extraction")]
 use crate::extraction::{ExtractionResult, LlmEntityExtractor};
+
+#[cfg(any(feature = "entity-extraction", feature = "slm"))]
+use crate::{
+    query::profile_search::fact_embedding_key,
+    types::{EntityFact, EntityId, EntityProfile, Timestamp},
+};
+
+#[cfg(any(feature = "entity-extraction", feature = "slm"))]
+use std::sync::Mutex;
 
 /// Coordinates memory ingestion across all dimensions
 ///
@@ -57,6 +67,9 @@ pub struct IngestionPipeline {
     /// This takes precedence over the Python SLM extractor when both are available.
     #[cfg(feature = "entity-extraction")]
     llm_extractor: Option<Arc<Mutex<LlmEntityExtractor>>>,
+    /// Embedding function for computing fact embeddings at ingestion time.
+    /// When set, each extracted fact gets an embedding for semantic matching.
+    embedding_fn: Option<EmbeddingFn>,
 }
 
 impl IngestionPipeline {
@@ -90,6 +103,7 @@ impl IngestionPipeline {
             slm_extractor: None,
             #[cfg(feature = "entity-extraction")]
             llm_extractor: None,
+            embedding_fn: None,
         }
     }
 
@@ -143,6 +157,11 @@ impl IngestionPipeline {
     pub fn with_llm_extractor(mut self, extractor: Arc<Mutex<LlmEntityExtractor>>) -> Self {
         self.llm_extractor = Some(extractor);
         self
+    }
+
+    /// Set the embedding function for computing fact embeddings at ingestion time.
+    pub fn set_embedding_fn(&mut self, f: EmbeddingFn) {
+        self.embedding_fn = Some(f);
     }
 
     /// Reserve capacity in the vector index for future insertions
@@ -1023,6 +1042,24 @@ impl IngestionPipeline {
             // Add fact to profile
             profile.add_fact(fact);
 
+            // Compute and store fact embedding if embedding_fn is available
+            if let Some(ref embed_fn) = self.embedding_fn {
+                let fact_text = format!(
+                    "{} {}",
+                    extracted_fact.fact_type.replace('_', " "),
+                    extracted_fact.value
+                );
+                let embedding = embed_fn(&fact_text);
+                let key = fact_embedding_key(
+                    &extracted_fact.entity,
+                    &extracted_fact.fact_type,
+                    &extracted_fact.value,
+                );
+                if let Err(e) = self.storage.store_fact_embedding(&key, &embedding) {
+                    tracing::warn!("Failed to store fact embedding: {}", e);
+                }
+            }
+
             // Track source memory
             profile.add_source_memory(memory_id.clone());
 
@@ -1092,6 +1129,24 @@ impl IngestionPipeline {
 
             // Add fact to profile
             profile.add_fact(fact);
+
+            // Compute and store fact embedding if embedding_fn is available
+            if let Some(ref embed_fn) = self.embedding_fn {
+                let fact_text = format!(
+                    "{} {}",
+                    extracted_fact.fact_type.replace('_', " "),
+                    extracted_fact.value
+                );
+                let embedding = embed_fn(&fact_text);
+                let key = fact_embedding_key(
+                    &extracted_fact.entity,
+                    &extracted_fact.fact_type,
+                    &extracted_fact.value,
+                );
+                if let Err(e) = self.storage.store_fact_embedding(&key, &embedding) {
+                    tracing::warn!("Failed to store fact embedding: {}", e);
+                }
+            }
 
             // Track source memory
             profile.add_source_memory(memory_id.clone());

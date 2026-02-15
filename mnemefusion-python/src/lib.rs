@@ -7,7 +7,7 @@
 
 use mnemefusion_core::{
     types::{BatchResult, FilterOp, MemoryInput, MetadataFilter, Source, SourceType},
-    Config, MemoryEngine, MemoryId, Timestamp,
+    Config, EmbeddingFn, MemoryEngine, MemoryId, Timestamp,
 };
 use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -16,6 +16,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
 
 /// Helper function to parse Source from Python dict
 fn parse_source_from_dict(dict: &PyDict) -> PyResult<Source> {
@@ -1186,6 +1187,41 @@ impl PyMemory {
 
         *engine_opt = Some(new_engine);
         Ok(true)
+    }
+
+    /// Set an embedding function for computing fact embeddings at ingestion time
+    ///
+    /// The embedding function is called for each entity fact extracted during ingestion.
+    /// Fact embeddings enable semantic matching in ProfileSearch (cosine similarity
+    /// instead of word overlap). Facts without embeddings fall back to word overlap.
+    ///
+    /// Args:
+    ///     func: A callable that takes a string and returns a list of floats (embedding vector).
+    ///           Typically a sentence-transformers model.encode() wrapper.
+    ///
+    /// Example:
+    ///     >>> from sentence_transformers import SentenceTransformer
+    ///     >>> model = SentenceTransformer("BAAI/bge-base-en-v1.5")
+    ///     >>> memory.set_embedding_fn(lambda text: model.encode(text).tolist())
+    fn set_embedding_fn(&self, func: PyObject) -> PyResult<()> {
+        let func = Arc::new(func);
+        let embed_fn: EmbeddingFn = Arc::new(move |text: &str| {
+            Python::with_gil(|py| {
+                let result = func
+                    .call1(py, (text,))
+                    .expect("embedding_fn call failed");
+                result
+                    .extract::<Vec<f32>>(py)
+                    .expect("embedding_fn must return List[float]")
+            })
+        });
+
+        let mut engine_opt = self.engine.borrow_mut();
+        let engine = engine_opt
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("Database is closed"))?;
+        engine.set_embedding_fn(embed_fn);
+        Ok(())
     }
 
     /// Get the N most recent memories

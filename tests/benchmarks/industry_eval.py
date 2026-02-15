@@ -389,6 +389,13 @@ class MnemeFusionEvaluator:
                 print(f"  [LLM] Warning: Failed to enable LLM extraction: {e}")
                 print(f"  [LLM] Make sure the wheel was built with --features entity-extraction")
 
+        # Set embedding function for fact embeddings (enables semantic ProfileSearch)
+        try:
+            self.memory.set_embedding_fn(lambda text: self.embedder.encode(text, show_progress_bar=False).tolist())
+            print(f"  [Embedding] Fact embedding function set (semantic ProfileSearch enabled)")
+        except Exception as e:
+            print(f"  [Embedding] Warning: set_embedding_fn not available: {e}")
+
         print(f"  [OK] Created memory store at {db_path}")
 
     def ingest_documents(self, documents: List[Tuple[str, str, Dict]], use_llm: bool = False) -> float:

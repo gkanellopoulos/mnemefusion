@@ -25,6 +25,7 @@ const CONTENT_HASH_INDEX: TableDefinition<&str, &[u8]> = TableDefinition::new("c
 const LOGICAL_KEY_INDEX: TableDefinition<&str, &[u8]> = TableDefinition::new("logical_key_index");
 const METADATA_INDEX: TableDefinition<&str, &[u8]> = TableDefinition::new("metadata_index");
 const ENTITY_PROFILES: TableDefinition<&str, &[u8]> = TableDefinition::new("entity_profiles");
+const FACT_EMBEDDINGS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("fact_embeddings");
 
 /// Storage engine wrapper around redb
 ///
@@ -92,6 +93,7 @@ impl StorageEngine {
             let _ = write_txn.open_table(LOGICAL_KEY_INDEX)?;
             let _ = write_txn.open_table(METADATA_INDEX)?;
             let _ = write_txn.open_table(ENTITY_PROFILES)?;
+            let _ = write_txn.open_table(FACT_EMBEDDINGS)?;
         }
         write_txn.commit()?;
         Ok(())
@@ -205,6 +207,13 @@ impl StorageEngine {
         if let Err(e) = read_txn.open_table(ENTITY_PROFILES) {
             return Err(Error::DatabaseCorruption(format!(
                 "Required table 'entity_profiles' is missing or corrupt: {}",
+                e
+            )));
+        }
+
+        if let Err(e) = read_txn.open_table(FACT_EMBEDDINGS) {
+            return Err(Error::DatabaseCorruption(format!(
+                "Required table 'fact_embeddings' is missing or corrupt: {}",
                 e
             )));
         }
@@ -1153,6 +1162,64 @@ impl StorageEngine {
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table(ENTITY_PROFILES)?;
         Ok(table.len()? as usize)
+    }
+
+    /// List all entity profile names (lightweight, no full deserialization)
+    ///
+    /// Returns the table keys directly, which are the lowercased entity names.
+    /// Much faster than `list_entity_profiles()` when you only need names.
+    pub fn list_entity_profile_names(&self) -> Result<Vec<String>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(ENTITY_PROFILES)?;
+
+        let mut names = Vec::new();
+        for result in table.iter()? {
+            let (key, _) = result?;
+            names.push(key.value().to_string());
+        }
+        Ok(names)
+    }
+
+    // Fact embedding operations
+
+    /// Store a fact embedding
+    ///
+    /// Key is a 16-byte hash of (entity_name, fact_type, value).
+    /// Value is the embedding as raw little-endian f32 bytes.
+    pub fn store_fact_embedding(&self, key: &[u8], embedding: &[f32]) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(FACT_EMBEDDINGS)?;
+            let bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
+            table.insert(key, bytes.as_slice())?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Get a fact embedding by key
+    ///
+    /// Returns the embedding as Vec<f32>, or None if not found.
+    pub fn get_fact_embedding(&self, key: &[u8]) -> Result<Option<Vec<f32>>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(FACT_EMBEDDINGS)?;
+
+        match table.get(key)? {
+            Some(data) => {
+                let bytes = data.value();
+                if bytes.len() % 4 != 0 {
+                    return Err(Error::Deserialization(
+                        "Invalid fact embedding data length".to_string(),
+                    ));
+                }
+                let embedding: Vec<f32> = bytes
+                    .chunks_exact(4)
+                    .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                    .collect();
+                Ok(Some(embedding))
+            }
+            None => Ok(None),
+        }
     }
 }
 
