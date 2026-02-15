@@ -129,7 +129,15 @@ RIGHT: "I want to be a counselor" -> career_goal "counseling"
 WRONG: "We went camping" -> action "went camping"
 RIGHT: "We went camping" -> event "camping trip"
 WRONG: "I have 3 kids" -> characteristic "has children"
-RIGHT: "I have 3 kids" -> family "3 children"{speaker_rule}<|im_end|>
+RIGHT: "I have 3 kids" -> family "3 children"
+
+IMPORTANT RULES:
+- If you cannot determine a fact for a type, DO NOT output "none" — simply omit it.
+- Keep values concise and factual (under 10 words). Extract the key fact, not the full sentence.
+  WRONG: value "sharing stories to build a supportive community of hope"
+  RIGHT: value "community storytelling"
+  WRONG: value "making a positive difference in someone's life"
+  RIGHT: value "helping others"{speaker_rule}<|im_end|>
 <|im_start|>user
 Extract entities and facts from: "{example1_input}"<|im_end|>
 <|im_start|>assistant

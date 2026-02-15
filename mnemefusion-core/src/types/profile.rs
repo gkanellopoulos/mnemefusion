@@ -138,6 +138,20 @@ impl EntityProfile {
             return;
         }
 
+        // Reject null-indicator values
+        const NULL_INDICATORS: &[&str] = &[
+            "none", "n/a", "na", "not specified", "not mentioned",
+            "unknown", "unspecified", "not provided", "no information",
+        ];
+        if NULL_INDICATORS.contains(&lower_value.as_str()) {
+            return;
+        }
+
+        // Reject overly verbose values (narrative descriptions, not atomic facts)
+        if trimmed_value.len() > 100 {
+            return;
+        }
+
         // Reject "action" facts that are conversational filler
         if fact.fact_type == "action" {
             let action_lower = lower_value.as_str();
@@ -887,6 +901,33 @@ mod tests {
         assert_eq!(profile.total_facts(), 1);
         assert_eq!(profile.get_facts("hobby").len(), 1);
         assert!(profile.get_facts("interest").is_empty());
+    }
+
+    #[test]
+    fn test_null_value_filter() {
+        let mut profile =
+            EntityProfile::new(EntityId::new(), "Alice".to_string(), "person".to_string());
+
+        for null_val in &["none", "None", "NONE", "N/A", "n/a", "not specified", "unknown"] {
+            profile.add_fact(EntityFact::new("location", *null_val, 0.9, MemoryId::new()));
+        }
+        assert!(profile.is_empty()); // All null indicators rejected
+    }
+
+    #[test]
+    fn test_long_value_filter() {
+        let mut profile =
+            EntityProfile::new(EntityId::new(), "Alice".to_string(), "person".to_string());
+
+        // 101 chars → rejected
+        let long_value = "a".repeat(101);
+        profile.add_fact(EntityFact::new("preference", &long_value, 0.9, MemoryId::new()));
+        assert!(profile.is_empty());
+
+        // 100 chars → accepted
+        let ok_value = "a".repeat(100);
+        profile.add_fact(EntityFact::new("preference", &ok_value, 0.9, MemoryId::new()));
+        assert_eq!(profile.total_facts(), 1);
     }
 
     #[test]

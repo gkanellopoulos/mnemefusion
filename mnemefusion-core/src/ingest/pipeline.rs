@@ -164,6 +164,11 @@ impl IngestionPipeline {
         self.embedding_fn = Some(f);
     }
 
+    /// Get the current embedding function (if set).
+    pub fn embedding_fn(&self) -> Option<EmbeddingFn> {
+        self.embedding_fn.clone()
+    }
+
     /// Reserve capacity in the vector index for future insertions
     ///
     /// This improves performance when adding many memories by avoiding

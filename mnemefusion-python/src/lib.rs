@@ -1224,6 +1224,35 @@ impl PyMemory {
         Ok(())
     }
 
+    /// Precompute fact embeddings for all entity profiles.
+    ///
+    /// Call this after set_embedding_fn() to backfill fact embeddings
+    /// for profiles created before embedding support was added.
+    ///
+    /// Returns: Number of fact embeddings computed.
+    fn precompute_fact_embeddings(&self) -> PyResult<usize> {
+        let engine = self.get_engine()?;
+        engine
+            .precompute_fact_embeddings()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to precompute: {}", e)))
+    }
+
+    /// Consolidate entity profiles by removing noise and deduplicating facts.
+    ///
+    /// Performs:
+    /// 1. Remove null-indicator values ("none", "N/A", etc.)
+    /// 2. Remove overly verbose values (>100 chars)
+    /// 3. Semantic dedup within same fact_type (cosine similarity > 0.85)
+    /// 4. Delete garbage entity profiles (non-person with ≤2 facts)
+    ///
+    /// Returns: Tuple of (facts_removed, profiles_deleted)
+    fn consolidate_profiles(&self) -> PyResult<(usize, usize)> {
+        let engine = self.get_engine()?;
+        engine
+            .consolidate_profiles()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to consolidate: {}", e)))
+    }
+
     /// Get the N most recent memories
     ///
     /// Args:

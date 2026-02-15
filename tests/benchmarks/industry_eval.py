@@ -396,6 +396,20 @@ class MnemeFusionEvaluator:
         except Exception as e:
             print(f"  [Embedding] Warning: set_embedding_fn not available: {e}")
 
+        # Backfill fact embeddings for existing profiles (one-time, ~4s)
+        try:
+            n = self.memory.precompute_fact_embeddings()
+            print(f"  [Embedding] Precomputed {n} fact embeddings")
+        except Exception as e:
+            print(f"  [Embedding] Backfill not available: {e}")
+
+        # Consolidate profiles: remove null values, long values, semantic dedup, garbage entities
+        try:
+            facts_removed, profiles_deleted = self.memory.consolidate_profiles()
+            print(f"  [Consolidation] Removed {facts_removed} facts, deleted {profiles_deleted} profiles")
+        except Exception as e:
+            print(f"  [Consolidation] Not available: {e}")
+
         print(f"  [OK] Created memory store at {db_path}")
 
     def ingest_documents(self, documents: List[Tuple[str, str, Dict]], use_llm: bool = False) -> float:

@@ -9,7 +9,7 @@ use crate::{
     graph::{CausalTraversalResult, GraphManager},
     index::{BM25Config, BM25Index, TemporalIndex, VectorIndex, VectorIndexConfig},
     ingest::IngestionPipeline,
-    query::{FusedResult, IntentClassification, QueryPlanner},
+    query::{profile_search::fact_embedding_key, FusedResult, IntentClassification, QueryPlanner},
     storage::StorageEngine,
     types::{
         AddResult, BatchResult, Entity, EntityProfile, Memory, MemoryId, MemoryInput,
@@ -259,6 +259,162 @@ impl MemoryEngine {
     /// * `f` - Embedding function: `Fn(&str) -> Vec<f32>`
     pub fn set_embedding_fn(&mut self, f: EmbeddingFn) {
         self.pipeline.set_embedding_fn(f);
+    }
+
+    /// Precompute missing fact embeddings for all entity profiles.
+    ///
+    /// Iterates all stored profiles, checks each fact for a stored embedding,
+    /// and computes + stores any missing ones using the registered EmbeddingFn.
+    /// This is a one-time backfill operation — "pay the cost once."
+    ///
+    /// Returns the number of fact embeddings computed.
+    pub fn precompute_fact_embeddings(&self) -> Result<usize> {
+        let embed_fn = self
+            .pipeline
+            .embedding_fn()
+            .ok_or_else(|| {
+                Error::Configuration(
+                    "No embedding function set. Call set_embedding_fn() first.".into(),
+                )
+            })?;
+
+        let profiles = self.storage.list_entity_profiles()?;
+        let mut computed = 0;
+
+        for profile in &profiles {
+            for (fact_type, facts) in &profile.facts {
+                for fact in facts {
+                    let key = fact_embedding_key(&profile.name, fact_type, &fact.value);
+                    if self.storage.get_fact_embedding(&key)?.is_none() {
+                        let fact_text =
+                            format!("{} {}", fact_type.replace('_', " "), fact.value);
+                        let embedding = embed_fn(&fact_text);
+                        self.storage.store_fact_embedding(&key, &embedding)?;
+                        computed += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(computed)
+    }
+
+    /// Consolidate entity profiles by removing noise and deduplicating facts.
+    ///
+    /// Performs the following cleanup operations:
+    /// 1. Remove null-indicator values ("none", "N/A", etc.)
+    /// 2. Remove overly verbose values (>100 chars)
+    /// 3. Semantic dedup within same fact_type using embedding similarity (threshold: 0.85)
+    ///    — keeps fact with higher confidence, or first encountered on tie
+    /// 4. Delete garbage entity profiles (non-person entities with ≤2 facts)
+    ///
+    /// Returns (facts_removed, profiles_deleted).
+    pub fn consolidate_profiles(&self) -> Result<(usize, usize)> {
+        use crate::query::profile_search::cosine_similarity;
+
+        let embed_fn = self.pipeline.embedding_fn();
+
+        let profiles = self.storage.list_entity_profiles()?;
+        let mut total_facts_removed = 0usize;
+        let mut profiles_deleted = 0usize;
+
+        const NULL_INDICATORS: &[&str] = &[
+            "none", "n/a", "na", "not specified", "not mentioned",
+            "unknown", "unspecified", "not provided", "no information",
+        ];
+
+        for mut profile in profiles {
+            let mut facts_removed_in_profile = 0usize;
+
+            // Phase 1 & 2: Remove null and long values
+            for (_fact_type, facts) in profile.facts.iter_mut() {
+                let before = facts.len();
+                facts.retain(|f| {
+                    let trimmed = f.value.trim();
+                    let lower = trimmed.to_lowercase();
+                    // Keep if NOT a null indicator AND NOT too long
+                    !NULL_INDICATORS.contains(&lower.as_str()) && trimmed.len() <= 100
+                });
+                facts_removed_in_profile += before - facts.len();
+            }
+
+            // Phase 3: Semantic dedup within same fact_type (requires embedding fn)
+            if let Some(ref embed_fn) = embed_fn {
+                for (fact_type, facts) in profile.facts.iter_mut() {
+                    if facts.len() <= 1 {
+                        continue;
+                    }
+
+                    // Sort by confidence descending (highest confidence kept first)
+                    facts.sort_by(|a, b| {
+                        b.confidence
+                            .partial_cmp(&a.confidence)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+
+                    // Collect embeddings for all facts
+                    let embeddings: Vec<Vec<f32>> = facts
+                        .iter()
+                        .map(|f| {
+                            // Try stored embedding first, compute on the fly if missing
+                            let key = fact_embedding_key(&profile.name, fact_type, &f.value);
+                            self.storage
+                                .get_fact_embedding(&key)
+                                .ok()
+                                .flatten()
+                                .unwrap_or_else(|| {
+                                    let text = format!("{} {}", fact_type.replace('_', " "), f.value);
+                                    embed_fn(&text)
+                                })
+                        })
+                        .collect();
+
+                    // Greedy dedup: keep first (highest confidence), skip near-duplicates
+                    let mut keep_indices: Vec<usize> = Vec::new();
+                    for i in 0..facts.len() {
+                        let mut is_dup = false;
+                        for &kept_idx in &keep_indices {
+                            let sim = cosine_similarity(&embeddings[i], &embeddings[kept_idx]);
+                            if sim > 0.85 {
+                                is_dup = true;
+                                break;
+                            }
+                        }
+                        if !is_dup {
+                            keep_indices.push(i);
+                        }
+                    }
+
+                    let before = facts.len();
+                    let kept_facts: Vec<_> = keep_indices
+                        .into_iter()
+                        .map(|i| facts[i].clone())
+                        .collect();
+                    *facts = kept_facts;
+                    facts_removed_in_profile += before - facts.len();
+                }
+            }
+
+            // Remove empty fact type entries
+            profile.facts.retain(|_, v| !v.is_empty());
+
+            total_facts_removed += facts_removed_in_profile;
+
+            // Phase 4: Delete garbage profiles (non-person with ≤2 facts)
+            let total_facts = profile.total_facts();
+            if profile.entity_type != "person" && total_facts <= 2 {
+                self.storage.delete_entity_profile(&profile.name)?;
+                profiles_deleted += 1;
+                continue;
+            }
+
+            // Save updated profile if any facts were removed
+            if facts_removed_in_profile > 0 {
+                self.storage.store_entity_profile(&profile)?;
+            }
+        }
+
+        Ok((total_facts_removed, profiles_deleted))
     }
 
     /// Add a new memory to the database
