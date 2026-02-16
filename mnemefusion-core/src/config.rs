@@ -138,6 +138,20 @@ pub struct Config {
     /// mnemefusion-core = { version = "0.1", features = ["slm"] }
     /// ```
     pub slm_query_classification_enabled: bool,
+
+    /// Number of LLM extraction passes per document during ingestion
+    ///
+    /// Multiple passes with different temperatures capture different facts,
+    /// producing richer entity profiles. Pass 0 uses deterministic settings
+    /// (temp=0.1), subsequent passes use moderate diversity (temp=0.3) with
+    /// unique seeds.
+    ///
+    /// Default: 1 (single pass, backward compatible)
+    /// Recommended for quality: 3
+    ///
+    /// Higher values increase ingestion time linearly but improve profile
+    /// completeness. Facts are deduplicated across passes via add_fact().
+    pub extraction_passes: usize,
 }
 
 impl Default for Config {
@@ -159,6 +173,7 @@ impl Default for Config {
             slm_config: None, // SLM disabled by default
             slm_metadata_extraction_enabled: true, // Enabled by default when slm_config is set
             slm_query_classification_enabled: false, // Disabled by default - rely on RRF fusion
+            extraction_passes: 1, // Single pass by default (backward compatible)
         }
     }
 }
@@ -440,6 +455,32 @@ impl Config {
         self
     }
 
+    /// Set the number of LLM extraction passes per document
+    ///
+    /// Multiple passes with different temperatures produce richer entity profiles
+    /// by capturing different facts each time. The first pass is deterministic;
+    /// subsequent passes use moderate randomness.
+    ///
+    /// # Arguments
+    ///
+    /// * `passes` - Number of extraction passes (1..=10). Clamped to this range.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mnemefusion_core::Config;
+    ///
+    /// // Single pass (default, fastest)
+    /// let config = Config::default().with_extraction_passes(1);
+    ///
+    /// // Three passes (recommended for quality)
+    /// let config = Config::default().with_extraction_passes(3);
+    /// ```
+    pub fn with_extraction_passes(mut self, passes: usize) -> Self {
+        self.extraction_passes = passes.clamp(1, 10);
+        self
+    }
+
     /// Validate the configuration
     ///
     /// Returns detailed errors if the configuration is invalid.
@@ -517,6 +558,13 @@ impl Config {
             return Err(crate::Error::Configuration(
                 "hnsw_ef_search must be greater than 0. Recommended: 64-200".to_string(),
             ));
+        }
+
+        if self.extraction_passes == 0 || self.extraction_passes > 10 {
+            return Err(crate::Error::Configuration(format!(
+                "extraction_passes must be between 1 and 10, got {}. Recommended: 1-3",
+                self.extraction_passes
+            )));
         }
 
         Ok(())

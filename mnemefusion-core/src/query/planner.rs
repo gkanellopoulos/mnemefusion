@@ -2391,6 +2391,7 @@ mod tests {
             facts: std::collections::HashMap::new(),
             source_memories: vec![mem1_id.clone()],
             updated_at: crate::types::Timestamp::now(),
+            summary: None,
         };
         planner.storage.store_entity_profile(&profile).unwrap();
 

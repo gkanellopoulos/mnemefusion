@@ -158,6 +158,12 @@ impl MemoryEngine {
             }
         }
 
+        // Wire extraction_passes from config to pipeline
+        #[cfg(feature = "entity-extraction")]
+        if config.extraction_passes > 1 {
+            pipeline = pipeline.with_extraction_passes(config.extraction_passes);
+        }
+
         // Create query planner
         let query_planner = QueryPlanner::new(
             Arc::clone(&storage),
@@ -260,6 +266,15 @@ impl MemoryEngine {
         Ok(self)
     }
 
+    /// Set the number of LLM extraction passes per document.
+    ///
+    /// This must be called after `with_llm_entity_extraction*()` to take effect.
+    /// Multiple passes capture different facts, producing richer profiles.
+    #[cfg(feature = "entity-extraction")]
+    pub fn set_extraction_passes(&mut self, passes: usize) {
+        self.pipeline.set_extraction_passes(passes);
+    }
+
     /// Set the embedding function for computing fact embeddings at ingestion time.
     ///
     /// When set, the pipeline will compute and store embeddings for each extracted
@@ -275,15 +290,6 @@ impl MemoryEngine {
     /// * `f` - Embedding function: `Fn(&str) -> Vec<f32>`
     pub fn set_embedding_fn(&mut self, f: EmbeddingFn) {
         self.pipeline.set_embedding_fn(f);
-    }
-
-    /// Reset the LLM GPU context to prevent memory fragmentation.
-    ///
-    /// Call periodically during long ingestion runs (e.g., every 200 docs)
-    /// to prevent CUDA crashes from GPU memory fragmentation after ~400 inferences.
-    #[cfg(feature = "entity-extraction")]
-    pub fn reset_llm_context(&self) {
-        self.pipeline.reset_llm_context();
     }
 
     /// Precompute missing fact embeddings for all entity profiles.
@@ -322,6 +328,26 @@ impl MemoryEngine {
         }
 
         Ok(computed)
+    }
+
+    /// Generate summaries for all entity profiles.
+    ///
+    /// For each profile with facts, generates a dense summary paragraph that
+    /// condenses the profile's facts into one text block. When present, query()
+    /// injects summaries as single context items instead of N individual facts,
+    /// addressing RANK failures where evidence is present but buried.
+    ///
+    /// Returns the number of profiles summarized.
+    pub fn summarize_profiles(&self) -> Result<usize> {
+        let profiles = self.storage.list_entity_profiles()?;
+        let mut summarized = 0;
+        for mut profile in profiles {
+            if profile.generate_summary().is_some() {
+                self.storage.store_entity_profile(&profile)?;
+                summarized += 1;
+            }
+        }
+        Ok(summarized)
     }
 
     /// Consolidate entity profiles by removing noise and deduplicating facts.
@@ -935,6 +961,51 @@ impl MemoryEngine {
         self.storage.list_memory_ids()
     }
 
+    /// Update the embedding vector for an existing memory.
+    ///
+    /// This updates both the stored memory record (used by MMR diversity) and
+    /// the HNSW vector index (used by semantic search). The memory content,
+    /// metadata, and all other fields are preserved.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The memory ID to update
+    /// * `new_embedding` - The new embedding vector (must match configured dimension)
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the memory doesn't exist or the embedding dimension is wrong.
+    pub fn update_embedding(&self, id: &MemoryId, new_embedding: Vec<f32>) -> Result<()> {
+        // Load existing memory
+        let mut memory = self
+            .storage
+            .get_memory(id)?
+            .ok_or_else(|| Error::MemoryNotFound(id.to_string()))?;
+
+        // Validate dimension
+        let expected = self.config.embedding_dim;
+        if new_embedding.len() != expected {
+            return Err(Error::InvalidEmbeddingDimension {
+                expected,
+                got: new_embedding.len(),
+            });
+        }
+
+        // Update embedding in memory record
+        memory.embedding = new_embedding.clone();
+
+        // Update storage (redb)
+        self.storage.store_memory(&memory)?;
+
+        // Update vector index (usearch HNSW)
+        let mut vi = self.vector_index.write().unwrap();
+        // Remove old vector, then add new one
+        let _ = vi.remove(id); // ignore error if not found (fresh index)
+        vi.add(id.clone(), &new_embedding)?;
+
+        Ok(())
+    }
+
     /// Get the configuration
     pub fn config(&self) -> &Config {
         &self.config
@@ -1096,39 +1167,95 @@ impl MemoryEngine {
             self.query_planner
                 .query(query_text, query_embedding, limit, namespace, filters)?;
 
-        // Prepend synthetic profile facts (not counted against limit)
+        // Prepend synthetic profile context (not counted against limit)
         // These are EXTRA — they don't displace real memories
         let mut results = Vec::new();
-        for fact in &matched_facts {
-            let content = format!(
-                "{}'s {}: {}",
-                fact.entity_name,
-                fact.fact_type.replace('_', " "),
-                fact.value
-            );
-            let mut metadata = HashMap::new();
-            metadata.insert("_source".into(), "profile_fact".into());
-            metadata.insert("_entity".into(), fact.entity_name.clone());
-            metadata.insert("_fact_type".into(), fact.fact_type.clone());
 
-            let memory = Memory {
-                id: MemoryId::new(),
-                content,
-                embedding: vec![],
-                created_at: Timestamp::now(),
-                metadata,
-            };
-            let fused = FusedResult {
-                id: memory.id.clone(),
-                semantic_score: 0.0,
-                bm25_score: 0.0,
-                temporal_score: 0.0,
-                causal_score: 0.0,
-                entity_score: 1.0,
-                fused_score: 1.0 + fact.score,
-                confidence: 1.0,
-            };
-            results.push((memory, fused));
+        // Group matched facts by entity name
+        let mut facts_by_entity: HashMap<String, Vec<&crate::query::MatchedProfileFact>> = HashMap::new();
+        let mut max_score_by_entity: HashMap<String, f32> = HashMap::new();
+        for fact in &matched_facts {
+            facts_by_entity
+                .entry(fact.entity_name.clone())
+                .or_default()
+                .push(fact);
+            let entry = max_score_by_entity
+                .entry(fact.entity_name.clone())
+                .or_insert(0.0);
+            if fact.score > *entry {
+                *entry = fact.score;
+            }
+        }
+
+        for (entity_name, facts) in &facts_by_entity {
+            let best_score = max_score_by_entity.get(entity_name).copied().unwrap_or(0.0);
+
+            // If profile has a pre-computed summary, inject it as ONE context item
+            // Otherwise, fall back to individual fact format (backward compat)
+            let profile_summary = self
+                .storage
+                .get_entity_profile(entity_name)
+                .ok()
+                .flatten()
+                .and_then(|p| p.summary.clone());
+
+            if let Some(summary) = profile_summary {
+                let mut metadata = HashMap::new();
+                metadata.insert("_source".into(), "profile_summary".into());
+                metadata.insert("_entity".into(), entity_name.clone());
+
+                let memory = Memory {
+                    id: MemoryId::new(),
+                    content: summary,
+                    embedding: vec![],
+                    created_at: Timestamp::now(),
+                    metadata,
+                };
+                let fused = FusedResult {
+                    id: memory.id.clone(),
+                    semantic_score: 0.0,
+                    bm25_score: 0.0,
+                    temporal_score: 0.0,
+                    causal_score: 0.0,
+                    entity_score: 1.0,
+                    fused_score: 1.0 + best_score,
+                    confidence: 1.0,
+                };
+                results.push((memory, fused));
+            } else {
+                // No summary — inject individual facts (backward compat)
+                for fact in facts {
+                    let content = format!(
+                        "{}'s {}: {}",
+                        fact.entity_name,
+                        fact.fact_type.replace('_', " "),
+                        fact.value
+                    );
+                    let mut metadata = HashMap::new();
+                    metadata.insert("_source".into(), "profile_fact".into());
+                    metadata.insert("_entity".into(), fact.entity_name.clone());
+                    metadata.insert("_fact_type".into(), fact.fact_type.clone());
+
+                    let memory = Memory {
+                        id: MemoryId::new(),
+                        content,
+                        embedding: vec![],
+                        created_at: Timestamp::now(),
+                        metadata,
+                    };
+                    let fused = FusedResult {
+                        id: memory.id.clone(),
+                        semantic_score: 0.0,
+                        bm25_score: 0.0,
+                        temporal_score: 0.0,
+                        causal_score: 0.0,
+                        entity_score: 1.0,
+                        fused_score: 1.0 + fact.score,
+                        confidence: 1.0,
+                    };
+                    results.push((memory, fused));
+                }
+            }
         }
 
         // Retrieve full memory records using u64 key lookup

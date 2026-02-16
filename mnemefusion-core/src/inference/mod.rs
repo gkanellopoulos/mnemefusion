@@ -25,6 +25,8 @@ mod engine;
 mod grammar;
 
 #[cfg(feature = "entity-extraction")]
+pub use engine::GenerationParams;
+#[cfg(feature = "entity-extraction")]
 pub use engine::InferenceEngine;
 #[cfg(feature = "entity-extraction")]
 pub use grammar::JsonGrammar;

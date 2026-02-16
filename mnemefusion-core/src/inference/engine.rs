@@ -16,6 +16,30 @@ use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+/// Parameters for controlling LLM text generation
+///
+/// Different parameter combinations produce diverse extraction results
+/// while maintaining JSON validity. Used by `generate_with_params()`.
+#[derive(Debug, Clone)]
+pub struct GenerationParams {
+    /// Sampling temperature (0.0 = deterministic, higher = more random)
+    pub temperature: f32,
+    /// Top-p (nucleus) sampling threshold
+    pub top_p: f32,
+    /// Random seed for reproducibility
+    pub seed: u32,
+}
+
+impl Default for GenerationParams {
+    fn default() -> Self {
+        Self {
+            temperature: 0.1,
+            top_p: 0.9,
+            seed: 42,
+        }
+    }
+}
+
 /// Native LLM inference engine with grammar-constrained decoding
 ///
 /// Reuses a single GPU context across generate() calls to prevent
@@ -242,6 +266,82 @@ impl InferenceEngine {
             LlamaSampler::temp(0.1),
             LlamaSampler::top_p(0.9, 1),
             LlamaSampler::dist(42),
+        ]);
+
+        // Generate tokens
+        let mut output_tokens: Vec<LlamaToken> = Vec::new();
+        let mut n_cur = tokens.len();
+
+        for _ in 0..max_tokens {
+            let new_token = sampler.sample(&ctx, -1);
+
+            if self.model.is_eog_token(new_token) {
+                break;
+            }
+
+            output_tokens.push(new_token);
+
+            batch.clear();
+            batch
+                .add(new_token, n_cur as i32, &[0], true)
+                .map_err(|e| Error::InferenceError(format!("Batch add: {e}")))?;
+
+            n_cur += 1;
+
+            ctx.decode(&mut batch)
+                .map_err(|e| Error::InferenceError(format!("Token decode: {e}")))?;
+        }
+
+        let output = self
+            .model
+            .tokens_to_str(&output_tokens, llama_cpp_2::model::Special::Tokenize)
+            .map_err(|e| Error::InferenceError(format!("Detokenization: {e}")))?;
+
+        Ok(output)
+    }
+
+    /// Generate without grammar constraints using custom sampling parameters
+    ///
+    /// Same as `generate()` but with configurable temperature, top_p, and seed.
+    /// Used by multi-pass extraction to produce diverse outputs across passes.
+    pub fn generate_with_params(
+        &self,
+        prompt: &str,
+        max_tokens: u32,
+        params: &GenerationParams,
+    ) -> Result<String> {
+        let n_batch = 512usize;
+        let mut ctx_guard = self.get_or_create_ctx()?;
+        let ctx = ctx_guard.as_mut().unwrap();
+
+        // Tokenize the prompt
+        let tokens = self
+            .model
+            .str_to_token(prompt, llama_cpp_2::model::AddBos::Always)
+            .map_err(|e| Error::InferenceError(format!("Tokenization: {e}")))?;
+
+        // Process prompt in chunks of n_batch
+        let mut batch = LlamaBatch::new(n_batch, 1);
+        let mut i = 0;
+        while i < tokens.len() {
+            batch.clear();
+            let chunk_end = std::cmp::min(i + n_batch, tokens.len());
+            for j in i..chunk_end {
+                let is_last = j == tokens.len() - 1;
+                batch
+                    .add(tokens[j], j as i32, &[0], is_last)
+                    .map_err(|e| Error::InferenceError(format!("Batch add: {e}")))?;
+            }
+            ctx.decode(&mut batch)
+                .map_err(|e| Error::InferenceError(format!("Prompt decode: {e}")))?;
+            i = chunk_end;
+        }
+
+        // Create sampler with custom parameters
+        let mut sampler = LlamaSampler::chain_simple([
+            LlamaSampler::temp(params.temperature),
+            LlamaSampler::top_p(params.top_p, 1),
+            LlamaSampler::dist(params.seed),
         ]);
 
         // Generate tokens

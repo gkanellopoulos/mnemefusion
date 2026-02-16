@@ -240,6 +240,9 @@ impl PyMemory {
             if let Some(indexed_metadata) = cfg.get_item("indexed_metadata")? {
                 rust_config.indexed_metadata = indexed_metadata.extract()?;
             }
+            if let Some(passes) = cfg.get_item("extraction_passes")? {
+                rust_config.extraction_passes = passes.extract::<usize>()?.clamp(1, 10);
+            }
 
             // SLM configuration (only available with 'slm' feature)
             #[cfg(feature = "slm")]
@@ -1027,6 +1030,12 @@ impl PyMemory {
                     }
                     dict.set_item("facts", facts_dict)?;
 
+                    // Include summary if available
+                    match &profile.summary {
+                        Some(s) => dict.set_item("summary", s)?,
+                        None => dict.set_item("summary", py.None())?,
+                    }
+
                     Ok(dict.into())
                 })
                 .collect()
@@ -1084,6 +1093,12 @@ impl PyMemory {
                     facts_dict.set_item(fact_type, fact_list)?;
                 }
                 dict.set_item("facts", facts_dict)?;
+
+                // Include summary if available
+                match &profile.summary {
+                    Some(s) => dict.set_item("summary", s)?,
+                    None => dict.set_item("summary", py.None())?,
+                }
 
                 Ok(Some(dict.into()))
             })
@@ -1162,9 +1177,25 @@ impl PyMemory {
     ///
     /// Example:
     ///     >>> memory.enable_llm_entity_extraction("models/qwen3-4b/Qwen3-4B-Instruct-2507.Q4_K_M.gguf", "balanced")
+    /// Enable native LLM entity extraction using Qwen3 models
+    ///
+    /// Args:
+    ///     model_path: Path to the GGUF model file
+    ///     tier: Model tier - "balanced" (4B) or "quality" (8B)
+    ///     extraction_passes: Number of extraction passes per document (1-10, default 1).
+    ///         Multiple passes capture different facts, producing richer profiles.
+    ///         Recommended: 3 for quality. Increases ingestion time linearly.
+    ///
+    /// Returns:
+    ///     True if successfully enabled
     #[cfg(feature = "entity-extraction")]
-    #[pyo3(signature = (model_path, tier="balanced"))]
-    fn enable_llm_entity_extraction(&self, model_path: &str, tier: &str) -> PyResult<bool> {
+    #[pyo3(signature = (model_path, tier="balanced", extraction_passes=1))]
+    fn enable_llm_entity_extraction(
+        &self,
+        model_path: &str,
+        tier: &str,
+        extraction_passes: usize,
+    ) -> PyResult<bool> {
         use mnemefusion_core::extraction::ModelTier;
 
         let model_tier = match tier {
@@ -1174,6 +1205,12 @@ impl PyMemory {
                 "tier must be 'balanced' (4B) or 'quality' (8B)"
             )),
         };
+
+        if extraction_passes == 0 || extraction_passes > 10 {
+            return Err(PyValueError::new_err(
+                "extraction_passes must be between 1 and 10"
+            ));
+        }
 
         let mut engine_opt = self.engine.borrow_mut();
         if engine_opt.is_none() {
@@ -1185,7 +1222,27 @@ impl PyMemory {
             .with_llm_entity_extraction_from_path(model_path, model_tier)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to enable LLM extraction: {}", e)))?;
 
+        // Set extraction_passes on the engine's config if > 1
+        // The pipeline picks it up from the config wired in open()
+        // But since we re-create the engine here, we need to set it directly
+        // via the pipeline builder — however the pipeline is internal.
+        // Instead, update the config and let the engine wire it.
+        // Actually, the pipeline is already built. We need to rebuild with passes.
+        // The cleanest approach: accept passes in the config dict at __init__ time.
+        // For the API compatibility, we'll store it and it takes effect on next
+        // enable_llm call through the pipeline builder.
+        //
+        // Actually, with_llm_entity_extraction_from_path already creates the pipeline.
+        // We need a way to set extraction_passes after that. Let's add a method.
+
         *engine_opt = Some(new_engine);
+
+        // Set extraction passes on the engine's pipeline
+        if extraction_passes > 1 {
+            let engine = engine_opt.as_mut().unwrap();
+            engine.set_extraction_passes(extraction_passes);
+        }
+
         Ok(true)
     }
 
@@ -1224,23 +1281,6 @@ impl PyMemory {
         Ok(())
     }
 
-    /// Reset the LLM GPU context to prevent memory fragmentation.
-    ///
-    /// Call periodically during long ingestion runs (e.g., every 200 docs)
-    /// to prevent CUDA crashes after ~400 inference cycles.
-    ///
-    /// Example:
-    ///     >>> for i, doc in enumerate(documents):
-    ///     >>>     if i > 0 and i % 200 == 0:
-    ///     >>>         memory.reset_llm_context()
-    ///     >>>     memory.add(doc.content, doc.embedding, doc.metadata)
-    fn reset_llm_context(&self) -> PyResult<()> {
-        let engine = self.get_engine()?;
-        #[cfg(feature = "entity-extraction")]
-        engine.reset_llm_context();
-        Ok(())
-    }
-
     /// Precompute fact embeddings for all entity profiles.
     ///
     /// Call this after set_embedding_fn() to backfill fact embeddings
@@ -1268,6 +1308,24 @@ impl PyMemory {
         engine
             .consolidate_profiles()
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to consolidate: {}", e)))
+    }
+
+    /// Generate summaries for all entity profiles.
+    ///
+    /// For each profile with facts, generates a dense summary paragraph that
+    /// condenses the profile's facts into one text block. When present, query()
+    /// injects summaries as single context items instead of N individual facts.
+    ///
+    /// Returns: Number of profiles summarized
+    ///
+    /// Example:
+    ///     >>> count = memory.summarize_profiles()
+    ///     >>> print(f"Summarized {count} profiles")
+    fn summarize_profiles(&self) -> PyResult<usize> {
+        let engine = self.get_engine()?;
+        engine
+            .summarize_profiles()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to summarize: {}", e)))
     }
 
     /// Get the N most recent memories
@@ -1486,6 +1544,26 @@ impl PyMemory {
             .list_ids()
             .map_err(|e| PyIOError::new_err(format!("Failed to list IDs: {}", e)))?;
         Ok(ids.into_iter().map(|id| id.to_string()).collect())
+    }
+
+    /// Update the embedding vector for an existing memory.
+    ///
+    /// Updates both the stored memory record and the HNSW vector index.
+    /// Content, metadata, and all other fields are preserved.
+    ///
+    /// Args:
+    ///     memory_id: Memory ID string
+    ///     embedding: New embedding vector (must match configured dimension)
+    ///
+    /// Example:
+    ///     >>> memory.update_embedding(memory_id, new_embedding)
+    fn update_embedding(&self, memory_id: &str, embedding: Vec<f32>) -> PyResult<()> {
+        let engine = self.get_engine()?;
+        let id = MemoryId::parse(memory_id)
+            .map_err(|e| PyValueError::new_err(format!("Invalid memory ID: {}", e)))?;
+        engine
+            .update_embedding(&id, embedding)
+            .map_err(|e| PyIOError::new_err(format!("Failed to update embedding: {}", e)))
     }
 
     /// Close the database and save all indexes

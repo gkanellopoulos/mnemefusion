@@ -3,7 +3,7 @@
 use crate::error::{Error, Result};
 use crate::extraction::output::ExtractionResult;
 use crate::extraction::prompt::build_fewshot_extraction_prompt;
-use crate::inference::InferenceEngine;
+use crate::inference::{GenerationParams, InferenceEngine};
 use std::path::PathBuf;
 
 /// Model size/capability tier
@@ -177,6 +177,125 @@ impl LlmEntityExtractor {
         }
 
         Ok(result)
+    }
+
+    /// Extract entity facts using custom generation parameters
+    ///
+    /// Same as `extract()` but uses `generate_with_params()` for controllable
+    /// temperature and seed. Used internally by `extract_multi_pass()`.
+    fn extract_with_params(
+        &self,
+        content: &str,
+        speaker: Option<&str>,
+        params: &GenerationParams,
+    ) -> Result<ExtractionResult> {
+        if content.trim().is_empty() {
+            return Ok(ExtractionResult::empty());
+        }
+
+        let attributed_content = if let Some(name) = speaker {
+            format!("{} says: {}", name, content)
+        } else {
+            content.to_string()
+        };
+
+        let prompt = build_fewshot_extraction_prompt(&attributed_content, speaker);
+
+        let raw_output = self
+            .engine
+            .generate_with_params(&prompt, self.tier.max_tokens(), params)?;
+
+        let fixed_output = Self::fix_json(&raw_output);
+        let json_output = Self::extract_json(&fixed_output)?;
+
+        let mut result: ExtractionResult = serde_json::from_str(&json_output).map_err(|e| {
+            Error::InferenceError(format!(
+                "JSON parsing failed: {}. Output was: {}",
+                e, fixed_output
+            ))
+        })?;
+
+        // Post-process: fix entity attribution for first-person speech
+        if let Some(name) = speaker {
+            let name_lower = name.to_lowercase();
+            for fact in &mut result.entity_facts {
+                let entity_lower = fact.entity.to_lowercase();
+                if entity_lower == "i"
+                    || entity_lower == "me"
+                    || entity_lower == "my"
+                    || entity_lower == "myself"
+                    || entity_lower == "the speaker"
+                {
+                    fact.entity = name.to_string();
+                }
+            }
+            for entity in &mut result.entities {
+                let entity_lower = entity.name.to_lowercase();
+                if entity_lower == "i"
+                    || entity_lower == "me"
+                    || entity_lower == "my"
+                    || entity_lower == "myself"
+                    || entity_lower == "the speaker"
+                {
+                    entity.name = name.to_string();
+                }
+            }
+            let has_speaker_facts = result
+                .entity_facts
+                .iter()
+                .any(|f| f.entity.to_lowercase() == name_lower);
+            let speaker_in_entities = result
+                .entities
+                .iter()
+                .any(|e| e.name.to_lowercase() == name_lower);
+            if has_speaker_facts && !speaker_in_entities {
+                result
+                    .entities
+                    .push(crate::extraction::output::ExtractedEntity {
+                        name: name.to_string(),
+                        entity_type: "person".to_string(),
+                    });
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Run multiple extraction passes over the same content with diverse parameters
+    ///
+    /// Pass 0 uses deterministic settings (temp=0.1, seed=42).
+    /// Subsequent passes use moderate diversity (temp=0.3) with unique seeds
+    /// to capture different facts that a single pass might miss.
+    ///
+    /// # Arguments
+    ///
+    /// * `content` - Text to extract from
+    /// * `speaker` - Optional speaker name for attribution
+    /// * `num_passes` - Number of extraction passes (1 = same as single extract())
+    ///
+    /// # Returns
+    ///
+    /// Vector of results (one per pass). Failed passes are included as Err.
+    pub fn extract_multi_pass(
+        &self,
+        content: &str,
+        speaker: Option<&str>,
+        num_passes: usize,
+    ) -> Vec<Result<ExtractionResult>> {
+        (0..num_passes)
+            .map(|pass| {
+                let params = if pass == 0 {
+                    GenerationParams::default() // temp=0.1, deterministic
+                } else {
+                    GenerationParams {
+                        temperature: 0.3, // moderate diversity, safe for JSON
+                        top_p: 0.9,
+                        seed: 42 + pass as u32 * 7919, // prime-offset for diversity
+                    }
+                };
+                self.extract_with_params(content, speaker, &params)
+            })
+            .collect()
     }
 
     /// Fix common JSON malformations produced by the model

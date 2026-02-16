@@ -67,12 +67,29 @@ pub struct IngestionPipeline {
     /// This takes precedence over the Python SLM extractor when both are available.
     #[cfg(feature = "entity-extraction")]
     llm_extractor: Option<Arc<Mutex<LlmEntityExtractor>>>,
+    /// Tracks LLM extraction count for automatic GPU context reset.
+    /// After GPU_CONTEXT_RESET_INTERVAL extractions, the GPU context is dropped
+    /// and lazily recreated to prevent CUDA memory fragmentation.
+    #[cfg(feature = "entity-extraction")]
+    llm_extraction_count: std::sync::atomic::AtomicUsize,
     /// Embedding function for computing fact embeddings at ingestion time.
     /// When set, each extracted fact gets an embedding for semantic matching.
     embedding_fn: Option<EmbeddingFn>,
+    /// Number of LLM extraction passes per document.
+    /// Multiple passes with different parameters capture diverse facts.
+    /// Default: 1 (single pass, backward compatible).
+    #[cfg(feature = "entity-extraction")]
+    extraction_passes: usize,
 }
 
 impl IngestionPipeline {
+    /// Number of LLM extractions between automatic GPU context resets.
+    /// After this many inference cycles, the CUDA context is dropped and lazily
+    /// recreated on the next call to prevent GPU memory fragmentation that can
+    /// cause unrecoverable crashes in llama.cpp's C++ layer.
+    #[cfg(feature = "entity-extraction")]
+    const GPU_CONTEXT_RESET_INTERVAL: usize = 200;
+
     /// Create a new ingestion pipeline
     ///
     /// # Arguments
@@ -103,7 +120,11 @@ impl IngestionPipeline {
             slm_extractor: None,
             #[cfg(feature = "entity-extraction")]
             llm_extractor: None,
+            #[cfg(feature = "entity-extraction")]
+            llm_extraction_count: std::sync::atomic::AtomicUsize::new(0),
             embedding_fn: None,
+            #[cfg(feature = "entity-extraction")]
+            extraction_passes: 1,
         }
     }
 
@@ -159,19 +180,6 @@ impl IngestionPipeline {
         self
     }
 
-    /// Reset the LLM GPU context to prevent memory fragmentation.
-    ///
-    /// Call periodically during long ingestion runs (e.g., every 200 docs)
-    /// to prevent CUDA crashes from GPU memory fragmentation.
-    #[cfg(feature = "entity-extraction")]
-    pub fn reset_llm_context(&self) {
-        if let Some(ref extractor) = self.llm_extractor {
-            if let Ok(guard) = extractor.lock() {
-                guard.reset_context();
-            }
-        }
-    }
-
     /// Set the embedding function for computing fact embeddings at ingestion time.
     pub fn set_embedding_fn(&mut self, f: EmbeddingFn) {
         self.embedding_fn = Some(f);
@@ -180,6 +188,26 @@ impl IngestionPipeline {
     /// Get the current embedding function (if set).
     pub fn embedding_fn(&self) -> Option<EmbeddingFn> {
         self.embedding_fn.clone()
+    }
+
+    /// Set the number of LLM extraction passes per document.
+    ///
+    /// Multiple passes with different temperatures capture different facts,
+    /// producing richer entity profiles (similar to ensemble extraction).
+    ///
+    /// # Arguments
+    ///
+    /// * `passes` - Number of passes (1 = single pass, 3 = recommended)
+    #[cfg(feature = "entity-extraction")]
+    pub fn with_extraction_passes(mut self, passes: usize) -> Self {
+        self.extraction_passes = passes.max(1);
+        self
+    }
+
+    /// Set extraction passes on an existing pipeline (mutable reference variant).
+    #[cfg(feature = "entity-extraction")]
+    pub fn set_extraction_passes(&mut self, passes: usize) {
+        self.extraction_passes = passes.max(1);
     }
 
     /// Reserve capacity in the vector index for future insertions
@@ -239,46 +267,86 @@ impl IngestionPipeline {
         }
 
         // Step 0c: Native LLM entity extraction (if available)
-        // Uses llama.cpp with grammar-constrained decoding for guaranteed valid JSON
-        // Takes precedence over Python SLM extractor when both are available
+        // Uses llama.cpp for entity/fact extraction.
+        // Supports multi-pass: runs extraction_passes times with diverse params,
+        // merging all extracted facts into profiles via add_fact() dedup.
         #[cfg(feature = "entity-extraction")]
-        let llm_extraction_result: Option<ExtractionResult> =
+        let llm_extraction_results: Vec<ExtractionResult> =
             if let Some(ref llm_extractor) = self.llm_extractor {
-                // Pass speaker context so LLM attributes first-person facts correctly
                 let speaker = memory.metadata.get("speaker").map(|s| s.as_str());
-                match llm_extractor.lock().unwrap().extract(&memory.content, speaker) {
-                    Ok(extraction) => {
-                        // Store extraction result as JSON
-                        let json = serde_json::to_string(&extraction).unwrap_or_default();
-                        memory.set_metadata("llm_extraction".to_string(), json);
+                let extractor = llm_extractor.lock().unwrap();
+                let raw_results =
+                    extractor.extract_multi_pass(&memory.content, speaker, self.extraction_passes);
+                drop(extractor); // release lock before processing
 
-                        // Also populate entity_names for backward compatibility
-                        if !extraction.entities.is_empty() {
-                            let names: Vec<String> =
-                                extraction.entities.iter().map(|e| e.name.clone()).collect();
-                            memory.set_metadata(
-                                "entity_names".to_string(),
-                                serde_json::to_string(&names).unwrap_or_default(),
+                let mut successes = Vec::new();
+                for (pass, result) in raw_results.into_iter().enumerate() {
+                    match result {
+                        Ok(extraction) => {
+                            tracing::debug!(
+                                "LLM pass {}: {} entities, {} topics, {} entity_facts",
+                                pass,
+                                extraction.entities.len(),
+                                extraction.topics.len(),
+                                extraction.entity_facts.len()
                             );
+                            successes.push(extraction);
                         }
-
-                        tracing::debug!(
-                            "LLM extracted {} entities, {} topics, {} entity_facts from memory",
-                            extraction.entities.len(),
-                            extraction.topics.len(),
-                            extraction.entity_facts.len()
-                        );
-
-                        Some(extraction)
-                    }
-                    Err(e) => {
-                        tracing::warn!("LLM extraction failed: {}", e);
-                        None
+                        Err(e) => {
+                            tracing::warn!("LLM extraction pass {} failed: {}", pass, e);
+                        }
                     }
                 }
+
+                // Store first successful extraction as metadata (backward compat)
+                if let Some(first) = successes.first() {
+                    let json = serde_json::to_string(first).unwrap_or_default();
+                    memory.set_metadata("llm_extraction".to_string(), json);
+
+                    // Collect entity names from ALL passes for backward compat
+                    let mut all_names = std::collections::HashSet::new();
+                    for extraction in &successes {
+                        for entity in &extraction.entities {
+                            all_names.insert(entity.name.clone());
+                        }
+                    }
+                    if !all_names.is_empty() {
+                        let names: Vec<String> = all_names.into_iter().collect();
+                        memory.set_metadata(
+                            "entity_names".to_string(),
+                            serde_json::to_string(&names).unwrap_or_default(),
+                        );
+                    }
+                }
+
+                successes
             } else {
-                None
+                Vec::new()
             };
+
+        // Auto-reset GPU context periodically to prevent CUDA memory fragmentation.
+        // Count ALL passes (not just documents) for accurate fragmentation tracking.
+        #[cfg(feature = "entity-extraction")]
+        if !llm_extraction_results.is_empty() {
+            let passes_completed = llm_extraction_results.len();
+            let count = self.llm_extraction_count.fetch_add(
+                passes_completed,
+                std::sync::atomic::Ordering::Relaxed,
+            ) + passes_completed;
+            if count / Self::GPU_CONTEXT_RESET_INTERVAL
+                > (count - passes_completed) / Self::GPU_CONTEXT_RESET_INTERVAL
+            {
+                if let Some(ref extractor) = self.llm_extractor {
+                    if let Ok(guard) = extractor.lock() {
+                        guard.reset_context();
+                        tracing::info!(
+                            "Reset GPU context after {} LLM extractions (fragmentation prevention)",
+                            count
+                        );
+                    }
+                }
+            }
+        }
 
         // Step 0d: Python SLM metadata extraction (fallback if LLM extraction not available)
         // This extracts rich metadata using a Small Language Model for better retrieval
@@ -286,7 +354,7 @@ impl IngestionPipeline {
         let slm_metadata_for_profiles: Option<SlmMetadata> = {
             // Skip if LLM extraction already succeeded
             #[cfg(feature = "entity-extraction")]
-            let llm_succeeded = llm_extraction_result.is_some();
+            let llm_succeeded = !llm_extraction_results.is_empty();
             #[cfg(not(feature = "entity-extraction"))]
             let llm_succeeded = false;
 
@@ -338,9 +406,10 @@ impl IngestionPipeline {
         // Step 1: Store memory (if this fails, nothing else happens)
         self.storage.store_memory(&memory)?;
 
-        // Step 1b: Update entity profiles from LLM extraction (if available)
+        // Step 1b: Update entity profiles from ALL LLM extraction passes
+        // Each pass may capture different facts; add_fact() handles dedup.
         #[cfg(feature = "entity-extraction")]
-        if let Some(ref extraction) = llm_extraction_result {
+        for extraction in &llm_extraction_results {
             if let Err(e) = self.update_entity_profiles_from_llm(&id, extraction) {
                 tracing::warn!("Failed to update entity profiles from LLM: {}", e);
                 // Don't fail the entire ingestion - profiles are a bonus feature

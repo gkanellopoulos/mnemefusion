@@ -436,25 +436,18 @@ class MnemeFusionEvaluator:
         contents = [doc[1] for doc in documents]
         metadatas = [doc[2] for doc in documents]
 
-        # Generate embeddings in batches (with contextual speaker prepending)
-        print("  Generating embeddings (contextual)...")
+        # Generate embeddings in batches (raw content, no speaker prefix)
+        # Note: Speaker differentiation is handled by the entity scoring dimension
+        # (Step 2.1/2.2), not the embedding space. Contextual embeddings were tested
+        # in S22 and caused a -12.9pt regression due to query/document mismatch.
+        print("  Generating embeddings...")
         batch_size = 64
         all_embeddings = []
 
         for i in range(0, len(contents), batch_size):
             batch_contents = contents[i:i+batch_size]
-            batch_metadatas = metadatas[i:i+batch_size]
 
-            # Prepend speaker context before embedding
-            contextual_batch = []
-            for content, meta in zip(batch_contents, batch_metadatas):
-                speaker = meta.get("speaker", "")
-                if speaker:
-                    contextual_batch.append(f"{speaker}: {content}")
-                else:
-                    contextual_batch.append(content)
-
-            embeddings = self.embedder.encode(contextual_batch, show_progress_bar=False)
+            embeddings = self.embedder.encode(batch_contents, show_progress_bar=False)
             all_embeddings.extend(embeddings.tolist())
 
             if (i + batch_size) % 500 == 0:
@@ -500,13 +493,8 @@ class MnemeFusionEvaluator:
                     if error_count <= 5:
                         print(f"    [WARN] Failed to add doc {i}: {e}")
 
-                # GPU context reset every 200 docs to prevent CUDA memory fragmentation
-                if created_count > 0 and created_count % 200 == 0:
-                    try:
-                        self.memory.reset_llm_context()
-                        print(f"    [GPU] Reset LLM context at doc {i} (fragmentation prevention)")
-                    except Exception:
-                        pass  # reset_llm_context not available (CPU build)
+                # Note: GPU context reset is handled automatically by the ingestion
+                # pipeline (every 200 LLM extractions) — no manual call needed.
 
                 # Save checkpoint every 50 docs
                 if checkpoint_path and created_count > 0 and created_count % 50 == 0:
