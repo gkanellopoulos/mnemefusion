@@ -91,3 +91,44 @@ tests/benchmarks/SLM_*.md
 *.safetensors
 models/
 opt/models/
+
+# Research papers and PDFs (not source code)
+*.pdf
+
+# Database backups
+*.mfdb.*
+
+# Session benchmark results (historical, regenerate as needed)
+tests/benchmarks/fixtures/session*_results.json
+tests/benchmarks/fixtures/session*_verbose.json
+tests/benchmarks/fixtures/session*_results.txt
+tests/benchmarks/fixtures/session*_check.json
+tests/benchmarks/fixtures/session*_decay*.json
+tests/benchmarks/fixtures/session*_decay*.txt
+tests/benchmarks/fixtures/session*_summary*.txt
+tests/benchmarks/fixtures/session*_*.json
+tests/benchmarks/fixtures/eval_llm_*.json
+tests/benchmarks/results_session*.txt
+tests/benchmarks/session*_log.txt
+
+# One-off debug/analysis scripts (not part of core)
+debug_*.py
+tests/benchmarks/analyze_*.py
+tests/benchmarks/backfill_*.py
+tests/benchmarks/build_test_*.py
+tests/benchmarks/check_*.py
+tests/benchmarks/compare_*.py
+tests/benchmarks/deep_compare*.py
+
+# Superseded .claude session files
+.claude/PROBLEM_STATEMENT.md
+.claude/SESSION_*_FINDINGS.md
+.claude/SESSION_CONTEXT.md
+.claude/CUDA_INVESTIGATION.md
+.claude/BENCHMARK_STATUS.md
+
+# Local settings (machine-specific)
+.claude/settings.local.json
+
+# Assessment files
+assesment.*
