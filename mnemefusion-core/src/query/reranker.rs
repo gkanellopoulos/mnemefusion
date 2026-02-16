@@ -154,16 +154,29 @@ impl HeuristicReranker {
         }
     }
 
-    /// Compute temporal relevance score
-    fn compute_temporal_score(_memory: &crate::types::Memory, intent: &QueryIntent) -> f32 {
-        // For temporal queries, boost recent memories
-        if matches!(intent, QueryIntent::Temporal) {
-            // Simple recency score: more recent = higher score
-            // This is a placeholder - could use actual time decay
-            0.7 // Default temporal boost for temporal queries
+    /// Compute temporal relevance score using half-life recency decay.
+    ///
+    /// Uses actual memory timestamps with intent-adaptive half-life:
+    /// - Temporal queries: 30-day half-life (aggressive, recent = better)
+    /// - Other queries: 365-day half-life (gentle, old facts still valid)
+    ///
+    /// Floor of 0.05 ensures memories never fully vanish.
+    fn compute_temporal_score(memory: &crate::types::Memory, intent: &QueryIntent) -> f32 {
+        let now = crate::types::Timestamp::now();
+        let age_micros = now
+            .as_micros()
+            .saturating_sub(memory.created_at.as_micros());
+        let age_days = age_micros as f64 / (86_400.0 * 1_000_000.0);
+
+        let half_life = if matches!(intent, QueryIntent::Temporal) {
+            30.0 // 30-day half-life for temporal queries
         } else {
-            0.3 // Lower weight for non-temporal
-        }
+            365.0 // 1-year half-life for other queries
+        };
+
+        let decay = 0.5_f64.powf(age_days / half_life);
+        let floor = 0.05;
+        (floor + (1.0 - floor) * decay) as f32
     }
 
     /// Compute entity overlap score
@@ -243,7 +256,8 @@ mod tests {
     }
 
     #[test]
-    fn test_temporal_score_boost() {
+    fn test_temporal_score_decay() {
+        // A freshly created memory should have high scores for both intents
         let memory = Memory::new("test content".to_string(), vec![0.1; 384]);
 
         let temporal_intent = QueryIntent::Temporal;
@@ -253,8 +267,30 @@ mod tests {
             HeuristicReranker::compute_temporal_score(&memory, &temporal_intent);
         let factual_score = HeuristicReranker::compute_temporal_score(&memory, &factual_intent);
 
-        // Temporal queries should get higher temporal scores
-        assert!(temporal_score > factual_score);
+        // Both should be high for a fresh memory (close to 1.0)
+        assert!(temporal_score > 0.9, "Fresh memory temporal score should be near 1.0, got {}", temporal_score);
+        assert!(factual_score > 0.9, "Fresh memory factual score should be near 1.0, got {}", factual_score);
+    }
+
+    #[test]
+    fn test_temporal_score_old_memory() {
+        use crate::types::Timestamp;
+        // A 60-day old memory should have lower temporal score (30-day half-life)
+        // but still reasonable factual score (365-day half-life)
+        let old_ts = Timestamp::now().subtract_days(60);
+        let memory = Memory::new_with_timestamp("old content".to_string(), vec![0.1; 384], old_ts);
+
+        let temporal_score =
+            HeuristicReranker::compute_temporal_score(&memory, &QueryIntent::Temporal);
+        let factual_score =
+            HeuristicReranker::compute_temporal_score(&memory, &QueryIntent::Factual);
+
+        // After 60 days with 30-day half-life: decay = 0.5^2 = 0.25, score ~0.29
+        assert!(temporal_score < 0.5, "60-day old temporal score should be < 0.5, got {}", temporal_score);
+        // After 60 days with 365-day half-life: decay = 0.5^(60/365) ~= 0.89, score ~0.90
+        assert!(factual_score > 0.8, "60-day old factual score should be > 0.8, got {}", factual_score);
+        // Temporal decay should be steeper than factual
+        assert!(factual_score > temporal_score);
     }
 
     #[test]

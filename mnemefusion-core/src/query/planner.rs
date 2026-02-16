@@ -941,25 +941,52 @@ impl QueryPlanner {
         }
     }
 
-    /// Fallback temporal search using weak recency signal
+    /// Fallback temporal search using hybrid half-life + rank tiebreaker.
     ///
     /// Used when query has no temporal context or no temporal matches found.
-    /// Provides a weak signal (scores scaled down to 0.0-0.3 range) to avoid
-    /// biasing non-temporal queries toward recent memories.
+    /// Combines two signals:
+    /// - **Half-life decay** (96% weight): `0.5^(age_days / 365)` — real temporal
+    ///   distance. Memories from yesterday score much higher than memories from
+    ///   last year. Essential for production systems spanning months/years.
+    /// - **Rank tiebreaker** (4% weight): linear rank-based nudge that breaks ties
+    ///   when timestamps are clustered (e.g., batch-ingested DBs where all memories
+    ///   have similar timestamps).
+    ///
+    /// Scores are scaled to a weak 0.0-0.3 range with a 5% floor so memories
+    /// never fully vanish. This keeps temporal as a gentle signal that doesn't
+    /// dominate other dimensions (semantic, entity, BM25).
     fn temporal_search_recency_fallback(&self, limit: usize) -> Result<HashMap<MemoryId, f32>> {
         let results = self.temporal_index.recent(limit)?;
 
-        let mut scores = HashMap::new();
         let count = results.len();
+        let mut scores = HashMap::new();
+        let now_micros = crate::types::Timestamp::now().as_micros();
+
+        const HALF_LIFE_DAYS: f64 = 365.0;
+        const MICROS_PER_DAY: f64 = 86_400.0 * 1_000_000.0;
+        const FLOOR: f64 = 0.05;
 
         for (i, result) in results.into_iter().enumerate() {
-            // Linear decay from 0.3 to 0.0 (weak signal)
-            let score = if count > 1 {
-                0.3 * (1.0 - (i as f32 / (count - 1) as f32))
-            } else {
+            let score = if count <= 1 {
                 0.3
+            } else {
+                // Half-life decay from actual timestamps
+                let age_micros = now_micros.saturating_sub(result.timestamp.as_micros());
+                let age_days = age_micros as f64 / MICROS_PER_DAY;
+                let half_life = 0.5_f64.powf(age_days / HALF_LIFE_DAYS);
+
+                // Rank-based tiebreaker (newest=1.0, oldest=0.0)
+                let rank_signal = 1.0 - (i as f64 / (count - 1) as f64);
+
+                // Blend: 96% half-life + 4% rank tiebreaker
+                let blended = 0.96 * half_life + 0.04 * rank_signal;
+
+                // Scale to 0.3 range with floor
+                (0.3 * (FLOOR + (1.0 - FLOOR) * blended)) as f32
             };
-            scores.insert(result.id, score);
+            if score > 0.01 {
+                scores.insert(result.id, score);
+            }
         }
 
         Ok(scores)
@@ -2181,6 +2208,153 @@ mod tests {
         assert!(
             score2 >= score1,
             "More recent memory should have higher fallback score"
+        );
+    }
+
+    #[test]
+    fn test_temporal_fallback_spread_timestamps() {
+        // Tests the PRODUCTION path: memories spread across months/years.
+        // Half-life decay should dominate — recent memory scores much higher
+        // than old memory, regardless of rank position.
+        use crate::ingest::IngestionPipeline;
+        use crate::types::Timestamp;
+
+        let (planner, _dir) = create_test_planner();
+
+        let pipeline = IngestionPipeline::new(
+            Arc::clone(&planner.storage),
+            Arc::clone(&planner.vector_index),
+            Arc::clone(&planner.bm25_index),
+            Arc::clone(&planner.temporal_index),
+            Arc::clone(&planner.graph_manager),
+            false,
+        );
+
+        // Memory from 2 years ago
+        let old_ts = Timestamp::now().subtract_days(730);
+        let mem_old = Memory::new_with_timestamp(
+            "Old conversation about cooking".to_string(),
+            vec![0.1; 384],
+            old_ts,
+        );
+        let old_id = mem_old.id.clone();
+        pipeline.add(mem_old).unwrap();
+
+        // Memory from 30 days ago
+        let mid_ts = Timestamp::now().subtract_days(30);
+        let mem_mid = Memory::new_with_timestamp(
+            "Recent discussion about travel".to_string(),
+            vec![0.2; 384],
+            mid_ts,
+        );
+        let mid_id = mem_mid.id.clone();
+        pipeline.add(mem_mid).unwrap();
+
+        // Memory from today
+        let mem_new = Memory::new(
+            "Just talked about music".to_string(),
+            vec![0.3; 384],
+        );
+        let new_id = mem_new.id.clone();
+        pipeline.add(mem_new).unwrap();
+
+        let scores = planner
+            .temporal_search("What have we discussed?", 10)
+            .unwrap();
+
+        let score_old = *scores.get(&old_id).unwrap();
+        let score_mid = *scores.get(&mid_id).unwrap();
+        let score_new = *scores.get(&new_id).unwrap();
+
+        // Ordering: new > mid > old
+        assert!(
+            score_new > score_mid,
+            "Today's memory ({}) should score higher than 30-day old ({})",
+            score_new, score_mid
+        );
+        assert!(
+            score_mid > score_old,
+            "30-day old memory ({}) should score higher than 2-year old ({})",
+            score_mid, score_old
+        );
+
+        // 2-year old memory should have decayed significantly
+        // Half-life 365 days → 2 years = 2 half-lives → decay ~0.25
+        // Score should be much less than new memory
+        assert!(
+            score_new > score_old * 2.0,
+            "New memory ({}) should be at least 2x the 2-year old ({})",
+            score_new, score_old
+        );
+
+        // All scores in weak range
+        assert!(score_new <= 0.31, "Scores should stay in 0-0.3 range, got {}", score_new);
+    }
+
+    #[test]
+    fn test_temporal_fallback_same_timestamps_rank_tiebreaker() {
+        // Tests the BENCHMARK path: memories with nearly identical timestamps.
+        // Rank tiebreaker should ensure ordering is preserved even when
+        // half-life scores are nearly uniform.
+        use crate::ingest::IngestionPipeline;
+        use crate::types::Timestamp;
+
+        let (planner, _dir) = create_test_planner();
+
+        let pipeline = IngestionPipeline::new(
+            Arc::clone(&planner.storage),
+            Arc::clone(&planner.vector_index),
+            Arc::clone(&planner.bm25_index),
+            Arc::clone(&planner.temporal_index),
+            Arc::clone(&planner.graph_manager),
+            false,
+        );
+
+        // All memories created within milliseconds (simulates batch ingestion)
+        let base_ts = Timestamp::now().subtract_days(100);
+        for i in 0..5 {
+            // Tiny offset: 1ms apart
+            let ts = Timestamp::from_micros(base_ts.as_micros() + (i as u64 * 1000));
+            let mem = Memory::new_with_timestamp(
+                format!("Memory number {}", i),
+                vec![0.1 * (i as f32 + 1.0); 384],
+                ts,
+            );
+            pipeline.add(mem).unwrap();
+        }
+
+        let scores = planner
+            .temporal_search("Tell me something", 10)
+            .unwrap();
+
+        // All 5 memories should be present
+        assert_eq!(scores.len(), 5, "All 5 memories should have scores");
+
+        // Collect scores sorted by value (descending)
+        let mut score_vals: Vec<f32> = scores.values().copied().collect();
+        score_vals.sort_by(|a, b| b.partial_cmp(a).unwrap());
+
+        // Scores should be strictly decreasing (rank tiebreaker works)
+        for i in 0..score_vals.len() - 1 {
+            assert!(
+                score_vals[i] > score_vals[i + 1],
+                "Score {} ({}) should be > score {} ({}): rank tiebreaker should differentiate",
+                i, score_vals[i], i + 1, score_vals[i + 1]
+            );
+        }
+
+        // Score spread should be small but nonzero (half-life is uniform,
+        // only the 4% rank tiebreaker differentiates)
+        let spread = score_vals[0] - score_vals[score_vals.len() - 1];
+        assert!(
+            spread > 0.001,
+            "Score spread should be > 0.001 from rank tiebreaker, got {}",
+            spread
+        );
+        assert!(
+            spread < 0.1,
+            "Score spread should be modest (< 0.1), got {}",
+            spread
         );
     }
 
