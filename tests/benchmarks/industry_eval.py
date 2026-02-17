@@ -361,7 +361,8 @@ class MnemeFusionEvaluator:
         self.db_path = None
 
     def create_memory_store(self, db_path: str, use_slm: bool = False, slm_model_path: str = None,
-                            use_llm: bool = False, llm_model_path: str = None, llm_tier: str = "balanced"):
+                            use_llm: bool = False, llm_model_path: str = None, llm_tier: str = "balanced",
+                            extraction_passes: int = 1):
         """Create a new MnemeFusion memory store"""
         self.db_path = db_path
 
@@ -383,8 +384,8 @@ class MnemeFusionEvaluator:
         if use_llm and llm_model_path:
             try:
                 print(f"  [LLM] Loading Qwen3 model: {llm_model_path}")
-                self.memory.enable_llm_entity_extraction(llm_model_path, llm_tier)
-                print(f"  [LLM] Enabled {llm_tier} tier extraction")
+                self.memory.enable_llm_entity_extraction(llm_model_path, llm_tier, extraction_passes)
+                print(f"  [LLM] Enabled {llm_tier} tier extraction (extraction_passes={extraction_passes})")
             except Exception as e:
                 print(f"  [LLM] Warning: Failed to enable LLM extraction: {e}")
                 print(f"  [LLM] Make sure the wheel was built with --features entity-extraction")
@@ -716,7 +717,8 @@ def run_evaluation(
     output_path: str = None,
     verbose: bool = False,
     db_path: str = None,
-    skip_ingestion: bool = False
+    skip_ingestion: bool = False,
+    extraction_passes: int = 1
 ) -> EvaluationResults:
     """
     Run full industry-standard evaluation.
@@ -745,7 +747,7 @@ def run_evaluation(
     print(f"Dataset: LoCoMo")
     print(f"Judge LLM: GPT-4o-mini")
     if use_llm:
-        print(f"Entity Extraction: Qwen3 Native LLM ({llm_tier} tier)")
+        print(f"Entity Extraction: Qwen3 Native LLM ({llm_tier} tier, {extraction_passes} pass{'es' if extraction_passes > 1 else ''})")
     elif use_slm:
         print(f"Entity Extraction: Python SLM (0.6B)")
     else:
@@ -791,12 +793,27 @@ def run_evaluation(
             slm_model_path=slm_model_path,
             use_llm=use_llm and _ingest_now,
             llm_model_path=llm_model_path,
-            llm_tier=llm_tier
+            llm_tier=llm_tier,
+            extraction_passes=extraction_passes
         )
 
         if _ingest_now:
             # Ingest documents (use individual add if LLM extraction is enabled)
             ingestion_time = evaluator.ingest_documents(documents, use_llm=use_llm)
+
+            # Post-ingestion: consolidate profiles and generate summaries
+            if use_llm:
+                try:
+                    facts_removed, profiles_deleted = evaluator.memory.consolidate_profiles()
+                    print(f"  [Post-ingestion] Consolidated: removed {facts_removed} facts, deleted {profiles_deleted} profiles")
+                except Exception as e:
+                    print(f"  [Post-ingestion] Consolidation error: {e}")
+
+                try:
+                    n_summarized = evaluator.memory.summarize_profiles()
+                    print(f"  [Post-ingestion] Summarized {n_summarized} profiles")
+                except Exception as e:
+                    print(f"  [Post-ingestion] Summary error: {e}")
         else:
             print(f"  [SKIP] Using existing DB at {db_path} — skipping ingestion")
             ingestion_time = 0.0
@@ -1126,6 +1143,12 @@ Examples:
         help="Print detailed progress"
     )
     parser.add_argument(
+        "--extraction-passes",
+        type=int,
+        default=1,
+        help="Number of extraction passes per document (default: 1, multi-pass: 2-3)"
+    )
+    parser.add_argument(
         "--db-path",
         default=None,
         help="Persistent DB path. DB survives after run, enabling --skip-ingestion next time. "
@@ -1161,7 +1184,8 @@ Examples:
         output_path=args.output,
         verbose=args.verbose,
         db_path=args.db_path,
-        skip_ingestion=args.skip_ingestion
+        skip_ingestion=args.skip_ingestion,
+        extraction_passes=args.extraction_passes
     )
 
 

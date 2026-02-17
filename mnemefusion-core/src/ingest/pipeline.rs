@@ -1092,9 +1092,8 @@ impl IngestionPipeline {
         memory_id: &MemoryId,
         extraction: &ExtractionResult,
     ) -> Result<()> {
-        if extraction.entity_facts.is_empty() {
-            return Ok(());
-        }
+        // Track which entities we've already linked via entity_facts
+        let mut linked_entities = std::collections::HashSet::new();
 
         for extracted_fact in &extraction.entity_facts {
             // Get or create profile for this entity
@@ -1153,11 +1152,42 @@ impl IngestionPipeline {
             // Save profile
             self.storage.store_entity_profile(&profile)?;
 
+            linked_entities.insert(extracted_fact.entity.to_lowercase());
+
             tracing::debug!(
                 "Updated entity profile '{}' with LLM fact: {} = {}",
                 extracted_fact.entity,
                 extracted_fact.fact_type,
                 extracted_fact.value
+            );
+        }
+
+        // Link source_memory for entities that were detected but had no entity_facts.
+        // Without this, memories mentioning an entity (e.g. "Caroline") but producing
+        // no structured facts would never appear in that entity's source_memories,
+        // making them invisible to Step 2.1's entity scoring (the sacred 2.0 baseline).
+        for entity in &extraction.entities {
+            if linked_entities.contains(&entity.name.to_lowercase()) {
+                continue; // Already linked via entity_facts above
+            }
+
+            let mut profile = self
+                .storage
+                .get_entity_profile(&entity.name)?
+                .unwrap_or_else(|| {
+                    EntityProfile::new(
+                        EntityId::new(),
+                        entity.name.clone(),
+                        entity.entity_type.clone(),
+                    )
+                });
+
+            profile.add_source_memory(memory_id.clone());
+            self.storage.store_entity_profile(&profile)?;
+
+            tracing::debug!(
+                "Linked source memory to entity profile '{}' (no facts, entity-only)",
+                entity.name
             );
         }
 
@@ -2099,5 +2129,152 @@ mod tests {
         assert!(profile2_after.source_memories.contains(&id3));
         assert!(!profile2_after.source_memories.contains(&id1));
         assert!(!profile2_after.source_memories.contains(&id2));
+    }
+
+    // ========== Entity-Only Source Memory Linking Tests ==========
+
+    #[cfg(feature = "entity-extraction")]
+    #[test]
+    fn test_entity_only_linking_creates_profile_and_links_source_memory() {
+        use crate::extraction::{ExtractedEntity, ExtractionResult};
+
+        let (pipeline, _dir) = create_test_pipeline();
+
+        // Add a memory to storage first
+        let memory = Memory::new("Caroline went to the park".to_string(), vec![0.1; 384]);
+        let id = memory.id.clone();
+        pipeline.storage.store_memory(&memory).unwrap();
+
+        // Create extraction with entity but NO entity_facts
+        let extraction = ExtractionResult {
+            entities: vec![ExtractedEntity {
+                name: "Caroline".to_string(),
+                entity_type: "person".to_string(),
+            }],
+            entity_facts: Vec::new(),
+            topics: vec!["park".to_string()],
+            importance: 0.5,
+        };
+
+        // Call the function under test
+        pipeline
+            .update_entity_profiles_from_llm(&id, &extraction)
+            .unwrap();
+
+        // Profile should exist with source_memory linked, even without facts
+        let profile = pipeline
+            .storage
+            .get_entity_profile("Caroline")
+            .unwrap()
+            .expect("Profile should be created for entity-only extraction");
+        assert!(
+            profile.source_memories.contains(&id),
+            "source_memory should be linked even without entity_facts"
+        );
+        assert_eq!(profile.total_facts(), 0, "No facts should be added");
+    }
+
+    #[cfg(feature = "entity-extraction")]
+    #[test]
+    fn test_entity_only_linking_skips_already_linked_entities() {
+        use crate::extraction::{ExtractedEntity, ExtractedFact, ExtractionResult};
+
+        let (pipeline, _dir) = create_test_pipeline();
+
+        // Add a memory
+        let memory = Memory::new("Caroline is a counselor".to_string(), vec![0.1; 384]);
+        let id = memory.id.clone();
+        pipeline.storage.store_memory(&memory).unwrap();
+
+        // Extraction with BOTH entity and entity_facts for Caroline
+        let extraction = ExtractionResult {
+            entities: vec![ExtractedEntity {
+                name: "Caroline".to_string(),
+                entity_type: "person".to_string(),
+            }],
+            entity_facts: vec![ExtractedFact {
+                entity: "Caroline".to_string(),
+                fact_type: "occupation".to_string(),
+                value: "counselor".to_string(),
+                confidence: 0.9,
+            }],
+            topics: Vec::new(),
+            importance: 0.5,
+        };
+
+        pipeline
+            .update_entity_profiles_from_llm(&id, &extraction)
+            .unwrap();
+
+        // Profile should have the fact AND source_memory (from entity_facts path)
+        let profile = pipeline
+            .storage
+            .get_entity_profile("Caroline")
+            .unwrap()
+            .unwrap();
+        assert_eq!(profile.total_facts(), 1);
+        assert!(profile.source_memories.contains(&id));
+    }
+
+    #[cfg(feature = "entity-extraction")]
+    #[test]
+    fn test_entity_only_linking_mixed_entities() {
+        use crate::extraction::{ExtractedEntity, ExtractedFact, ExtractionResult};
+
+        let (pipeline, _dir) = create_test_pipeline();
+
+        let memory = Memory::new(
+            "Caroline and Bob discussed therapy".to_string(),
+            vec![0.1; 384],
+        );
+        let id = memory.id.clone();
+        pipeline.storage.store_memory(&memory).unwrap();
+
+        // Caroline has facts, Bob does not
+        let extraction = ExtractionResult {
+            entities: vec![
+                ExtractedEntity {
+                    name: "Caroline".to_string(),
+                    entity_type: "person".to_string(),
+                },
+                ExtractedEntity {
+                    name: "Bob".to_string(),
+                    entity_type: "person".to_string(),
+                },
+            ],
+            entity_facts: vec![ExtractedFact {
+                entity: "Caroline".to_string(),
+                fact_type: "interest".to_string(),
+                value: "therapy".to_string(),
+                confidence: 0.8,
+            }],
+            topics: Vec::new(),
+            importance: 0.5,
+        };
+
+        pipeline
+            .update_entity_profiles_from_llm(&id, &extraction)
+            .unwrap();
+
+        // Caroline: has fact + source_memory (via entity_facts path)
+        let caroline = pipeline
+            .storage
+            .get_entity_profile("Caroline")
+            .unwrap()
+            .unwrap();
+        assert_eq!(caroline.total_facts(), 1);
+        assert!(caroline.source_memories.contains(&id));
+
+        // Bob: no facts but still has source_memory (via entity-only path)
+        let bob = pipeline
+            .storage
+            .get_entity_profile("Bob")
+            .unwrap()
+            .expect("Bob's profile should be created via entity-only linking");
+        assert_eq!(bob.total_facts(), 0);
+        assert!(
+            bob.source_memories.contains(&id),
+            "Bob should have source_memory linked even without facts"
+        );
     }
 }

@@ -136,6 +136,11 @@ impl ProfileSearch {
     ///
     /// Uses case-insensitive whole-word matching. Handles possessives
     /// (e.g., "Caroline's") and punctuation boundaries.
+    ///
+    /// Includes prefix-based alias resolution: if "mel" matches as a whole word
+    /// and "melanie" exists as a profile, "mel" is resolved to "melanie" (the
+    /// canonical form). This handles common nickname patterns (Mel/Melanie,
+    /// Jon/Jonathan, etc.) without requiring explicit alias configuration.
     fn detect_entities_in_query(&self, query_text: &str) -> Result<Vec<String>> {
         let query_lower = query_text.to_lowercase();
         let entity_names = self.storage.list_entity_profile_names()?;
@@ -147,6 +152,36 @@ impl ProfileSearch {
                 found.push(name.clone());
             }
         }
+
+        // Resolve prefix-based aliases: if a short name (e.g., "mel") is a proper
+        // prefix of a longer profile name (e.g., "melanie"), replace with the longer
+        // form. The longer name is the canonical form with richer profile data.
+        // Constraints: prefix must be >= 3 chars, and the suffix must continue the
+        // word (no space after prefix — "jon" matches "jonathan" but not "jon smith").
+        if !found.is_empty() {
+            let mut resolved = Vec::new();
+            for name in &found {
+                let mut canonical = name.clone();
+                for candidate in &entity_names {
+                    if candidate.len() > name.len()
+                        && candidate.starts_with(name.as_str())
+                        && name.len() >= 3
+                    {
+                        // Ensure the suffix continues the word (not a space/separator)
+                        let suffix_char = candidate.as_bytes()[name.len()];
+                        if suffix_char.is_ascii_alphanumeric() {
+                            canonical = candidate.clone();
+                            break; // Use first (and typically only) longer match
+                        }
+                    }
+                }
+                if !resolved.contains(&canonical) {
+                    resolved.push(canonical);
+                }
+            }
+            found = resolved;
+        }
+
         Ok(found)
     }
 
@@ -706,5 +741,105 @@ mod tests {
         // Should find the fact via embedding similarity
         assert!(!result.source_scores.is_empty(), "Should find results via embedding similarity");
         assert!(result.source_scores.contains_key(&memory_id));
+    }
+
+    // ========== Alias resolution tests ==========
+
+    #[test]
+    fn test_alias_resolution_short_to_long() {
+        // "Mel" in query should resolve to "Melanie" profile
+        let (storage, _dir) = create_test_storage();
+
+        let mel_profile = EntityProfile::new(
+            EntityId::new(),
+            "Mel".to_string(),
+            "person".to_string(),
+        );
+        let melanie_profile = EntityProfile::new(
+            EntityId::new(),
+            "Melanie".to_string(),
+            "person".to_string(),
+        );
+        storage.store_entity_profile(&mel_profile).unwrap();
+        storage.store_entity_profile(&melanie_profile).unwrap();
+
+        let search = ProfileSearch::new(storage);
+        let entities = search.detect_entities("What does Mel like?").unwrap();
+
+        // "mel" should resolve to "melanie" (canonical longer form)
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0], "melanie");
+    }
+
+    #[test]
+    fn test_alias_resolution_no_false_positive() {
+        // "Jon" should NOT resolve to "Jonathan" if only "Jon" profile exists
+        let (storage, _dir) = create_test_storage();
+
+        let jon_profile = EntityProfile::new(
+            EntityId::new(),
+            "Jon".to_string(),
+            "person".to_string(),
+        );
+        storage.store_entity_profile(&jon_profile).unwrap();
+
+        let search = ProfileSearch::new(storage);
+        let entities = search.detect_entities("What does Jon think?").unwrap();
+
+        // No longer name exists, so "jon" stays as-is
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0], "jon");
+    }
+
+    #[test]
+    fn test_alias_resolution_no_space_separated() {
+        // "Jon" should NOT match "Jon Smith" (space separator, not continuous name)
+        let (storage, _dir) = create_test_storage();
+
+        let jon_profile = EntityProfile::new(
+            EntityId::new(),
+            "Jon".to_string(),
+            "person".to_string(),
+        );
+        let jon_smith_profile = EntityProfile::new(
+            EntityId::new(),
+            "Jon Smith".to_string(),
+            "person".to_string(),
+        );
+        storage.store_entity_profile(&jon_profile).unwrap();
+        storage.store_entity_profile(&jon_smith_profile).unwrap();
+
+        let search = ProfileSearch::new(storage);
+        let entities = search.detect_entities("What does Jon do?").unwrap();
+
+        // "jon" should NOT resolve to "jon smith" (space after "jon")
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0], "jon");
+    }
+
+    #[test]
+    fn test_alias_resolution_dedup() {
+        // Both "Mel" and "Melanie" in query should deduplicate to one "melanie"
+        let (storage, _dir) = create_test_storage();
+
+        let mel_profile = EntityProfile::new(
+            EntityId::new(),
+            "Mel".to_string(),
+            "person".to_string(),
+        );
+        let melanie_profile = EntityProfile::new(
+            EntityId::new(),
+            "Melanie".to_string(),
+            "person".to_string(),
+        );
+        storage.store_entity_profile(&mel_profile).unwrap();
+        storage.store_entity_profile(&melanie_profile).unwrap();
+
+        let search = ProfileSearch::new(storage);
+        let entities = search.detect_entities("What do Mel and Melanie have in common?").unwrap();
+
+        // Both should resolve to "melanie", deduplicated
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0], "melanie");
     }
 }

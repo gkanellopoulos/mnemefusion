@@ -340,17 +340,45 @@ impl LlmEntityExtractor {
         result
     }
 
+    /// Strip `<think>...</think>` blocks from model output.
+    ///
+    /// Qwen3 models may generate thinking tokens before the JSON response.
+    /// These blocks can contain `{` characters (from discussing JSON structure)
+    /// which would confuse `extract_json()`.
+    fn strip_thinking(output: &str) -> String {
+        // Handle both <think>...</think> and partial <think>... (no closing tag)
+        let mut result = output.to_string();
+
+        // Remove complete <think>...</think> blocks (greedy: handle nested or multiple)
+        while let Some(start) = result.find("<think>") {
+            if let Some(end) = result[start..].find("</think>") {
+                let remove_end = start + end + "</think>".len();
+                result = format!("{}{}", &result[..start], &result[remove_end..]);
+            } else {
+                // No closing tag — remove everything from <think> onward,
+                // then check if JSON came before the <think>
+                result = result[..start].to_string();
+                break;
+            }
+        }
+
+        result
+    }
+
     /// Extract JSON object from model output
     fn extract_json(output: &str) -> Result<String> {
+        // Strip <think>...</think> blocks that Qwen3 models may generate
+        let cleaned = Self::strip_thinking(output);
+
         // Find the first { and last matching }
-        let start = output.find('{').ok_or_else(|| {
+        let start = cleaned.find('{').ok_or_else(|| {
             Error::InferenceError(format!("No JSON object found in output: {}", output))
         })?;
 
         // Find matching closing brace
         let mut depth = 0;
         let mut end = start;
-        for (i, ch) in output[start..].char_indices() {
+        for (i, ch) in cleaned[start..].char_indices() {
             match ch {
                 '{' => depth += 1,
                 '}' => {
@@ -371,7 +399,7 @@ impl LlmEntityExtractor {
             )));
         }
 
-        Ok(output[start..=end].to_string())
+        Ok(cleaned[start..=end].to_string())
     }
 
     /// Reset the GPU context to prevent memory fragmentation during long ingestion runs.
@@ -490,5 +518,79 @@ mod tests {
         let error_msg = error.to_string();
         assert!(error_msg.contains("not found"));
         assert!(error_msg.contains("MNEMEFUSION_MODEL_PATH"));
+    }
+
+    // ========== strip_thinking tests ==========
+
+    #[test]
+    fn test_strip_thinking_no_think_block() {
+        let output = r#"{"entities": [], "entity_facts": [], "topics": [], "importance": 0.5}"#;
+        assert_eq!(LlmEntityExtractor::strip_thinking(output), output);
+    }
+
+    #[test]
+    fn test_strip_thinking_complete_block() {
+        let output = r#"<think>The text is short.</think>{"entities": [], "entity_facts": [], "topics": [], "importance": 0.5}"#;
+        let cleaned = LlmEntityExtractor::strip_thinking(output);
+        assert!(cleaned.contains(r#"{"entities": []"#));
+        assert!(!cleaned.contains("<think>"));
+    }
+
+    #[test]
+    fn test_strip_thinking_with_braces_inside() {
+        let output = r#"<think>I should return {"entities": []} format</think>{"entities": [{"name": "Alice", "type": "person"}], "entity_facts": [], "topics": [], "importance": 0.5}"#;
+        let cleaned = LlmEntityExtractor::strip_thinking(output);
+        assert!(!cleaned.contains("<think>"));
+        assert!(cleaned.contains(r#""name": "Alice""#));
+    }
+
+    #[test]
+    fn test_strip_thinking_unclosed_tag() {
+        let output = r#"<think>This thinking never ends... {"entities": []}"#;
+        let cleaned = LlmEntityExtractor::strip_thinking(output);
+        assert_eq!(cleaned, "");
+    }
+
+    // ========== extract_json with thinking tests ==========
+
+    #[test]
+    fn test_extract_json_with_think_block_containing_braces() {
+        let output = r#"<think>The JSON should be {"entities": [], ...}</think>{"entities": [{"name": "Caroline", "type": "person"}], "entity_facts": [], "topics": ["farewell"], "importance": 0.2}"#;
+        let json = LlmEntityExtractor::extract_json(output).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["entities"][0]["name"], "Caroline");
+    }
+
+    #[test]
+    fn test_extract_json_direct_no_thinking() {
+        let output = r#"{"entities": [], "entity_facts": [], "topics": [], "importance": 0.5}"#;
+        let json = LlmEntityExtractor::extract_json(output).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed["entities"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_extract_json_think_block_no_braces() {
+        let output = r#"<think>Short message, nothing to extract.</think>{"entities": [], "entity_facts": [], "topics": [], "importance": 0.1}"#;
+        let json = LlmEntityExtractor::extract_json(output).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!((parsed["importance"].as_f64().unwrap() - 0.1).abs() < 0.01);
+    }
+
+    // ========== fix_json tests ==========
+
+    #[test]
+    fn test_fix_json_trailing_comma() {
+        let input = r#"{"entities": [{"name": "Alice",},], "topics": [],}"#;
+        let fixed = LlmEntityExtractor::fix_json(input);
+        assert!(!fixed.contains(",]"));
+        assert!(!fixed.contains(",}"));
+    }
+
+    #[test]
+    fn test_fix_json_double_braces() {
+        let input = r#"{{"entities": []}}"#;
+        let fixed = LlmEntityExtractor::fix_json(input);
+        assert_eq!(fixed, r#"{"entities": []}"#);
     }
 }

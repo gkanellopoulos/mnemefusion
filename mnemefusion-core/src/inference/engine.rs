@@ -85,8 +85,10 @@ impl InferenceEngine {
         let backend =
             LlamaBackend::init().map_err(|e| Error::InferenceError(format!("Backend init: {e}")))?;
 
-        // Load ggml backends (CPU + CUDA) as dynamic libraries
-        Self::load_ggml_backends();
+        // Load ggml backends as dynamic libraries.
+        // When gpu_layers=0, skip CUDA to avoid allocating GPU compute buffers
+        // (which can fail on low-VRAM cards and waste memory even when not needed).
+        Self::load_ggml_backends(gpu_layers > 0);
 
         // Configure model parameters
         let model_params = LlamaModelParams::default().with_n_gpu_layers(gpu_layers);
@@ -377,11 +379,18 @@ impl InferenceEngine {
     }
 
     /// Load ggml backend DLLs (CPU + CUDA) from known locations
-    fn load_ggml_backends() {
+    fn load_ggml_backends(load_cuda: bool) {
         use std::ffi::CString;
 
-        // Backend DLLs to load, in order (CPU first, then CUDA)
-        let dll_names = ["ggml-cpu.dll", "ggml-cuda.dll"];
+        // Backend DLLs to load. CPU is always required.
+        // CUDA is skipped when gpu_layers=0 to avoid allocating VRAM compute buffers
+        // (~600MB) that aren't needed for pure CPU inference.
+        let dll_names: Vec<&str> = if load_cuda {
+            vec!["ggml-cpu.dll", "ggml-cuda.dll"]
+        } else {
+            eprintln!("[mnemefusion] GPU layers = 0, skipping CUDA backend (CPU-only mode)");
+            vec!["ggml-cpu.dll"]
+        };
 
         // Search locations for ggml backend DLLs
         let mut search_paths: Vec<std::path::PathBuf> = Vec::new();

@@ -132,3 +132,10 @@ tests/benchmarks/deep_compare*.py
 
 # Assessment files
 assesment.*
+
+# Chat demo data (user DBs and history)
+apps/chat_data/
+
+# Environment files with secrets
+.env
+apps/.env

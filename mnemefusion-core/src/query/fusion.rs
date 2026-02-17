@@ -281,25 +281,28 @@ impl FusionEngine {
         all_ids.extend(entity_results.keys());
 
         // Compute fused scores
-        // IMPORTANT: Filter out memories with very low semantic relevance
-        // This ensures semantic relevance is mandatory - other dimensions can only boost
-        // already-relevant memories, not surface irrelevant ones
+        // IMPORTANT: Filter out memories with very low semantic relevance.
+        // This ensures semantic relevance is mandatory — other dimensions can only boost
+        // already-relevant memories, not surface irrelevant ones.
+        // NOTE: Entity exemption was tested (S25 Bug #1) and REVERTED — entity-only
+        // memories without semantic relevance flooded results with off-topic entity
+        // matches, causing -4.3 pts regression. Entity confirmation alone ≠ topical relevance.
         let mut results: Vec<FusedResult> = all_ids
             .into_iter()
             .filter_map(|id| {
                 let semantic_score = *semantic_results.get(id).unwrap_or(&0.0);
                 let bm25_score = *bm25_results.get(id).unwrap_or(&0.0);
+                let entity_score = *entity_results.get(id).unwrap_or(&0.0);
 
-                // FILTER: Require minimum semantic relevance OR strong BM25 match
-                // Allow BM25 to surface exact keyword matches even if semantic is low
-                // This is critical for queries with specific terms/names
+                // FILTER: Require minimum semantic relevance OR strong BM25 match.
+                // Entity dimension alone is not sufficient — it confirms the memory
+                // is about the right entity but not that it's topically relevant.
                 if semantic_score < self.semantic_threshold && bm25_score < 0.3 {
                     return None;
                 }
 
                 let temporal_score = *temporal_results.get(id).unwrap_or(&0.0);
                 let causal_score = *causal_results.get(id).unwrap_or(&0.0);
-                let entity_score = *entity_results.get(id).unwrap_or(&0.0);
 
                 // Compute weighted sum
                 let fused_score = semantic_score * weights.semantic
@@ -383,12 +386,14 @@ impl FusionEngine {
         }
 
         // FILTER: Apply semantic threshold to prevent keyword flooding
-        // Memories must have minimum semantic relevance OR strong BM25 match
+        // Memories must have minimum semantic relevance OR strong BM25 match.
+        // Entity exemption was tested (S25) and reverted — see fuse_weighted comment.
         let results: Vec<FusedResult> = rrf_scores
             .into_iter()
             .filter_map(|(id, rrf_score)| {
                 let semantic_score = *semantic_results.get(&id).unwrap_or(&0.0);
                 let bm25_score = *bm25_results.get(&id).unwrap_or(&0.0);
+                let entity_score = *entity_results.get(&id).unwrap_or(&0.0);
 
                 // Require minimum semantic relevance OR strong BM25 match
                 if semantic_score < self.semantic_threshold && bm25_score < 0.3 {
@@ -397,7 +402,6 @@ impl FusionEngine {
 
                 let temporal_score = *temporal_results.get(&id).unwrap_or(&0.0);
                 let causal_score = *causal_results.get(&id).unwrap_or(&0.0);
-                let entity_score = *entity_results.get(&id).unwrap_or(&0.0);
 
                 Some(FusedResult {
                     id,

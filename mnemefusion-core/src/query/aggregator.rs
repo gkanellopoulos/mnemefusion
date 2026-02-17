@@ -404,4 +404,38 @@ mod tests {
         assert!(!MultiTurnAggregator::is_aggregation("when did this happen?"));
         assert!(!MultiTurnAggregator::is_aggregation("where is it?"));
     }
+
+    #[test]
+    fn test_aggregate_extraction_respects_limit() {
+        // Non-aggregation queries should return up to `limit` results
+        use crate::types::MemoryId;
+
+        let aggregator = MultiTurnAggregator::default();
+
+        let candidates: Vec<FusedResult> = (0..50)
+            .map(|i| FusedResult {
+                id: MemoryId::from_u64(i as u64),
+                semantic_score: 0.0,
+                bm25_score: 0.0,
+                temporal_score: 0.0,
+                causal_score: 0.0,
+                entity_score: 2.0,
+                fused_score: 0.01 - (i as f32 * 0.0001),
+                confidence: 0.7,
+            })
+            .collect();
+
+        let result = aggregator.aggregate(
+            QueryType::Extraction,
+            "when did we meet?",
+            candidates,
+            &crate::storage::StorageEngine::open(
+                &std::env::temp_dir().join("test_agg_ext.mfdb"),
+            ).unwrap(),
+            25,
+        ).unwrap();
+
+        assert_eq!(result.len(), 25, "Extraction should return exactly limit results");
+    }
+
 }

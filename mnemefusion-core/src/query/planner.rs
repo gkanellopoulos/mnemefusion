@@ -218,17 +218,28 @@ impl QueryPlanner {
         }
 
 
-        // Step 1.7: Detect target entity for speaker-aware retrieval.
-        // Used both to increase candidate pool (more docs to compensate for penalty)
-        // and in Step 3.7 for the actual speaker reranking.
-        let target_entity = self.extract_query_entity(query_text);
+        // Step 1.7: Detect entities for profile injection and speaker reranking.
+        //
+        // Two separate concerns that were previously coupled through a single target_entity:
+        //   - query_entities (ALL detected): Used in Step 2.1 for profile source injection.
+        //     Multi-entity queries ("How long have Mel and her husband been married?")
+        //     need profile sources from ALL mentioned entities.
+        //   - speaker_entity (single only): Used in Step 3.7 for speaker-aware reranking.
+        //     Speaker penalty requires a single target — can't penalize speakers when the
+        //     query is about multiple people.
+        let query_entities = self.profile_search.detect_entities(query_text).unwrap_or_default();
+        let speaker_entity = if query_entities.len() == 1 {
+            Some(query_entities[0].clone())
+        } else {
+            None
+        };
 
         // Step 2: Retrieve from all dimensions (fetch more to account for filtering)
         let needs_filtering =
             namespace.is_some() || (filters.is_some() && !filters.unwrap().is_empty());
-        // When speaker filtering is active, ~half of candidates will be penalized,
-        // so fetch more to maintain effective candidate depth for the target speaker.
-        let fetch_multiplier = if needs_filtering || target_entity.is_some() { 5 } else { 3 };
+        // When entity-specific retrieval is active, fetch more candidates to maintain
+        // effective depth after speaker penalty or entity-based scoring.
+        let fetch_multiplier = if needs_filtering || !query_entities.is_empty() { 5 } else { 3 };
         let mut semantic_scores =
             self.semantic_search(query_embedding, limit * fetch_multiplier)?;
         let mut bm25_scores = self.bm25_search(query_text, limit * fetch_multiplier)?;
@@ -246,8 +257,11 @@ impl QueryPlanner {
         // values (tested 1.5) cause regression because wrong-entity graph memories
         // (0-1.0) compete too closely. Graduated scoring (2.0 + sem_bonus) also
         // regresses because it changes RRF normalization for all entity scores.
-        if let Some(ref target) = target_entity {
-            if let Ok(Some(profile)) = self.storage.get_entity_profile(target) {
+        //
+        // Injects for ALL detected entities (not just single-entity queries).
+        // Multi-entity queries need profile sources from every mentioned entity.
+        for entity_name in &query_entities {
+            if let Ok(Some(profile)) = self.storage.get_entity_profile(entity_name) {
                 for source_id in &profile.source_memories {
                     entity_scores
                         .entry(source_id.clone())
@@ -445,8 +459,11 @@ impl QueryPlanner {
         // information source — so "What's your best camping memory?" (asked by Caroline)
         // ranks high for "Where has Melanie camped?" despite containing no answer.
         // Penalizing non-target speakers corrects this without filtering.
-        if let Some(ref target_entity) = target_entity {
-            let target_lower = target_entity.to_lowercase();
+        // Speaker reranking only fires for single-entity queries. Multi-entity queries
+        // (e.g., "How long have Mel and her husband been married?") have no single target
+        // speaker — applying a penalty would arbitrarily suppress one entity's memories.
+        if let Some(ref speaker_target) = speaker_entity {
+            let target_lower = speaker_target.to_lowercase();
             let mut any_speaker_data = false;
             for result in &mut fused_results {
                 if let Ok(Some(memory)) = self.storage.get_memory_by_u64(result.id.to_u64()) {
@@ -477,7 +494,8 @@ impl QueryPlanner {
         // from 2-4 separate memories. Expand by fetching entity memories and adding
         // DIVERSE ones not already in results. Cap at 5 expansions for performance.
         if MultiTurnAggregator::is_aggregation(&query_text.to_lowercase()) {
-            if let Some(ref entity_name) = target_entity {
+            // Use speaker_entity for aggregation expansion (consistent with speaker reranking)
+            if let Some(ref entity_name) = speaker_entity {
                 if let Ok(Some(entity)) = self.storage.find_entity_by_name(entity_name) {
                     let graph = self.graph_manager.read().unwrap();
                     let entity_memories = graph.get_entity_memories(&entity.id);
@@ -784,12 +802,15 @@ impl QueryPlanner {
         Ok((intent, final_results, matched_facts))
     }
 
-    /// Extract the primary person entity from query text for speaker-aware reranking.
+    /// Extract the primary person entity from query text.
     ///
     /// Uses profile-aware entity detection (case-insensitive whole-word matching
     /// against stored entity profile names). Returns Some(name) only when exactly
-    /// one entity is found — queries mentioning multiple people return None to
-    /// avoid incorrect speaker filtering.
+    /// one entity is found — queries mentioning multiple people return None.
+    ///
+    /// Note: No longer used in the main query path (Step 2.1 now injects for ALL
+    /// detected entities via query_entities). Kept for tests and potential callers.
+    #[allow(dead_code)]
     fn extract_query_entity(&self, query_text: &str) -> Option<String> {
         let entities = self.profile_search.detect_entities(query_text).ok()?;
         if entities.len() == 1 {
