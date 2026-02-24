@@ -274,9 +274,9 @@ def _retrieve_context(mem, query: str):
         return "none", "", []
 
     query_emb = embed(query)
-    intent, results = mem.query(query, query_emb, limit=10)
+    intent, results, profile_ctx = mem.query(query, query_emb, limit=10)
 
-    context_lines = []
+    context_lines = list(profile_ctx)  # Start with profile context
     raw_results = []
     for r in results:
         mem_dict, scores = r

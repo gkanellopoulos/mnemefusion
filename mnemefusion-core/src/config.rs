@@ -152,6 +152,41 @@ pub struct Config {
     /// Higher values increase ingestion time linearly but improve profile
     /// completeness. Facts are deduplicated across passes via add_fact().
     pub extraction_passes: usize,
+
+    /// Entity types that get their own profiles during extraction.
+    ///
+    /// Only entities whose `entity_type` (from LLM extraction) matches one of
+    /// these types (case-insensitive) will have profiles created. Others are
+    /// skipped to prevent junk profiles from generic nouns, pronouns, and
+    /// concepts (e.g., "dogs", "They", "basketball").
+    ///
+    /// Default: `["person", "organization", "location"]`
+    ///
+    /// Set to empty to allow all entity types (not recommended — causes
+    /// profile explosion with diverse extraction prompts).
+    pub profile_entity_types: Vec<String>,
+
+    /// Adaptive-K threshold for dynamic result count selection (Top-p / nucleus).
+    ///
+    /// Instead of always returning exactly `limit` results, applies nucleus (Top-p)
+    /// selection on fused scores: converts scores to probabilities via softmax, then
+    /// returns results until cumulative probability >= this threshold.
+    ///
+    /// This prevents low-quality padding from diluting the context window. When the
+    /// top few results have high scores and the rest are noise, Adaptive-K returns
+    /// only the high-confidence results.
+    ///
+    /// Research basis: Calvin Ku's Adaptive-K fork of EmergenceMem Simple Fast.
+    /// Top-p nucleus selection (p=0.7) with token budget. Average k varies per query.
+    ///
+    /// Default: 0.0 (disabled — always returns exactly `limit` results)
+    /// Recommended: 0.7 (return results covering 70% of probability mass)
+    /// Set to 0.0 to disable (always return `limit` results)
+    /// Set to 1.0 to always return all results (equivalent to disabled)
+    ///
+    /// When enabled, results are bounded by [limit/3, limit] to prevent
+    /// pathological cases (too few or too many results).
+    pub adaptive_k_threshold: f32,
 }
 
 impl Default for Config {
@@ -174,6 +209,12 @@ impl Default for Config {
             slm_metadata_extraction_enabled: true, // Enabled by default when slm_config is set
             slm_query_classification_enabled: false, // Disabled by default - rely on RRF fusion
             extraction_passes: 1, // Single pass by default (backward compatible)
+            profile_entity_types: vec![
+                "person".to_string(),
+                "organization".to_string(),
+                "location".to_string(),
+            ],
+            adaptive_k_threshold: 0.0, // Disabled by default (always return exactly limit)
         }
     }
 }
@@ -478,6 +519,32 @@ impl Config {
     /// ```
     pub fn with_extraction_passes(mut self, passes: usize) -> Self {
         self.extraction_passes = passes.clamp(1, 10);
+        self
+    }
+
+    /// Set which entity types get their own profiles during extraction.
+    ///
+    /// Only entities matching these types (case-insensitive) will have profiles
+    /// created. An empty list allows all entity types.
+    ///
+    /// # Arguments
+    ///
+    /// * `types` - List of allowed entity types (e.g., `["person", "organization"]`)
+    pub fn with_profile_entity_types(mut self, types: Vec<String>) -> Self {
+        self.profile_entity_types = types;
+        self
+    }
+
+    /// Set the Adaptive-K (Top-p) threshold for dynamic result count selection.
+    ///
+    /// When > 0.0, applies nucleus selection to return only high-confidence results
+    /// instead of always returning exactly `limit` results.
+    ///
+    /// # Arguments
+    ///
+    /// * `threshold` - Top-p threshold (0.0 to 1.0). 0.0 disables, 0.7 recommended.
+    pub fn with_adaptive_k(mut self, threshold: f32) -> Self {
+        self.adaptive_k_threshold = threshold.clamp(0.0, 1.0);
         self
     }
 

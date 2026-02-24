@@ -50,7 +50,7 @@ fn test_entity_basic_001_about_query() {
     });
 
     let query_embedding = generate_test_embedding("about Alice", 384);
-    let (intent, _results) = ctx
+    let (intent, _results, _profile_ctx) = ctx
         .engine
         .query("Tell me about Alice", &query_embedding, 10, None, None)
         .unwrap();
@@ -76,7 +76,7 @@ fn test_entity_basic_002_regarding_query() {
     });
 
     let query_embedding = generate_test_embedding("regarding Project Alpha", 384);
-    let (intent, _results) = ctx
+    let (intent, _results, _profile_ctx) = ctx
         .engine
         .query(
             "Information regarding Project Alpha",
@@ -107,7 +107,7 @@ fn test_entity_basic_003_concerning_query() {
     });
 
     let query_embedding = generate_test_embedding("concerning Team Beta", 384);
-    let (intent, _results) = ctx
+    let (intent, _results, _profile_ctx) = ctx
         .engine
         .query(
             "What concerning Team Beta?",
@@ -138,7 +138,7 @@ fn test_entity_basic_004_related_to_query() {
     });
 
     let query_embedding = generate_test_embedding("related to Q1", 384);
-    let (intent, _results) = ctx
+    let (intent, _results, _profile_ctx) = ctx
         .engine
         .query(
             "Show me items related to Q1",
@@ -169,7 +169,7 @@ fn test_entity_basic_005_with_entity() {
     });
 
     let query_embedding = generate_test_embedding("with Charlie", 384);
-    let (intent, _results) = ctx
+    let (intent, _results, _profile_ctx) = ctx
         .engine
         .query("Meetings with Charlie", &query_embedding, 10, None, None)
         .unwrap();
@@ -194,7 +194,7 @@ fn test_entity_basic_006_involving_entity() {
     });
 
     let query_embedding = generate_test_embedding("involving Diana", 384);
-    let (intent, _results) = ctx
+    let (intent, _results, _profile_ctx) = ctx
         .engine
         .query("Issues involving Diana", &query_embedding, 10, None, None)
         .unwrap();
@@ -219,7 +219,7 @@ fn test_entity_basic_007_mention_query() {
     });
 
     let query_embedding = generate_test_embedding("mention AWS", 384);
-    let (intent, _results) = ctx
+    let (intent, _results, _profile_ctx) = ctx
         .engine
         .query("Mention AWS", &query_embedding, 10, None, None)
         .unwrap();
@@ -244,7 +244,7 @@ fn test_entity_basic_008_capitalized_word_trigger() {
     });
 
     let query_embedding = generate_test_embedding("Tell me about GitHub Actions", 384);
-    let (intent, _results) = ctx
+    let (intent, _results, _profile_ctx) = ctx
         .engine
         .query(
             "Tell me about GitHub Actions",
@@ -276,7 +276,7 @@ fn test_entity_basic_009_multi_word_entity() {
     });
 
     let query_embedding = generate_test_embedding("about Project Alpha Beta", 384);
-    let (intent, _results) = ctx
+    let (intent, _results, _profile_ctx) = ctx
         .engine
         .query(
             "What about Project Alpha Beta?",
@@ -307,7 +307,7 @@ fn test_entity_basic_010_lowercase_not_entity() {
     });
 
     let query_embedding = generate_test_embedding("about testing", 384);
-    let (intent, _results) = ctx
+    let (intent, _results, _profile_ctx) = ctx
         .engine
         .query("about testing", &query_embedding, 10, None, None)
         .unwrap();
@@ -955,7 +955,7 @@ fn test_entity_mixed_001_entity_plus_temporal() {
     });
 
     let query_embedding = generate_test_embedding("Alice last 2 days", 384);
-    let (intent, results) = ctx
+    let (intent, results, _profile_ctx) = ctx
         .engine
         .query(
             "What did Alice do in the last 2 days?",
@@ -1007,7 +1007,7 @@ fn test_entity_mixed_002_entity_plus_causal() {
     });
 
     let query_embedding = generate_test_embedding("because Alice joined", 384);
-    let (intent, _results) = ctx
+    let (intent, _results, _profile_ctx) = ctx
         .engine
         .query(
             "What happened because Alice joined?",
@@ -1054,7 +1054,7 @@ fn test_entity_mixed_003_entity_in_recent_time() {
     });
 
     let query_embedding = generate_test_embedding("Alice recently", 384);
-    let (_intent, results) = ctx
+    let (_intent, results, _profile_ctx) = ctx
         .engine
         .query(
             "What did Alice do recently?",
@@ -1103,7 +1103,7 @@ fn test_entity_mixed_004_multiple_entities_query() {
     });
 
     let query_embedding = generate_test_embedding("Alice and Bob interactions", 384);
-    let (_intent, results) = ctx
+    let (_intent, results, _profile_ctx) = ctx
         .engine
         .query(
             "Interactions between Alice and Bob",
@@ -1145,7 +1145,7 @@ fn test_entity_mixed_005_entity_with_factual() {
     });
 
     let query_embedding = generate_test_embedding("Who knows Rust", 384);
-    let (intent, _results) = ctx
+    let (intent, _results, _profile_ctx) = ctx
         .engine
         .query("Who knows Rust?", &query_embedding, 10, None, None)
         .unwrap();
@@ -1178,7 +1178,7 @@ fn test_entity_mixed_006_entity_before_date() {
     });
 
     let query_embedding = generate_test_embedding("Alice before last week", 384);
-    let (_intent, results) = ctx
+    let (_intent, results, _profile_ctx) = ctx
         .engine
         .query(
             "What did Alice do before last week?",
@@ -1237,7 +1237,7 @@ fn test_entity_mixed_007_entity_causal_chain() {
     });
 
     let query_embedding = generate_test_embedding("Alice discovery results", 384);
-    let (_intent, results) = ctx
+    let (_intent, results, _profile_ctx) = ctx
         .engine
         .query(
             "What resulted from Alice's discovery?",
@@ -1282,7 +1282,7 @@ fn test_entity_mixed_008_entity_with_location() {
     });
 
     let query_embedding = generate_test_embedding("Alice San Francisco", 384);
-    let (_intent, results) = ctx
+    let (_intent, results, _profile_ctx) = ctx
         .engine
         .query("Alice in San Francisco", &query_embedding, 10, None, None)
         .unwrap();
@@ -1322,7 +1322,7 @@ fn test_entity_mixed_009_project_timeline() {
     });
 
     let query_embedding = generate_test_embedding("Project Omega progress timeline", 384);
-    let (_intent, results) = ctx
+    let (_intent, results, _profile_ctx) = ctx
         .engine
         .query(
             "Project Omega progress over time",
@@ -1396,7 +1396,7 @@ fn test_entity_mixed_010_real_world_scenario() {
 
     // Mixed query
     let query_embedding = generate_test_embedding("Alice Acme Corp work", 384);
-    let (_intent, results) = ctx
+    let (_intent, results, _profile_ctx) = ctx
         .engine
         .query(
             "Alice's work on Acme Corp issue",
@@ -1612,7 +1612,7 @@ fn test_entity_query_001_entity_intent_returns_relevant() {
     });
 
     let query_embedding = generate_test_embedding("Tell me about Alice", 384);
-    let (intent, results) = ctx
+    let (intent, results, _profile_ctx) = ctx
         .engine
         .query("Tell me about Alice", &query_embedding, 10, None, None)
         .unwrap();
@@ -1647,7 +1647,7 @@ fn test_entity_query_002_mixed_entity_temporal() {
     });
 
     let query_embedding = generate_test_embedding("Alice yesterday", 384);
-    let (intent, results) = ctx
+    let (intent, results, _profile_ctx) = ctx
         .engine
         .query(
             "What did Alice do yesterday?",

@@ -297,6 +297,12 @@ impl FusionEngine {
                 // FILTER: Require minimum semantic relevance OR strong BM25 match.
                 // Entity dimension alone is not sufficient — it confirms the memory
                 // is about the right entity but not that it's topically relevant.
+                // NOTE: Entity exemption was tested (S25 Bug #1) and REVERTED — entity-only
+                // memories without semantic relevance flooded results with off-topic entity
+                // matches, causing -4.3 pts regression. Entity confirmation alone ≠ topical relevance.
+                // NOTE: Dual-signal relaxation (entity>0 + semantic>=0.08 + bm25>=0.1)
+                // was tested in S29 and REVERTED — -5.0 pts regression. Even weak signals
+                // allow too much off-topic noise when entity pool is large (326 profiles).
                 if semantic_score < self.semantic_threshold && bm25_score < 0.3 {
                     return None;
                 }
@@ -930,5 +936,63 @@ mod tests {
         assert_eq!(ranked[0], make_memory_id(2)); // Highest score
         assert_eq!(ranked[1], make_memory_id(1));
         assert_eq!(ranked[2], make_memory_id(3)); // Lowest score
+    }
+
+    #[test]
+    fn test_entity_only_still_blocked() {
+        // Verify S25/S29 lesson: entity-only memories (no semantic, no BM25) are blocked.
+        // Dual-signal relaxation was tested in S29 and REVERTED (-5.0 pts).
+        let engine = FusionEngine::new();
+
+        let semantic = HashMap::new(); // No semantic scores at all
+
+        let mut entity = HashMap::new();
+        entity.insert(make_memory_id(1), 2.0); // Entity-confirmed but nothing else
+
+        let results = engine.fuse(
+            QueryIntent::Entity,
+            &semantic,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &entity,
+        );
+
+        // Should be empty — entity alone is not sufficient
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_entity_with_weak_signals_blocked() {
+        // S29: Even entity-confirmed memories with weak semantic+BM25 should be blocked.
+        // Dual-signal relaxation (entity>0 + semantic>=0.08 + bm25>=0.1) was tested
+        // and REVERTED (-5.0 pts regression, R@20 dropped 11 pts from noise flooding).
+        let engine = FusionEngine::new(); // threshold = 0.15
+
+        let mut semantic = HashMap::new();
+        semantic.insert(make_memory_id(1), 0.5);  // Above threshold — passes
+        semantic.insert(make_memory_id(2), 0.10); // Below 0.15 threshold
+
+        let mut bm25 = HashMap::new();
+        bm25.insert(make_memory_id(2), 0.15); // Has some BM25 but below 0.3
+
+        let mut entity = HashMap::new();
+        entity.insert(make_memory_id(2), 2.0); // Entity-confirmed
+
+        let results = engine.fuse(
+            QueryIntent::Entity,
+            &semantic,
+            &bm25,
+            &HashMap::new(),
+            &HashMap::new(),
+            &entity,
+        );
+
+        let result_ids: Vec<_> = results.iter().map(|r| r.id.clone()).collect();
+
+        // Memory 1: passes (semantic 0.5 >= 0.15)
+        assert!(result_ids.contains(&make_memory_id(1)));
+        // Memory 2: BLOCKED despite entity confirmation (semantic 0.10 < 0.15, bm25 0.15 < 0.3)
+        assert!(!result_ids.contains(&make_memory_id(2)));
     }
 }

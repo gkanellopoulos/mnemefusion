@@ -37,6 +37,9 @@ pub struct QueryPlanner {
     semantic_prefilter_threshold: f32,
     /// Profile-based search for entity fact lookup
     profile_search: ProfileSearch,
+    /// Adaptive-K (Top-p) threshold for dynamic result count selection.
+    /// 0.0 = disabled (always return limit), 0.7 = recommended.
+    adaptive_k_threshold: f32,
 }
 
 impl QueryPlanner {
@@ -54,6 +57,7 @@ impl QueryPlanner {
         #[cfg(feature = "slm")]
         slm_config: Option<crate::slm::SlmConfig>,
         slm_query_classification_enabled: bool,
+        adaptive_k_threshold: f32,
     ) -> Result<Self> {
         // Initialize SLM classifier if configured
         #[cfg(feature = "slm")]
@@ -97,6 +101,7 @@ impl QueryPlanner {
                 .with_rrf_k(rrf_k),
             semantic_prefilter_threshold,
             profile_search,
+            adaptive_k_threshold,
         })
     }
 
@@ -240,6 +245,7 @@ impl QueryPlanner {
         // When entity-specific retrieval is active, fetch more candidates to maintain
         // effective depth after speaker penalty or entity-based scoring.
         let fetch_multiplier = if needs_filtering || !query_entities.is_empty() { 5 } else { 3 };
+
         let mut semantic_scores =
             self.semantic_search(query_embedding, limit * fetch_multiplier)?;
         let mut bm25_scores = self.bm25_search(query_text, limit * fetch_multiplier)?;
@@ -299,6 +305,12 @@ impl QueryPlanner {
         // matched a target entity (via profile source injection or entity graph), so they
         // are relevant even if semantically distant from the query phrasing. Without this,
         // ~60-80% of entity-matched candidates die before RRF fusion can help them.
+        //
+        // Preserve full semantic scores for accurate reporting in FusedResult.
+        // The .retain() controls which memories contribute to the semantic RRF pathway,
+        // but memories found via BM25/entity should still report their actual semantic score
+        // (not 0.0) for diagnostics. After fusion, we patch scores from this full map.
+        let semantic_scores_full = semantic_scores.clone();
         let effective_prefilter = if MultiTurnAggregator::is_aggregation(&query_text.to_lowercase()) {
             self.semantic_prefilter_threshold * 0.5
         } else {
@@ -452,6 +464,20 @@ impl QueryPlanner {
         fused_results.sort_by(|a, b| {
             b.fused_score.partial_cmp(&a.fused_score).unwrap_or(std::cmp::Ordering::Equal)
         });
+
+        // Step 3.6: Patch semantic scores for accurate reporting
+        // The pre-fusion .retain() removed low-scoring entries from semantic_scores,
+        // so fusion reports 0.0 for memories found via BM25/entity. Restore the
+        // actual semantic scores from the pre-filter snapshot for diagnostics.
+        // This runs AFTER confidence scoring (Step 3.5) so it doesn't affect ranking —
+        // patched scores are for reporting/diagnostics only.
+        for result in &mut fused_results {
+            if result.semantic_score == 0.0 {
+                if let Some(&full_score) = semantic_scores_full.get(&result.id) {
+                    result.semantic_score = full_score;
+                }
+            }
+        }
 
         // Step 3.7: Speaker-aware reranking
         // When query asks about a specific person (e.g., "What did Melanie paint?"),
@@ -637,13 +663,19 @@ impl QueryPlanner {
         // Step 4: Multi-turn aggregation for list/collection queries
         let aggregator = crate::query::aggregator::MultiTurnAggregator::default();
         let query_type = aggregator.classify_query(query_text);
-        let final_results = aggregator.aggregate(
+        let mut final_results = aggregator.aggregate(
             query_type,
             query_text,
             fused_results,
             &self.storage,
             limit,
         )?;
+
+        // Step 5: Adaptive-K (Top-p nucleus selection)
+        if self.adaptive_k_threshold > 0.0 && self.adaptive_k_threshold < 1.0 && final_results.len() > 1 {
+            let new_len = adaptive_k_select(&final_results, self.adaptive_k_threshold, limit);
+            final_results.truncate(new_len);
+        }
 
         Ok((intent, final_results, matched_facts))
     }
@@ -991,8 +1023,22 @@ impl QueryPlanner {
             let score = if count <= 1 {
                 0.3
             } else {
-                // Half-life decay from actual timestamps
-                let age_micros = now_micros.saturating_sub(result.timestamp.as_micros());
+                // Use event_date from metadata when available, fall back to created_at.
+                // event_date gives the actual date the event occurred (extracted by LLM),
+                // while created_at is just when the memory was added to the DB.
+                // For batch-ingested DBs, all created_at values are nearly identical,
+                // making the temporal dimension useless without event_date.
+                let effective_micros = self
+                    .storage
+                    .get_memory(&result.id)
+                    .ok()
+                    .flatten()
+                    .and_then(|m| m.get_metadata("event_date").cloned())
+                    .and_then(|d| Timestamp::from_iso8601_date(&d))
+                    .map(|ts| ts.as_micros())
+                    .unwrap_or(result.timestamp.as_micros());
+
+                let age_micros = now_micros.saturating_sub(effective_micros);
                 let age_days = age_micros as f64 / MICROS_PER_DAY;
                 let half_life = 0.5_f64.powf(age_days / HALF_LIFE_DAYS);
 
@@ -1043,6 +1089,9 @@ impl QueryPlanner {
         {
             let graph = self.graph_manager.read().unwrap();
             let mut candidate_ids = Vec::new();
+            let mut relationship_candidates: std::collections::HashSet<MemoryId> =
+                std::collections::HashSet::new();
+
             for query_entity in &query_entities {
                 if let Ok(Some(entity)) = self.storage.find_entity_by_name(query_entity) {
                     found_via_graph = true;
@@ -1050,8 +1099,19 @@ impl QueryPlanner {
                     for memory_id in entity_result.memories {
                         candidate_ids.push(memory_id);
                     }
+
+                    // Relationship traversal: follow Entity→Entity edges
+                    let related = graph.get_related_entities(&entity.id);
+                    for (related_entity_id, _relation_type) in related {
+                        let related_memories = graph.get_entity_memories(&related_entity_id);
+                        for memory_id in related_memories.memories {
+                            relationship_candidates.insert(memory_id.clone());
+                            candidate_ids.push(memory_id);
+                        }
+                    }
                 }
             }
+
             drop(graph); // Release lock before storage lookups
 
             // Score each candidate using metadata overlap (same quality as original)
@@ -1073,9 +1133,13 @@ impl QueryPlanner {
                         }
                     }
 
-                    // Graph-confirmed entity presence: minimum score of 0.5
+                    // Floor score: 0.5 for direct graph-confirmed, 0.4 for relationship-traversed
                     if entity_score == 0.0 {
-                        entity_score = 0.5;
+                        entity_score = if relationship_candidates.contains(&memory_id) {
+                            0.4
+                        } else {
+                            0.5
+                        };
                     }
 
                     scores
@@ -1579,6 +1643,49 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     (dot_product / (magnitude_a * magnitude_b)).max(0.0).min(1.0)
 }
 
+/// Adaptive-K (Top-p nucleus selection) for dynamic result count.
+///
+/// Instead of always returning `limit` results, dynamically selects based on
+/// fused score distribution. Converts fused_scores to probabilities via softmax,
+/// then returns results until cumulative probability >= threshold.
+///
+/// This prevents low-quality padding from diluting the context window.
+/// Research basis: Calvin Ku's Adaptive-K fork of EmergenceMem Simple Fast.
+///
+/// Returns the number of results to keep (bounded by [limit/3, results.len()]).
+fn adaptive_k_select(results: &[FusedResult], threshold: f32, limit: usize) -> usize {
+    if results.len() <= 1 {
+        return results.len();
+    }
+
+    let min_k = (limit / 3).max(5).min(results.len());
+
+    // Softmax with score shifting for numerical stability
+    let max_score = results.iter()
+        .map(|r| r.fused_score)
+        .fold(f32::NEG_INFINITY, f32::max);
+
+    let exp_scores: Vec<f32> = results.iter()
+        .map(|r| (r.fused_score - max_score).exp())
+        .collect();
+
+    let sum_exp: f32 = exp_scores.iter().sum();
+
+    if sum_exp <= 0.0 {
+        return results.len();
+    }
+
+    let mut cumulative = 0.0f32;
+    for (i, &exp_s) in exp_scores.iter().enumerate() {
+        cumulative += exp_s / sum_exp;
+        if cumulative >= threshold {
+            return (i + 1).max(min_k);
+        }
+    }
+
+    results.len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1629,6 +1736,7 @@ mod tests {
             #[cfg(feature = "slm")]
             None, // slm_config (disabled for tests)
             false, // slm_query_classification_enabled (disabled for fast tests)
+            0.0,  // adaptive_k_threshold (disabled for tests)
         ).expect("Failed to create QueryPlanner");
 
         (planner, dir)
@@ -2989,5 +3097,82 @@ mod tests {
             planner.extract_query_entity("what does caroline like?"),
             Some("caroline".to_string())
         );
+    }
+
+    // --- Adaptive-K (Top-p) tests ---
+
+    fn make_fused_result(score: f32) -> FusedResult {
+        FusedResult {
+            id: crate::types::MemoryId::new(),
+            semantic_score: score,
+            bm25_score: 0.0,
+            temporal_score: 0.0,
+            causal_score: 0.0,
+            entity_score: 0.0,
+            fused_score: score,
+            confidence: 1.0,
+        }
+    }
+
+    #[test]
+    fn test_adaptive_k_concentrated_scores() {
+        // One dominant result + many weak ones → should select fewer
+        let mut results = vec![make_fused_result(5.0)];
+        for _ in 0..24 {
+            results.push(make_fused_result(0.1));
+        }
+        let k = adaptive_k_select(&results, 0.7, 25);
+        // The dominant result has almost all probability mass
+        // Should select close to min_k (8) since top-1 already exceeds 0.7
+        assert!(k <= 10, "Expected few results but got {}", k);
+        assert!(k >= 5, "Expected at least min_k=5 but got {}", k); // min_k floor
+    }
+
+    #[test]
+    fn test_adaptive_k_uniform_scores() {
+        // All equal scores → softmax is uniform → need many to reach 0.7
+        let results: Vec<FusedResult> = (0..25).map(|_| make_fused_result(1.0)).collect();
+        let k = adaptive_k_select(&results, 0.7, 25);
+        // Uniform: need 70% of 25 = 18 results to reach threshold
+        assert!(k >= 17, "Expected ~18 results for uniform but got {}", k);
+        assert!(k <= 20, "Expected ~18 results for uniform but got {}", k);
+    }
+
+    #[test]
+    fn test_adaptive_k_respects_min_k() {
+        // Even with extreme concentration, min_k is respected
+        let mut results = vec![make_fused_result(100.0)];
+        for _ in 0..24 {
+            results.push(make_fused_result(0.001));
+        }
+        let k = adaptive_k_select(&results, 0.7, 25);
+        // limit=25, min_k = max(25/3, 5) = max(8, 5) = 8
+        assert!(k >= 8, "Expected at least min_k=8 but got {}", k);
+    }
+
+    #[test]
+    fn test_adaptive_k_single_result() {
+        let results = vec![make_fused_result(1.0)];
+        let k = adaptive_k_select(&results, 0.7, 25);
+        assert_eq!(k, 1);
+    }
+
+    #[test]
+    fn test_adaptive_k_empty_results() {
+        let results: Vec<FusedResult> = vec![];
+        let k = adaptive_k_select(&results, 0.7, 25);
+        assert_eq!(k, 0);
+    }
+
+    #[test]
+    fn test_adaptive_k_gradual_dropoff() {
+        // Scores that drop off gradually: [1.0, 0.9, 0.8, ..., 0.1]
+        let results: Vec<FusedResult> = (0..10)
+            .map(|i| make_fused_result(1.0 - i as f32 * 0.1))
+            .collect();
+        let k = adaptive_k_select(&results, 0.7, 25);
+        // Gradual dropoff: top results have more probability but not extremely so
+        // Should keep most results since scores are close
+        assert!(k >= 5, "Expected reasonable k for gradual dropoff but got {}", k);
     }
 }

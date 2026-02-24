@@ -90,55 +90,33 @@ impl MultiTurnAggregator {
     }
 
     /// Check if query is an aggregation/list query
+    ///
+    /// Uses only structural/syntactic patterns — no domain-specific vocabulary.
+    /// Queries that don't match fall through to standard extraction handling
+    /// with full entity scoring, which is usually more appropriate.
     pub fn is_aggregation(query: &str) -> bool {
-        // Explicit list indicators
+        // 1. Explicit list requests (unambiguous)
         if query.contains("list all")
             || query.contains("show all")
             || query.contains("what are all")
             || query.contains("tell me all")
+            || query.contains("name all")
         {
             return true;
         }
 
-        // Plural/collection indicators
-        let collection_words = [
-            "activities", "things", "items", "books", "events", "topics", "subjects",
-            "fields", "areas", "hobbies", "interests", "ways", "types", "kinds",
-            "methods", "examples", "instances", "cases", "reasons", "factors",
-            "aspects", "elements", "components", "parts", "pieces", "forms",
-            "styles", "genres", "categories", "classes", "groups", "places",
-            "locations", "sites", "venues", "people", "persons", "individuals",
-            "artists", "authors", "musicians", "projects", "works", "pieces",
-            "paintings", "drawings", "sculptures", "crafts", "instruments",
-            "tools", "devices", "techniques", "strategies", "approaches",
-            "options", "choices", "alternatives", "opportunities", "experiences",
-        ];
-
-        for word in &collection_words {
-            if query.contains(word) {
-                return true;
-            }
-        }
-
-        // "What are..." pattern (plural verb)
-        if query.starts_with("what are") || query.contains("what are the") {
+        // 2. "What are the..." (definite article implies known collection)
+        if query.contains("what are the") {
             return true;
         }
 
-        // "What does X do" - often asks for multiple activities
-        if (query.contains(" do?") || query.contains(" does ") && query.contains(" do"))
-            && query.starts_with("what ")
-        {
-            return true;
-        }
-
-        // "What has/have X done/painted/read/..." - often expects multiple instances
-        if query.starts_with("what has") || query.starts_with("what have") {
-            return true;
-        }
-
-        // "In what ways..." - asks for multiple ways
+        // 3. "In what ways..." (explicitly asks for multiple)
         if query.starts_with("in what ways") {
+            return true;
+        }
+
+        // 4. "How many..." (counting implies collection context)
+        if query.starts_with("how many") {
             return true;
         }
 
@@ -317,17 +295,17 @@ mod tests {
     fn test_query_classification() {
         let aggregator = MultiTurnAggregator::default();
 
-        // Aggregation queries
-        assert_eq!(
-            aggregator.classify_query("What activities does Melanie do?"),
-            QueryType::Aggregation
-        );
+        // Aggregation queries (structural patterns only)
         assert_eq!(
             aggregator.classify_query("What are the books on my shelf?"),
             QueryType::Aggregation
         );
         assert_eq!(
             aggregator.classify_query("List all the topics we discussed"),
+            QueryType::Aggregation
+        );
+        assert_eq!(
+            aggregator.classify_query("How many pets does she have?"),
             QueryType::Aggregation
         );
 
@@ -341,13 +319,21 @@ mod tests {
             QueryType::Hypothetical
         );
 
-        // Extraction queries
+        // Extraction queries (domain-specific words no longer trigger aggregation)
         assert_eq!(
             aggregator.classify_query("When did we meet?"),
             QueryType::Extraction
         );
         assert_eq!(
             aggregator.classify_query("Where is the meeting?"),
+            QueryType::Extraction
+        );
+        assert_eq!(
+            aggregator.classify_query("What activities does Melanie do?"),
+            QueryType::Extraction
+        );
+        assert_eq!(
+            aggregator.classify_query("What does Caroline do to destress?"),
             QueryType::Extraction
         );
     }
@@ -398,11 +384,29 @@ mod tests {
 
     #[test]
     fn test_is_aggregation() {
-        assert!(MultiTurnAggregator::is_aggregation("what activities does x do?"));
+        // Structural patterns that DO trigger aggregation
         assert!(MultiTurnAggregator::is_aggregation("what are the books?"));
         assert!(MultiTurnAggregator::is_aggregation("list all topics"));
+        assert!(MultiTurnAggregator::is_aggregation("show all entries"));
+        assert!(MultiTurnAggregator::is_aggregation("name all the members"));
+        assert!(MultiTurnAggregator::is_aggregation("how many times did she visit?"));
+        assert!(MultiTurnAggregator::is_aggregation("in what ways does he help?"));
+
+        // Non-aggregation queries
         assert!(!MultiTurnAggregator::is_aggregation("when did this happen?"));
         assert!(!MultiTurnAggregator::is_aggregation("where is it?"));
+        assert!(!MultiTurnAggregator::is_aggregation("what does caroline do to destress?"));
+        assert!(!MultiTurnAggregator::is_aggregation("what has she been reading?"));
+    }
+
+    #[test]
+    fn test_is_aggregation_no_domain_words() {
+        // Domain-specific vocabulary should NOT trigger aggregation on its own
+        assert!(!MultiTurnAggregator::is_aggregation("what activities does melanie do?"));
+        assert!(!MultiTurnAggregator::is_aggregation("does she have any hobbies?"));
+        assert!(!MultiTurnAggregator::is_aggregation("what instruments does he play?"));
+        assert!(!MultiTurnAggregator::is_aggregation("tell me about her paintings"));
+        assert!(!MultiTurnAggregator::is_aggregation("what books has she read?"));
     }
 
     #[test]

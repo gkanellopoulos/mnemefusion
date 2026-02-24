@@ -322,6 +322,28 @@ impl GraphManager {
         self.entity_graph.get_memory_entities(memory_id)
     }
 
+    /// Link two entities with a relationship (entity-to-entity edge).
+    ///
+    /// Creates a directed edge from entity_a → entity_b.
+    /// For bidirectional lookup, the EntityGraph.get_related_entities()
+    /// traverses both outgoing and incoming edges.
+    pub fn link_entity_to_entity(
+        &mut self,
+        from_entity_id: &EntityId,
+        to_entity_id: &EntityId,
+        relation_type: &str,
+    ) {
+        self.entity_graph
+            .link_entity_to_entity(from_entity_id, to_entity_id, relation_type);
+    }
+
+    /// Get entities related to a given entity via entity-to-entity edges.
+    ///
+    /// Returns (EntityId, relationship_type) tuples for 1-hop traversal.
+    pub fn get_related_entities(&self, entity_id: &EntityId) -> Vec<(EntityId, String)> {
+        self.entity_graph.get_related_entities(entity_id)
+    }
+
     /// Remove a memory from the entity graph (called when memory is deleted)
     pub fn remove_memory_from_entity_graph(&mut self, memory_id: &MemoryId) {
         self.entity_graph.remove_memory(memory_id);

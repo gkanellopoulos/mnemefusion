@@ -243,6 +243,9 @@ impl PyMemory {
             if let Some(passes) = cfg.get_item("extraction_passes")? {
                 rust_config.extraction_passes = passes.extract::<usize>()?.clamp(1, 10);
             }
+            if let Some(ak) = cfg.get_item("adaptive_k_threshold")? {
+                rust_config.adaptive_k_threshold = ak.extract::<f32>()?.clamp(0.0, 1.0);
+            }
 
             // SLM configuration (only available with 'slm' feature)
             #[cfg(feature = "slm")]
@@ -758,17 +761,19 @@ impl PyMemory {
     ///     namespace: Optional namespace filter. Only returns memories from this namespace
     ///
     /// Returns:
-    ///     Tuple of (intent_dict, results_list)
+    ///     Tuple of (intent_dict, results_list, profile_context)
     ///     - intent_dict: {"intent": str, "confidence": float}
-    ///     - results_list: List of (memory_dict, scores_dict) tuples
+    ///     - results_list: List of (memory_dict, scores_dict) tuples (real memories only)
+    ///     - profile_context: List of profile context strings (summaries or formatted facts)
     ///
     /// Example:
-    ///     >>> intent, results = memory.query("Why was the meeting cancelled?", embedding, 10)
-    ///     >>> intent, results = memory.query("Why?", embedding, 10, namespace="user_123")
+    ///     >>> intent, results, profile_ctx = memory.query("Why was the meeting cancelled?", embedding, 10)
+    ///     >>> intent, results, profile_ctx = memory.query("Why?", embedding, 10, namespace="user_123")
     ///     >>> # With filters
     ///     >>> filters = [{"field": "priority", "op": "eq", "value": "high"}]
-    ///     >>> intent, results = memory.query("meetings", embedding, 10, filters=filters)
+    ///     >>> intent, results, profile_ctx = memory.query("meetings", embedding, 10, filters=filters)
     ///     >>> print(f"Intent: {intent['intent']} (confidence: {intent['confidence']:.2f})")
+    ///     >>> print(f"Profile context: {len(profile_ctx)} entries")
     ///     >>> for mem, scores in results:
     ///     >>>     print(f"Fused score: {scores['fused_score']:.3f}")
     ///     >>>     print(f"  Content: {mem['content']}")
@@ -786,7 +791,7 @@ impl PyMemory {
         // Parse filters
         let parsed_filters = parse_filters_from_list(filters)?;
 
-        let (intent, results) = engine
+        let (intent, results, profile_context) = engine
             .query(
                 query_text,
                 &query_embedding,
@@ -802,7 +807,7 @@ impl PyMemory {
             intent_dict.set_item("intent", format!("{:?}", intent.intent))?;
             intent_dict.set_item("confidence", intent.confidence)?;
 
-            // Build results list
+            // Build results list (real memories only, no profile facts mixed in)
             let results_list: PyResult<Vec<PyObject>> = results
                 .into_iter()
                 .map(|(memory, fused_result)| {
@@ -835,7 +840,10 @@ impl PyMemory {
                 })
                 .collect();
 
-            let tuple = (intent_dict, results_list?);
+            // Profile context as separate list of strings
+            let profile_ctx_list: Vec<String> = profile_context;
+
+            let tuple = (intent_dict, results_list?, profile_ctx_list);
             Ok(tuple.into_py(py))
         })
     }
@@ -1246,6 +1254,91 @@ impl PyMemory {
         Ok(true)
     }
 
+    /// Run entity extraction on text without adding to the database.
+    ///
+    /// Useful for testing extraction quality or comparing model outputs.
+    /// Requires enable_llm_entity_extraction() to have been called first.
+    ///
+    /// Args:
+    ///     content: The text to extract entities from
+    ///     speaker: Optional speaker name for first-person attribution
+    ///
+    /// Returns:
+    ///     Dict with keys: entities, entity_facts, topics, importance, records, relationships
+    ///
+    /// Example:
+    ///     >>> result = memory.extract_text("Alice works at Google", speaker="Alice")
+    ///     >>> print(result["entity_facts"])
+    #[cfg(feature = "entity-extraction")]
+    #[pyo3(signature = (content, speaker=None))]
+    fn extract_text(&self, py: Python, content: &str, speaker: Option<&str>) -> PyResult<PyObject> {
+        let engine = self.get_engine()?;
+        let result = engine
+            .extract_text(content, speaker)
+            .map_err(|e| PyRuntimeError::new_err(format!("Extraction failed: {}", e)))?;
+
+        // Convert ExtractionResult to Python dict
+        let dict = PyDict::new(py);
+
+        // Entities
+        let ent_list = PyList::empty(py);
+        for e in &result.entities {
+            let d = PyDict::new(py);
+            d.set_item("name", &e.name)?;
+            d.set_item("type", &e.entity_type)?;
+            ent_list.append(d)?;
+        }
+        dict.set_item("entities", ent_list)?;
+
+        // Entity facts
+        let fact_list = PyList::empty(py);
+        for f in &result.entity_facts {
+            let d = PyDict::new(py);
+            d.set_item("entity", &f.entity)?;
+            d.set_item("fact_type", &f.fact_type)?;
+            d.set_item("value", &f.value)?;
+            d.set_item("confidence", f.confidence)?;
+            fact_list.append(d)?;
+        }
+        dict.set_item("entity_facts", fact_list)?;
+
+        // Topics
+        let topic_list = PyList::new(py, &result.topics);
+        dict.set_item("topics", topic_list)?;
+
+        // Importance
+        dict.set_item("importance", result.importance)?;
+
+        // Records
+        let rec_list = PyList::empty(py);
+        for r in &result.records {
+            let d = PyDict::new(py);
+            d.set_item("record_type", &r.record_type)?;
+            d.set_item("summary", &r.summary)?;
+            if let Some(ref date) = r.event_date {
+                d.set_item("event_date", date)?;
+            }
+            let ents = PyList::new(py, &r.entities);
+            d.set_item("entities", ents)?;
+            rec_list.append(d)?;
+        }
+        dict.set_item("records", rec_list)?;
+
+        // Relationships
+        let rel_list = PyList::empty(py);
+        for r in &result.relationships {
+            let d = PyDict::new(py);
+            d.set_item("from_entity", &r.from_entity)?;
+            d.set_item("to_entity", &r.to_entity)?;
+            d.set_item("relation_type", &r.relation_type)?;
+            d.set_item("confidence", r.confidence)?;
+            rel_list.append(d)?;
+        }
+        dict.set_item("relationships", rel_list)?;
+
+        Ok(dict.into())
+    }
+
     /// Set an embedding function for computing fact embeddings at ingestion time
     ///
     /// The embedding function is called for each entity fact extracted during ingestion.
@@ -1308,6 +1401,202 @@ impl PyMemory {
         engine
             .consolidate_profiles()
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to consolidate: {}", e)))
+    }
+
+    /// Apply an externally-produced extraction result to a memory's entity profiles.
+    ///
+    /// Enables API-based extraction backends (e.g., NScale cloud inference) to inject
+    /// entity profiles without requiring a local LLM. The extraction dict must match
+    /// the same JSON schema as the local Qwen3 extractor.
+    ///
+    /// Args:
+    ///     memory_id: The memory ID (string) to associate the extraction with
+    ///     extraction: Dict with keys: entities, entity_facts, topics, importance
+    ///
+    /// Example:
+    ///     >>> extraction = {
+    ///     ...     "entities": [{"name": "Alice", "type": "person"}],
+    ///     ...     "entity_facts": [{"entity": "Alice", "fact_type": "hobby", "value": "hiking", "confidence": 0.9}],
+    ///     ...     "topics": ["outdoors"],
+    ///     ...     "importance": 0.8,
+    ///     ... }
+    ///     >>> memory.apply_extraction("mem-abc123", extraction)
+    #[cfg(feature = "entity-extraction")]
+    fn apply_extraction(&self, memory_id: &str, extraction: &PyDict) -> PyResult<()> {
+        use mnemefusion_core::extraction::{
+            ExtractedEntity, ExtractedFact, ExtractedRelationship, ExtractionResult, TypedRecord,
+        };
+
+        let engine = self.get_engine()?;
+        let mid = MemoryId::parse(memory_id)
+            .map_err(|e| PyValueError::new_err(format!("Invalid memory ID: {}", e)))?;
+
+        // Parse entities
+        let entities: Vec<ExtractedEntity> = if let Some(ents) = extraction.get_item("entities")? {
+            let ent_list: &PyList = ents.downcast().map_err(|_| {
+                PyValueError::new_err("'entities' must be a list")
+            })?;
+            let mut result = Vec::new();
+            for item in ent_list.iter() {
+                let d: &PyDict = item.downcast().map_err(|_| {
+                    PyValueError::new_err("Each entity must be a dict")
+                })?;
+                let name: String = d
+                    .get_item("name")?
+                    .ok_or_else(|| PyValueError::new_err("Entity missing 'name'"))?
+                    .extract()?;
+                let entity_type: String = d
+                    .get_item("type")?
+                    .ok_or_else(|| PyValueError::new_err("Entity missing 'type'"))?
+                    .extract()?;
+                result.push(ExtractedEntity { name, entity_type });
+            }
+            result
+        } else {
+            Vec::new()
+        };
+
+        // Parse entity_facts
+        let entity_facts: Vec<ExtractedFact> =
+            if let Some(facts) = extraction.get_item("entity_facts")? {
+                let fact_list: &PyList = facts.downcast().map_err(|_| {
+                    PyValueError::new_err("'entity_facts' must be a list")
+                })?;
+                let mut result = Vec::new();
+                for item in fact_list.iter() {
+                    let d: &PyDict = item.downcast().map_err(|_| {
+                        PyValueError::new_err("Each entity_fact must be a dict")
+                    })?;
+                    let entity: String = d
+                        .get_item("entity")?
+                        .ok_or_else(|| PyValueError::new_err("Fact missing 'entity'"))?
+                        .extract()?;
+                    let fact_type: String = d
+                        .get_item("fact_type")?
+                        .ok_or_else(|| PyValueError::new_err("Fact missing 'fact_type'"))?
+                        .extract()?;
+                    let value: String = d
+                        .get_item("value")?
+                        .ok_or_else(|| PyValueError::new_err("Fact missing 'value'"))?
+                        .extract()?;
+                    let confidence: f32 = d
+                        .get_item("confidence")?
+                        .map(|v| v.extract().unwrap_or(0.9))
+                        .unwrap_or(0.9);
+                    result.push(ExtractedFact {
+                        entity,
+                        fact_type,
+                        value,
+                        confidence,
+                    });
+                }
+                result
+            } else {
+                Vec::new()
+            };
+
+        // Parse topics
+        let topics: Vec<String> = if let Some(t) = extraction.get_item("topics")? {
+            t.extract().unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        // Parse importance
+        let importance: f32 = if let Some(imp) = extraction.get_item("importance")? {
+            imp.extract().unwrap_or(0.5)
+        } else {
+            0.5
+        };
+
+        // Parse records (typed sub-records)
+        let records: Vec<TypedRecord> = if let Some(recs) = extraction.get_item("records")? {
+            let rec_list: &PyList = recs.downcast().map_err(|_| {
+                PyValueError::new_err("'records' must be a list")
+            })?;
+            let mut result = Vec::new();
+            for item in rec_list.iter() {
+                let d: &PyDict = item.downcast().map_err(|_| {
+                    PyValueError::new_err("Each record must be a dict")
+                })?;
+                let record_type: String = d
+                    .get_item("record_type")?
+                    .ok_or_else(|| PyValueError::new_err("Record missing 'record_type'"))?
+                    .extract()?;
+                let summary: String = d
+                    .get_item("summary")?
+                    .ok_or_else(|| PyValueError::new_err("Record missing 'summary'"))?
+                    .extract()?;
+                let event_date: Option<String> = d
+                    .get_item("event_date")?
+                    .and_then(|v| v.extract().ok());
+                let record_entities: Vec<String> = d
+                    .get_item("entities")?
+                    .map(|v| v.extract().unwrap_or_default())
+                    .unwrap_or_default();
+                result.push(TypedRecord {
+                    record_type,
+                    summary,
+                    event_date,
+                    entities: record_entities,
+                });
+            }
+            result
+        } else {
+            Vec::new()
+        };
+
+        // Parse relationships
+        let relationships: Vec<ExtractedRelationship> =
+            if let Some(rels) = extraction.get_item("relationships")? {
+                let rel_list: &PyList = rels.downcast().map_err(|_| {
+                    PyValueError::new_err("'relationships' must be a list")
+                })?;
+                let mut result = Vec::new();
+                for item in rel_list.iter() {
+                    let d: &PyDict = item.downcast().map_err(|_| {
+                        PyValueError::new_err("Each relationship must be a dict")
+                    })?;
+                    let from_entity: String = d
+                        .get_item("from_entity")?
+                        .ok_or_else(|| PyValueError::new_err("Relationship missing 'from_entity'"))?
+                        .extract()?;
+                    let to_entity: String = d
+                        .get_item("to_entity")?
+                        .ok_or_else(|| PyValueError::new_err("Relationship missing 'to_entity'"))?
+                        .extract()?;
+                    let relation_type: String = d
+                        .get_item("relation_type")?
+                        .ok_or_else(|| PyValueError::new_err("Relationship missing 'relation_type'"))?
+                        .extract()?;
+                    let confidence: f32 = d
+                        .get_item("confidence")?
+                        .map(|v| v.extract().unwrap_or(0.9))
+                        .unwrap_or(0.9);
+                    result.push(ExtractedRelationship {
+                        from_entity,
+                        to_entity,
+                        relation_type,
+                        confidence,
+                    });
+                }
+                result
+            } else {
+                Vec::new()
+            };
+
+        let extraction_result = ExtractionResult {
+            entities,
+            entity_facts,
+            topics,
+            importance,
+            records,
+            relationships,
+        };
+
+        engine
+            .apply_extraction(&mid, &extraction_result)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to apply extraction: {}", e)))
     }
 
     /// Generate summaries for all entity profiles.

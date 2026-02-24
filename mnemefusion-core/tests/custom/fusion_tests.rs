@@ -49,7 +49,7 @@ fn test_fusion_improvement_001_temporal_ranking() {
 
     // Query with temporal intent
     let query_emb = generate_test_embedding("recent project meetings", 384);
-    let (_intent, results) = ctx
+    let (_intent, results, _profile_ctx) = ctx
         .engine
         .query(
             "What happened in recent project meetings?",
@@ -111,7 +111,7 @@ fn test_fusion_improvement_002_causal_ranking() {
 
     // Causal query
     let query_emb = generate_test_embedding("database timeout why", 384);
-    let (intent, results) = ctx
+    let (intent, results, _profile_ctx) = ctx
         .engine
         .query(
             "Why did database timeouts happen?",
@@ -162,7 +162,7 @@ fn test_fusion_improvement_003_entity_filtering() {
 
     // Entity query
     let query_emb = generate_test_embedding("code review completed", 384);
-    let (_intent, results) = ctx
+    let (_intent, results, _profile_ctx) = ctx
         .engine
         .query("Show me Alice's code reviews", &query_emb, 10, None, None)
         .unwrap();
@@ -202,7 +202,7 @@ fn test_fusion_improvement_004_multi_dimensional_boost() {
 
     // Query matching multiple dimensions
     let query_emb = generate_test_embedding("Alice bug fix critical", 384);
-    let (_intent, results) = ctx
+    let (_intent, results, _profile_ctx) = ctx
         .engine
         .query(
             "What did Alice do recently about the critical bug?",
@@ -248,7 +248,7 @@ fn test_fusion_improvement_005_intent_adaptation() {
 
     // Temporal query should rank recent higher
     let query_emb = generate_test_embedding("generic content", 384);
-    let (_intent, results) = ctx
+    let (_intent, results, _profile_ctx) = ctx
         .engine
         .query("Show me recent generic content", &query_emb, 10, None, None)
         .unwrap();
@@ -284,7 +284,7 @@ fn test_fusion_weights_001_temporal_query() {
 
     // Temporal query
     let query_emb = generate_test_embedding("test memory", 384);
-    let (intent, _results) = ctx
+    let (intent, _results, _profile_ctx) = ctx
         .engine
         .query("What happened yesterday?", &query_emb, 10, None, None)
         .unwrap();
@@ -314,7 +314,7 @@ fn test_fusion_weights_002_causal_query() {
 
     // Causal query
     let query_emb = generate_test_embedding("something happened", 384);
-    let (intent, _results) = ctx
+    let (intent, _results, _profile_ctx) = ctx
         .engine
         .query("Why did this happen?", &query_emb, 10, None, None)
         .unwrap();
@@ -341,7 +341,7 @@ fn test_fusion_weights_003_entity_query() {
 
     // Entity query
     let query_emb = generate_test_embedding("Alice work", 384);
-    let (intent, _results) = ctx
+    let (intent, _results, _profile_ctx) = ctx
         .engine
         .query("Tell me about Alice's work", &query_emb, 10, None, None)
         .unwrap();
@@ -364,7 +364,7 @@ fn test_fusion_weights_004_factual_default() {
 
     // Factual query (no special keywords)
     let query_emb = generate_test_embedding("machine learning AI", 384);
-    let (intent, results) = ctx
+    let (intent, results, _profile_ctx) = ctx
         .engine
         .query(
             "machine learning and artificial intelligence",
@@ -397,7 +397,7 @@ fn test_fusion_weights_005_mixed_intent_prioritization() {
 
     // Mixed query: temporal + entity + causal
     let query_emb = generate_test_embedding("Alice project yesterday why", 384);
-    let (intent, results) = ctx
+    let (intent, results, _profile_ctx) = ctx
         .engine
         .query(
             "Why did Alice work on the project yesterday?",

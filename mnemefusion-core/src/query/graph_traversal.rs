@@ -229,13 +229,13 @@ impl GraphTraversal {
             if !seed_entities.is_empty() {
                 let mut expansions_added = 0;
 
-                for entity_id in seed_entities {
+                for entity_id in &seed_entities {
                     if expansions_added >= self.config.max_expansions_per_seed {
                         break;
                     }
 
                     // Query entity graph for other memories mentioning this entity
-                    let entity_results = graph.get_entity_memories(&entity_id);
+                    let entity_results = graph.get_entity_memories(entity_id);
 
                     for memory_id in entity_results.memories {
                         if &memory_id == seed_id || expanded.contains_key(&memory_id) {
@@ -251,6 +251,33 @@ impl GraphTraversal {
 
                         if expansions_added >= self.config.max_expansions_per_seed {
                             break;
+                        }
+                    }
+                }
+
+                // Also traverse Entity→Entity relationships for multi-hop expansion
+                for entity_id in &seed_entities {
+                    if expansions_added >= self.config.max_expansions_per_seed {
+                        break;
+                    }
+                    let related = graph.get_related_entities(entity_id);
+                    for (related_id, _relation_type) in related {
+                        if expansions_added >= self.config.max_expansions_per_seed {
+                            break;
+                        }
+                        let related_memories = graph.get_entity_memories(&related_id);
+                        for memory_id in related_memories.memories {
+                            if &memory_id == seed_id || expanded.contains_key(&memory_id) {
+                                continue;
+                            }
+                            // 2-hop decay: seed → entity → related_entity → memory
+                            let expansion_score =
+                                seed_score * self.config.decay_factor.powi(2);
+                            expanded.insert(memory_id.clone(), expansion_score);
+                            expansions_added += 1;
+                            if expansions_added >= self.config.max_expansions_per_seed {
+                                break;
+                            }
                         }
                     }
                 }

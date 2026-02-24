@@ -704,6 +704,35 @@ impl StorageEngine {
         }
     }
 
+    /// Store entity-to-entity relationship graph data
+    pub fn store_relationship_graph(&self, data: &[u8]) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(METADATA_TABLE)?;
+            table.insert("relationship_graph", data)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Load entity-to-entity relationship graph data
+    pub fn load_relationship_graph(&self) -> Result<Option<Vec<u8>>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(METADATA_TABLE)?;
+
+        match table.get("relationship_graph")? {
+            Some(data) => Ok(Some(data.value().to_vec())),
+            None => Ok(None),
+        }
+    }
+
+    /// Check if the relationship graph key exists in storage
+    pub fn has_relationship_graph(&self) -> Result<bool> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(METADATA_TABLE)?;
+        Ok(table.get("relationship_graph")?.is_some())
+    }
+
     // Content hash operations for deduplication
 
     /// Store content hash → memory ID mapping

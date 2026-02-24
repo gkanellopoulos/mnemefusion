@@ -410,7 +410,7 @@ proptest! {
             ).unwrap();
         }
 
-        let (_intent, results) = engine.query(
+        let (_intent, results, _profile_ctx) = engine.query(
             "test query",
             &query_emb,
             10,
@@ -471,7 +471,7 @@ proptest! {
             ).unwrap();
         }
 
-        let (_intent, results) = engine.query(
+        let (_intent, results, _profile_ctx) = engine.query(
             "test query",
             &query_emb,
             5,

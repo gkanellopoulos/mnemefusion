@@ -26,6 +26,10 @@ mod output;
 mod prompt;
 
 #[cfg(feature = "entity-extraction")]
-pub use extractor::{LlmEntityExtractor, ModelTier};
+pub use extractor::{ExtractionPerspective, LlmEntityExtractor, ModelTier};
 #[cfg(feature = "entity-extraction")]
-pub use output::{ExtractedEntity, ExtractedFact, ExtractionResult};
+pub use output::{
+    ExtractedEntity, ExtractedFact, ExtractedRelationship, ExtractionResult, TypedRecord,
+};
+#[cfg(feature = "entity-extraction")]
+pub use prompt::{apply_chat_template, ModelFamily};

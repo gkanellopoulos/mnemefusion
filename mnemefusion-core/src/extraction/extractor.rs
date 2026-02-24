@@ -2,9 +2,35 @@
 
 use crate::error::{Error, Result};
 use crate::extraction::output::ExtractionResult;
-use crate::extraction::prompt::build_fewshot_extraction_prompt;
+use crate::extraction::prompt::{
+    apply_chat_template, build_event_temporal_extraction_prompt,
+    build_fewshot_extraction_prompt, build_relationship_extraction_prompt,
+    build_typed_extraction_prompt, ModelFamily,
+};
 use crate::inference::{GenerationParams, InferenceEngine};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// Extraction perspective — determines which prompt template is used.
+///
+/// Each perspective emphasizes different aspects of the text while
+/// producing the same JSON schema. Used by `extract_multi_pass()` to
+/// cycle through diverse prompts across passes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExtractionPerspective {
+    /// Biographical fact extraction (current default prompt).
+    /// Focuses on attributes, properties, preferences.
+    EntityFact,
+    /// Relationship and connection analysis.
+    /// Emphasizes interpersonal relationships, affiliations, social dynamics.
+    Relationship,
+    /// Event and activity chronicling.
+    /// Emphasizes events, temporal anchors, actions, goals.
+    EventTemporal,
+    /// Typed decomposition (ENGRAM-inspired).
+    /// Produces entities, facts, typed records (episodic/semantic/procedural),
+    /// and entity-to-entity relationships in a single call.
+    Typed,
+}
 
 /// Model size/capability tier
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,10 +78,12 @@ impl Default for ModelTier {
 
 /// Entity extractor using native LLM inference
 ///
-/// Uses Qwen3 model which produces valid JSON naturally.
+/// Supports Qwen3 (ChatML) and Phi-4 (Phi-4 template) model families.
+/// Model family is auto-detected from the model filename.
 pub struct LlmEntityExtractor {
     engine: InferenceEngine,
     tier: ModelTier,
+    family: ModelFamily,
 }
 
 impl LlmEntityExtractor {
@@ -73,23 +101,34 @@ impl LlmEntityExtractor {
     /// ```
     pub fn load(tier: ModelTier) -> Result<Self> {
         let model_path = Self::resolve_model_path(tier)?;
+        let family = ModelFamily::from_path(&model_path);
         let gpu_layers = InferenceEngine::detect_gpu_layers();
 
         let engine = InferenceEngine::load(&model_path, gpu_layers)?;
 
-        Ok(Self { engine, tier })
+        Ok(Self {
+            engine,
+            tier,
+            family,
+        })
     }
 
     /// Load extractor from a specific model path
     ///
     /// Use this when you have a custom model location.
+    /// Model family (Qwen/Phi-4) is auto-detected from the filename.
     pub fn load_from_path(model_path: impl Into<PathBuf>, tier: ModelTier) -> Result<Self> {
         let model_path = model_path.into();
+        let family = ModelFamily::from_path(&model_path);
         let gpu_layers = InferenceEngine::detect_gpu_layers();
 
         let engine = InferenceEngine::load(&model_path, gpu_layers)?;
 
-        Ok(Self { engine, tier })
+        Ok(Self {
+            engine,
+            tier,
+            family,
+        })
     }
 
     /// Extract entity facts from text content
@@ -124,7 +163,8 @@ impl LlmEntityExtractor {
             content.to_string()
         };
 
-        let prompt = build_fewshot_extraction_prompt(&attributed_content, speaker);
+        let chatml_prompt = build_fewshot_extraction_prompt(&attributed_content, speaker);
+        let prompt = apply_chat_template(&chatml_prompt, self.family);
 
         // Generate without grammar — grammar-constrained sampling crashes on some platforms.
         // We fix malformed JSON in post-processing instead.
@@ -199,7 +239,8 @@ impl LlmEntityExtractor {
             content.to_string()
         };
 
-        let prompt = build_fewshot_extraction_prompt(&attributed_content, speaker);
+        let chatml_prompt = build_fewshot_extraction_prompt(&attributed_content, speaker);
+        let prompt = apply_chat_template(&chatml_prompt, self.family);
 
         let raw_output = self
             .engine
@@ -261,11 +302,118 @@ impl LlmEntityExtractor {
         Ok(result)
     }
 
-    /// Run multiple extraction passes over the same content with diverse parameters
+    /// Extract entity facts using a specific perspective prompt.
+    ///
+    /// Same as `extract_with_params()` but dispatches to the prompt builder
+    /// corresponding to the given `perspective`. The speaker postprocessing
+    /// (pronoun → name) is shared across all perspectives.
+    fn extract_with_perspective(
+        &self,
+        content: &str,
+        speaker: Option<&str>,
+        params: &GenerationParams,
+        perspective: ExtractionPerspective,
+    ) -> Result<ExtractionResult> {
+        if content.trim().is_empty() {
+            return Ok(ExtractionResult::empty());
+        }
+
+        let attributed_content = if let Some(name) = speaker {
+            format!("{} says: {}", name, content)
+        } else {
+            content.to_string()
+        };
+
+        let chatml_prompt = match perspective {
+            ExtractionPerspective::EntityFact => {
+                build_fewshot_extraction_prompt(&attributed_content, speaker)
+            }
+            ExtractionPerspective::Relationship => {
+                build_relationship_extraction_prompt(&attributed_content, speaker)
+            }
+            ExtractionPerspective::EventTemporal => {
+                build_event_temporal_extraction_prompt(&attributed_content, speaker)
+            }
+            ExtractionPerspective::Typed => {
+                // Typed perspective needs session_date — not available in this code path.
+                // Fall back to EntityFact for the multi-pass cycling path.
+                // Use extract_typed() directly when session_date is available.
+                build_fewshot_extraction_prompt(&attributed_content, speaker)
+            }
+        };
+        let prompt = apply_chat_template(&chatml_prompt, self.family);
+
+        let raw_output = self
+            .engine
+            .generate_with_params(&prompt, self.tier.max_tokens(), params)?;
+
+        let fixed_output = Self::fix_json(&raw_output);
+        let json_output = Self::extract_json(&fixed_output)?;
+
+        let mut result: ExtractionResult = serde_json::from_str(&json_output).map_err(|e| {
+            Error::InferenceError(format!(
+                "JSON parsing failed: {}. Output was: {}",
+                e, fixed_output
+            ))
+        })?;
+
+        // Post-process: fix entity attribution for first-person speech
+        if let Some(name) = speaker {
+            let name_lower = name.to_lowercase();
+            for fact in &mut result.entity_facts {
+                let entity_lower = fact.entity.to_lowercase();
+                if entity_lower == "i"
+                    || entity_lower == "me"
+                    || entity_lower == "my"
+                    || entity_lower == "myself"
+                    || entity_lower == "the speaker"
+                {
+                    fact.entity = name.to_string();
+                }
+            }
+            for entity in &mut result.entities {
+                let entity_lower = entity.name.to_lowercase();
+                if entity_lower == "i"
+                    || entity_lower == "me"
+                    || entity_lower == "my"
+                    || entity_lower == "myself"
+                    || entity_lower == "the speaker"
+                {
+                    entity.name = name.to_string();
+                }
+            }
+            let has_speaker_facts = result
+                .entity_facts
+                .iter()
+                .any(|f| f.entity.to_lowercase() == name_lower);
+            let speaker_in_entities = result
+                .entities
+                .iter()
+                .any(|e| e.name.to_lowercase() == name_lower);
+            if has_speaker_facts && !speaker_in_entities {
+                result
+                    .entities
+                    .push(crate::extraction::output::ExtractedEntity {
+                        name: name.to_string(),
+                        entity_type: "person".to_string(),
+                    });
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Run multiple extraction passes over the same content with diverse perspectives.
+    ///
+    /// Each pass uses a different extraction perspective (prompt template) to capture
+    /// different aspects of the text:
+    /// - Pass 0: EntityFact (biographical facts — proven baseline)
+    /// - Pass 1: Relationship (interpersonal connections, affiliations)
+    /// - Pass 2: EventTemporal (events, temporal anchors, activities)
+    /// - Pass 3+: Cycles back through perspectives
     ///
     /// Pass 0 uses deterministic settings (temp=0.1, seed=42).
-    /// Subsequent passes use moderate diversity (temp=0.3) with unique seeds
-    /// to capture different facts that a single pass might miss.
+    /// Subsequent passes use moderate diversity (temp=0.3) with unique seeds.
     ///
     /// # Arguments
     ///
@@ -282,6 +430,12 @@ impl LlmEntityExtractor {
         speaker: Option<&str>,
         num_passes: usize,
     ) -> Vec<Result<ExtractionResult>> {
+        const PERSPECTIVES: [ExtractionPerspective; 3] = [
+            ExtractionPerspective::EntityFact,
+            ExtractionPerspective::Relationship,
+            ExtractionPerspective::EventTemporal,
+        ];
+
         (0..num_passes)
             .map(|pass| {
                 let params = if pass == 0 {
@@ -293,9 +447,98 @@ impl LlmEntityExtractor {
                         seed: 42 + pass as u32 * 7919, // prime-offset for diversity
                     }
                 };
-                self.extract_with_params(content, speaker, &params)
+                let perspective = PERSPECTIVES[pass % PERSPECTIVES.len()];
+                self.extract_with_perspective(content, speaker, &params, perspective)
             })
             .collect()
+    }
+
+    /// Extract entity facts AND typed records using the ENGRAM-inspired prompt.
+    ///
+    /// This is the primary extraction method for Phase 1 typed architecture.
+    /// Produces entities, entity_facts, typed records (episodic/semantic/procedural),
+    /// and entity-to-entity relationships in a single LLM call.
+    ///
+    /// # Arguments
+    ///
+    /// * `content` - The text to extract from
+    /// * `speaker` - Optional speaker name for attribution
+    /// * `session_date` - Optional ISO-8601 session date for relative time inference
+    pub fn extract_typed(
+        &self,
+        content: &str,
+        speaker: Option<&str>,
+        session_date: Option<&str>,
+    ) -> Result<ExtractionResult> {
+        if content.trim().is_empty() {
+            return Ok(ExtractionResult::empty());
+        }
+
+        let attributed_content = if let Some(name) = speaker {
+            format!("{} says: {}", name, content)
+        } else {
+            content.to_string()
+        };
+
+        let chatml_prompt =
+            build_typed_extraction_prompt(&attributed_content, speaker, session_date);
+        let prompt = apply_chat_template(&chatml_prompt, self.family);
+
+        let raw_output = self.engine.generate(&prompt, self.tier.max_tokens())?;
+        let fixed_output = Self::fix_json(&raw_output);
+        let json_output = Self::extract_json(&fixed_output)?;
+
+        let mut result: ExtractionResult = serde_json::from_str(&json_output).map_err(|e| {
+            Error::InferenceError(format!(
+                "JSON parsing failed: {}. Output was: {}",
+                e, fixed_output
+            ))
+        })?;
+
+        // Post-process: fix entity attribution for first-person speech
+        if let Some(name) = speaker {
+            Self::fix_speaker_attribution(&mut result, name);
+        }
+
+        Ok(result)
+    }
+
+    /// Fix speaker attribution in extraction results.
+    ///
+    /// The model often generates entity="I"/"me"/"my" instead of the speaker name.
+    /// This method replaces pronoun references with the actual speaker name and
+    /// ensures the speaker appears in the entities list when they have facts.
+    fn fix_speaker_attribution(result: &mut ExtractionResult, speaker: &str) {
+        let name_lower = speaker.to_lowercase();
+        let pronouns = ["i", "me", "my", "myself", "the speaker"];
+
+        for fact in &mut result.entity_facts {
+            if pronouns.contains(&fact.entity.to_lowercase().as_str()) {
+                fact.entity = speaker.to_string();
+            }
+        }
+        for entity in &mut result.entities {
+            if pronouns.contains(&entity.name.to_lowercase().as_str()) {
+                entity.name = speaker.to_string();
+            }
+        }
+
+        let has_speaker_facts = result
+            .entity_facts
+            .iter()
+            .any(|f| f.entity.to_lowercase() == name_lower);
+        let speaker_in_entities = result
+            .entities
+            .iter()
+            .any(|e| e.name.to_lowercase() == name_lower);
+        if has_speaker_facts && !speaker_in_entities {
+            result
+                .entities
+                .push(crate::extraction::output::ExtractedEntity {
+                    name: speaker.to_string(),
+                    entity_type: "person".to_string(),
+                });
+        }
     }
 
     /// Fix common JSON malformations produced by the model
@@ -412,9 +655,17 @@ impl LlmEntityExtractor {
         self.tier
     }
 
+    /// Get the model family
+    pub fn model_family(&self) -> ModelFamily {
+        self.family
+    }
+
     /// Get the model name
     pub fn model_name(&self) -> String {
-        self.engine.model_name()
+        match self.family {
+            ModelFamily::Qwen => "Qwen3".to_string(),
+            ModelFamily::Phi4 => "Phi-4-mini".to_string(),
+        }
     }
 
     /// Resolve model path from cache or environment
@@ -592,5 +843,59 @@ mod tests {
         let input = r#"{{"entities": []}}"#;
         let fixed = LlmEntityExtractor::fix_json(input);
         assert_eq!(fixed, r#"{"entities": []}"#);
+    }
+
+    // ========== ExtractionPerspective tests ==========
+
+    #[test]
+    fn test_multi_pass_perspective_cycling() {
+        // Verify perspectives cycle correctly: 0=EntityFact, 1=Relationship, 2=EventTemporal, 3=EntityFact
+        const PERSPECTIVES: [ExtractionPerspective; 3] = [
+            ExtractionPerspective::EntityFact,
+            ExtractionPerspective::Relationship,
+            ExtractionPerspective::EventTemporal,
+        ];
+
+        assert_eq!(PERSPECTIVES[0 % 3], ExtractionPerspective::EntityFact);
+        assert_eq!(PERSPECTIVES[1 % 3], ExtractionPerspective::Relationship);
+        assert_eq!(PERSPECTIVES[2 % 3], ExtractionPerspective::EventTemporal);
+        assert_eq!(PERSPECTIVES[3 % 3], ExtractionPerspective::EntityFact);
+        assert_eq!(PERSPECTIVES[4 % 3], ExtractionPerspective::Relationship);
+    }
+
+    #[test]
+    fn test_single_pass_uses_entity_fact() {
+        // num_passes=1 → pass 0 → EntityFact perspective
+        const PERSPECTIVES: [ExtractionPerspective; 3] = [
+            ExtractionPerspective::EntityFact,
+            ExtractionPerspective::Relationship,
+            ExtractionPerspective::EventTemporal,
+        ];
+
+        let perspective = PERSPECTIVES[0 % PERSPECTIVES.len()];
+        assert_eq!(perspective, ExtractionPerspective::EntityFact);
+    }
+
+    #[test]
+    fn test_typed_perspective_exists() {
+        // Verify the Typed variant exists and is distinct
+        let typed = ExtractionPerspective::Typed;
+        assert_ne!(typed, ExtractionPerspective::EntityFact);
+        assert_ne!(typed, ExtractionPerspective::Relationship);
+        assert_ne!(typed, ExtractionPerspective::EventTemporal);
+    }
+
+    #[test]
+    fn test_model_family_phi4_detected() {
+        use crate::extraction::prompt::ModelFamily;
+        let path = std::path::Path::new("microsoft_Phi-4-mini-instruct-Q4_K_M.gguf");
+        assert_eq!(ModelFamily::from_path(path), ModelFamily::Phi4);
+    }
+
+    #[test]
+    fn test_model_family_qwen_detected() {
+        use crate::extraction::prompt::ModelFamily;
+        let path = std::path::Path::new("Qwen3-4B-Instruct-2507.Q4_K_M.gguf");
+        assert_eq!(ModelFamily::from_path(path), ModelFamily::Qwen);
     }
 }

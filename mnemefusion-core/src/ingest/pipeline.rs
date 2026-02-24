@@ -80,6 +80,9 @@ pub struct IngestionPipeline {
     /// Default: 1 (single pass, backward compatible).
     #[cfg(feature = "entity-extraction")]
     extraction_passes: usize,
+    /// Entity types allowed to have profiles (case-insensitive).
+    /// Empty = allow all types. Non-empty = filter to listed types only.
+    profile_entity_types: Vec<String>,
 }
 
 impl IngestionPipeline {
@@ -125,6 +128,11 @@ impl IngestionPipeline {
             embedding_fn: None,
             #[cfg(feature = "entity-extraction")]
             extraction_passes: 1,
+            profile_entity_types: vec![
+                "person".to_string(),
+                "organization".to_string(),
+                "location".to_string(),
+            ],
         }
     }
 
@@ -180,6 +188,29 @@ impl IngestionPipeline {
         self
     }
 
+    /// Run entity extraction on text without adding to the database.
+    ///
+    /// Returns the extraction result directly for inspection/testing.
+    /// Requires `enable_llm_entity_extraction()` to have been called first.
+    #[cfg(feature = "entity-extraction")]
+    pub fn extract_text(
+        &self,
+        content: &str,
+        speaker: Option<&str>,
+    ) -> crate::error::Result<crate::extraction::ExtractionResult> {
+        let extractor = self
+            .llm_extractor
+            .as_ref()
+            .ok_or_else(|| {
+                crate::error::Error::InferenceError(
+                    "LLM extractor not enabled. Call enable_llm_entity_extraction() first."
+                        .to_string(),
+                )
+            })?;
+        let ext = extractor.lock().unwrap();
+        ext.extract(content, speaker)
+    }
+
     /// Set the embedding function for computing fact embeddings at ingestion time.
     pub fn set_embedding_fn(&mut self, f: EmbeddingFn) {
         self.embedding_fn = Some(f);
@@ -208,6 +239,14 @@ impl IngestionPipeline {
     #[cfg(feature = "entity-extraction")]
     pub fn set_extraction_passes(&mut self, passes: usize) {
         self.extraction_passes = passes.max(1);
+    }
+
+    /// Set which entity types are allowed to have profiles.
+    ///
+    /// Entities with types not in this list will be skipped during profile
+    /// creation. Empty list = allow all types.
+    pub fn set_profile_entity_types(&mut self, types: Vec<String>) {
+        self.profile_entity_types = types;
     }
 
     /// Reserve capacity in the vector index for future insertions
@@ -270,13 +309,28 @@ impl IngestionPipeline {
         // Uses llama.cpp for entity/fact extraction.
         // Supports multi-pass: runs extraction_passes times with diverse params,
         // merging all extracted facts into profiles via add_fact() dedup.
+        // When session_date is available AND single-pass, use typed extraction prompt
+        // (episodic/semantic/procedural records + event dates + relationships).
+        // This matches the NScale cloud extraction prompt quality.
         #[cfg(feature = "entity-extraction")]
         let llm_extraction_results: Vec<ExtractionResult> =
             if let Some(ref llm_extractor) = self.llm_extractor {
                 let speaker = memory.metadata.get("speaker").map(|s| s.as_str());
+                let session_date = memory.metadata.get("session_date").map(|s| s.as_str());
                 let extractor = llm_extractor.lock().unwrap();
-                let raw_results =
-                    extractor.extract_multi_pass(&memory.content, speaker, self.extraction_passes);
+                let raw_results = if self.extraction_passes == 1 && session_date.is_some() {
+                    // Use typed extraction prompt for richer entity facts + temporal metadata.
+                    // Research: ENGRAM (arXiv 2511.12960) +31 pts from typed separation,
+                    // TReMu (ACL 2025) +47 pts from inferred event dates.
+                    vec![extractor.extract_typed(
+                        &memory.content,
+                        speaker,
+                        session_date,
+                    )]
+                } else {
+                    extractor
+                        .extract_multi_pass(&memory.content, speaker, self.extraction_passes)
+                };
                 drop(extractor); // release lock before processing
 
                 let mut successes = Vec::new();
@@ -491,6 +545,22 @@ impl IngestionPipeline {
                 // Note: Entity cleanup is complex, for now we leave stale entities
                 // They will be cleaned up on next delete operation
                 return Err(e);
+            }
+        }
+
+        // Step 5: Annotate parent with typed record metadata + store relationships.
+        // Note: We do NOT create child memories — they flood the vector index and
+        // cause recall collapse (-14.9 pts in S30 testing). Instead, typed decomposition
+        // is stored as metadata on the parent for type-aware retrieval balancing.
+        #[cfg(feature = "entity-extraction")]
+        for extraction in &llm_extraction_results {
+            if !extraction.records.is_empty() {
+                self.annotate_parent_with_types(&id, &extraction.records);
+            }
+            if !extraction.relationships.is_empty() {
+                if let Err(e) = self.store_relationships(&id, &extraction.relationships) {
+                    tracing::warn!("Failed to store relationships: {}", e);
+                }
             }
         }
 
@@ -1086,33 +1156,79 @@ impl IngestionPipeline {
     ///
     /// * `memory_id` - The memory that the facts were extracted from
     /// * `extraction` - The LLM extraction result containing entity_facts
+    /// Check if an entity type is allowed to have a profile.
+    ///
+    /// If `profile_entity_types` is empty, all types are allowed.
+    /// Otherwise, the entity_type must match (case-insensitive) one of the allowed types.
+    fn is_entity_type_allowed(&self, entity_type: &str) -> bool {
+        if self.profile_entity_types.is_empty() {
+            return true;
+        }
+        let et_lower = entity_type.to_lowercase();
+        self.profile_entity_types.iter().any(|t| t.to_lowercase() == et_lower)
+    }
+
+    /// Update entity profiles from an extraction result.
+    ///
+    /// This is the core profile update logic: resolves aliases, filters entity types,
+    /// creates/updates profiles, computes fact embeddings, and links source memories.
+    /// Used internally during ingestion and externally via `MemoryEngine::apply_extraction()`
+    /// for API-based extraction backends (e.g., NScale cloud inference).
     #[cfg(feature = "entity-extraction")]
-    fn update_entity_profiles_from_llm(
+    pub fn update_entity_profiles_from_llm(
         &self,
         memory_id: &MemoryId,
         extraction: &ExtractionResult,
     ) -> Result<()> {
+        // Load known profile names once for alias resolution
+        let known_names = self.storage.list_entity_profile_names()?;
+
         // Track which entities we've already linked via entity_facts
         let mut linked_entities = std::collections::HashSet::new();
 
         for extracted_fact in &extraction.entity_facts {
+            // Determine entity type from extraction entities if available
+            let entity_type = extraction
+                .entities
+                .iter()
+                .find(|e| e.name.eq_ignore_ascii_case(&extracted_fact.entity))
+                .map(|e| e.entity_type.clone())
+                .unwrap_or_else(|| "unknown".to_string());
+
+            // Skip entities whose type is not in the allowed list
+            if !self.is_entity_type_allowed(&entity_type) {
+                // Still check if there's an existing profile (might be from before filter was added)
+                let entity_name = crate::query::profile_search::resolve_entity_alias(
+                    &extracted_fact.entity,
+                    &known_names,
+                )
+                .unwrap_or_else(|| extracted_fact.entity.clone());
+                if self.storage.get_entity_profile(&entity_name)?.is_none() {
+                    tracing::debug!(
+                        "Skipping entity '{}' (type '{}') — not in allowed profile types",
+                        extracted_fact.entity,
+                        entity_type,
+                    );
+                    continue;
+                }
+            }
+
+            // Canonicalize entity name via alias resolution
+            let entity_name = crate::query::profile_search::resolve_entity_alias(
+                &extracted_fact.entity,
+                &known_names,
+            )
+            .unwrap_or_else(|| extracted_fact.entity.clone());
+
             // Get or create profile for this entity
             let mut profile = self
                 .storage
-                .get_entity_profile(&extracted_fact.entity)?
+                .get_entity_profile(&entity_name)?
                 .unwrap_or_else(|| {
-                    // Determine entity type from extraction entities if available
-                    let entity_type = extraction
-                        .entities
-                        .iter()
-                        .find(|e| e.name.eq_ignore_ascii_case(&extracted_fact.entity))
-                        .map(|e| e.entity_type.clone())
-                        .unwrap_or_else(|| "unknown".to_string());
-
                     EntityProfile::new(
                         EntityId::new(),
-                        extracted_fact.entity.clone(),
-                        entity_type,
+                        entity_name.clone(),
+                        entity_type.clone(),
                     )
                 });
 
@@ -1137,7 +1253,7 @@ impl IngestionPipeline {
                 );
                 let embedding = embed_fn(&fact_text);
                 let key = fact_embedding_key(
-                    &extracted_fact.entity,
+                    &entity_name,
                     &extracted_fact.fact_type,
                     &extracted_fact.value,
                 );
@@ -1152,13 +1268,14 @@ impl IngestionPipeline {
             // Save profile
             self.storage.store_entity_profile(&profile)?;
 
-            linked_entities.insert(extracted_fact.entity.to_lowercase());
+            linked_entities.insert(entity_name.to_lowercase());
 
             tracing::debug!(
-                "Updated entity profile '{}' with LLM fact: {} = {}",
-                extracted_fact.entity,
+                "Updated entity profile '{}' with LLM fact: {} = {} (raw: '{}')",
+                entity_name,
                 extracted_fact.fact_type,
-                extracted_fact.value
+                extracted_fact.value,
+                extracted_fact.entity,
             );
         }
 
@@ -1167,17 +1284,37 @@ impl IngestionPipeline {
         // no structured facts would never appear in that entity's source_memories,
         // making them invisible to Step 2.1's entity scoring (the sacred 2.0 baseline).
         for entity in &extraction.entities {
-            if linked_entities.contains(&entity.name.to_lowercase()) {
+            // Skip entities whose type is not in the allowed list
+            // (unless they already have a profile from before the filter was added)
+            if !self.is_entity_type_allowed(&entity.entity_type) {
+                let resolved = crate::query::profile_search::resolve_entity_alias(
+                    &entity.name,
+                    &known_names,
+                )
+                .unwrap_or_else(|| entity.name.clone());
+                if self.storage.get_entity_profile(&resolved)?.is_none() {
+                    continue;
+                }
+            }
+
+            // Canonicalize entity name via alias resolution
+            let entity_name = crate::query::profile_search::resolve_entity_alias(
+                &entity.name,
+                &known_names,
+            )
+            .unwrap_or_else(|| entity.name.clone());
+
+            if linked_entities.contains(&entity_name.to_lowercase()) {
                 continue; // Already linked via entity_facts above
             }
 
             let mut profile = self
                 .storage
-                .get_entity_profile(&entity.name)?
+                .get_entity_profile(&entity_name)?
                 .unwrap_or_else(|| {
                     EntityProfile::new(
                         EntityId::new(),
-                        entity.name.clone(),
+                        entity_name.clone(),
                         entity.entity_type.clone(),
                     )
                 });
@@ -1186,8 +1323,180 @@ impl IngestionPipeline {
             self.storage.store_entity_profile(&profile)?;
 
             tracing::debug!(
-                "Linked source memory to entity profile '{}' (no facts, entity-only)",
-                entity.name
+                "Linked source memory to entity profile '{}' (no facts, entity-only, raw: '{}')",
+                entity_name,
+                entity.name,
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Create child memories from typed records extracted by the ENGRAM-inspired prompt.
+    ///
+    /// Each `TypedRecord` in the extraction result becomes a separate Memory with:
+    /// - content = record.summary (self-contained sentence)
+    /// - metadata["record_type"] = "episodic" | "semantic" | "procedural"
+    /// - metadata["record_type"] = primary type ("episodic", "semantic", "procedural")
+    /// - metadata["event_date"] = earliest ISO-8601 date from episodic records
+    /// - metadata["typed_summaries"] = JSON array of self-contained summaries
+    ///
+    /// Research basis: ENGRAM (arXiv 2511.12960) shows +31 pts from typed separation.
+    /// However, creating child memories in the same vector index causes recall collapse
+    /// (-14.9 pts in S30 testing). Instead, we annotate parents with type metadata
+    /// for type-aware retrieval balancing (Phase 3) without inflating the index.
+    #[cfg(feature = "entity-extraction")]
+    pub fn annotate_parent_with_types(
+        &self,
+        parent_id: &MemoryId,
+        records: &[crate::extraction::TypedRecord],
+    ) {
+        if records.is_empty() {
+            return;
+        }
+
+        let mut parent = match self.storage.get_memory(parent_id) {
+            Ok(Some(p)) => p,
+            _ => return,
+        };
+
+        // Determine primary type by priority: episodic > procedural > semantic
+        // (episodic has event_date which helps temporal, procedural is rare and distinctive)
+        let mut has_episodic = false;
+        let mut has_procedural = false;
+        let mut earliest_event_date: Option<String> = None;
+        let mut summaries: Vec<String> = Vec::new();
+
+        for record in records {
+            if record.summary.trim().is_empty() {
+                continue;
+            }
+            match record.record_type.as_str() {
+                "episodic" => {
+                    has_episodic = true;
+                    if let Some(ref date) = record.event_date {
+                        match &earliest_event_date {
+                            None => earliest_event_date = Some(date.clone()),
+                            Some(existing) if date < existing => {
+                                earliest_event_date = Some(date.clone())
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                "procedural" => has_procedural = true,
+                _ => {} // semantic is the default
+            }
+            summaries.push(record.summary.clone());
+        }
+
+        let primary_type = if has_episodic {
+            "episodic"
+        } else if has_procedural {
+            "procedural"
+        } else {
+            "semantic"
+        };
+
+        parent.set_metadata("record_type".to_string(), primary_type.to_string());
+
+        if let Some(ref date) = earliest_event_date {
+            parent.set_metadata("event_date".to_string(), date.clone());
+        }
+
+        if !summaries.is_empty() {
+            if let Ok(json) = serde_json::to_string(&summaries) {
+                parent.set_metadata("typed_summaries".to_string(), json);
+            }
+        }
+
+        if let Err(e) = self.storage.store_memory(&parent) {
+            tracing::warn!("Failed to annotate parent {} with types: {}", parent_id, e);
+        }
+
+        tracing::debug!(
+            "Annotated parent {} as {} ({} summaries, event_date={:?})",
+            parent_id,
+            primary_type,
+            summaries.len(),
+            earliest_event_date
+        );
+    }
+
+    /// Store extracted entity-to-entity relationships in entity profiles.
+    ///
+    /// Each relationship is stored as a "relationship" fact in both entities' profiles.
+    /// For example, Alice→Bob "spouse" creates:
+    /// - Alice profile: fact_type="relationship", value="spouse of Bob"
+    /// - Bob profile: fact_type="relationship", value="spouse of Alice"
+    #[cfg(feature = "entity-extraction")]
+    pub fn store_relationships(
+        &self,
+        memory_id: &MemoryId,
+        relationships: &[crate::extraction::ExtractedRelationship],
+    ) -> Result<()> {
+        let known_names = self.storage.list_entity_profile_names()?;
+
+        for rel in relationships {
+            if rel.confidence < 0.5 {
+                continue; // Skip low-confidence relationships
+            }
+
+            // Resolve aliases for both entities
+            let from_name = crate::query::profile_search::resolve_entity_alias(
+                &rel.from_entity,
+                &known_names,
+            )
+            .unwrap_or_else(|| rel.from_entity.clone());
+
+            let to_name = crate::query::profile_search::resolve_entity_alias(
+                &rel.to_entity,
+                &known_names,
+            )
+            .unwrap_or_else(|| rel.to_entity.clone());
+
+            // Store relationship fact in "from" entity's profile
+            if let Ok(Some(mut from_profile)) = self.storage.get_entity_profile(&from_name) {
+                let fact = EntityFact {
+                    fact_type: "relationship".to_string(),
+                    value: format!("{} of {}", rel.relation_type, to_name),
+                    confidence: rel.confidence,
+                    source_memory: memory_id.clone(),
+                    extracted_at: Timestamp::now(),
+                };
+                from_profile.add_fact(fact);
+                from_profile.add_source_memory(memory_id.clone());
+                self.storage.store_entity_profile(&from_profile)?;
+            }
+
+            // Store reciprocal relationship fact in "to" entity's profile
+            if let Ok(Some(mut to_profile)) = self.storage.get_entity_profile(&to_name) {
+                let fact = EntityFact {
+                    fact_type: "relationship".to_string(),
+                    value: format!("{} of {}", rel.relation_type, from_name),
+                    confidence: rel.confidence,
+                    source_memory: memory_id.clone(),
+                    extracted_at: Timestamp::now(),
+                };
+                to_profile.add_fact(fact);
+                to_profile.add_source_memory(memory_id.clone());
+                self.storage.store_entity_profile(&to_profile)?;
+            }
+
+            // Add entity-to-entity edge in the graph for 1-hop traversal
+            let from_profile = self.storage.get_entity_profile(&from_name)?;
+            let to_profile = self.storage.get_entity_profile(&to_name)?;
+            if let (Some(fp), Some(tp)) = (from_profile, to_profile) {
+                let mut graph = self.graph_manager.write().unwrap();
+                graph.link_entity_to_entity(&fp.entity_id, &tp.entity_id, &rel.relation_type);
+            }
+
+            tracing::debug!(
+                "Stored relationship: {} --[{}]--> {} (confidence: {:.2})",
+                from_name,
+                rel.relation_type,
+                to_name,
+                rel.confidence,
             );
         }
 
@@ -2151,9 +2460,8 @@ mod tests {
                 name: "Caroline".to_string(),
                 entity_type: "person".to_string(),
             }],
-            entity_facts: Vec::new(),
             topics: vec!["park".to_string()],
-            importance: 0.5,
+            ..Default::default()
         };
 
         // Call the function under test
@@ -2198,8 +2506,7 @@ mod tests {
                 value: "counselor".to_string(),
                 confidence: 0.9,
             }],
-            topics: Vec::new(),
-            importance: 0.5,
+            ..Default::default()
         };
 
         pipeline
@@ -2248,8 +2555,7 @@ mod tests {
                 value: "therapy".to_string(),
                 confidence: 0.8,
             }],
-            topics: Vec::new(),
-            importance: 0.5,
+            ..Default::default()
         };
 
         pipeline
@@ -2276,5 +2582,170 @@ mod tests {
             bob.source_memories.contains(&id),
             "Bob should have source_memory linked even without facts"
         );
+    }
+
+    #[cfg(feature = "entity-extraction")]
+    #[test]
+    fn test_extraction_time_alias_resolution() {
+        use crate::extraction::{ExtractedEntity, ExtractedFact, ExtractionResult};
+        use crate::types::{EntityId, EntityProfile};
+
+        let (pipeline, _dir) = create_test_pipeline();
+
+        // Pre-create "melanie" profile (canonical form)
+        let melanie_profile = EntityProfile::new(
+            EntityId::new(),
+            "melanie".to_string(),
+            "person".to_string(),
+        );
+        pipeline
+            .storage
+            .store_entity_profile(&melanie_profile)
+            .unwrap();
+
+        let memory = Memory::new(
+            "Mel loves hiking and cooking".to_string(),
+            vec![0.1; 384],
+        );
+        let id = memory.id.clone();
+        pipeline.storage.store_memory(&memory).unwrap();
+
+        // Extraction uses raw name "Mel"
+        let extraction = ExtractionResult {
+            entities: vec![ExtractedEntity {
+                name: "Mel".to_string(),
+                entity_type: "person".to_string(),
+            }],
+            entity_facts: vec![ExtractedFact {
+                entity: "Mel".to_string(),
+                fact_type: "hobby".to_string(),
+                value: "hiking".to_string(),
+                confidence: 0.9,
+            }],
+            ..Default::default()
+        };
+
+        pipeline
+            .update_entity_profiles_from_llm(&id, &extraction)
+            .unwrap();
+
+        // "Mel" should be resolved to "melanie" — fact stored under canonical profile
+        let melanie = pipeline
+            .storage
+            .get_entity_profile("melanie")
+            .unwrap()
+            .expect("melanie profile should exist");
+        assert_eq!(melanie.total_facts(), 1, "Fact should be stored under 'melanie'");
+        assert!(melanie.source_memories.contains(&id));
+
+        // No separate "mel" profile should be created
+        let mel = pipeline.storage.get_entity_profile("mel").unwrap();
+        // mel profile exists (pre-existing from storage key matching) but should have no NEW facts
+        // Actually the canonical form takes over — facts go to melanie
+        assert!(
+            mel.is_none() || mel.as_ref().unwrap().total_facts() == 0,
+            "No facts should be stored under raw 'mel' name"
+        );
+    }
+
+    #[cfg(feature = "entity-extraction")]
+    #[test]
+    fn test_entity_type_filter_blocks_non_person_profiles() {
+        use crate::extraction::{ExtractedEntity, ExtractedFact, ExtractionResult};
+
+        let (mut pipeline, _dir) = create_test_pipeline();
+        // Default allows person/organization/location
+        assert_eq!(pipeline.profile_entity_types.len(), 3);
+
+        let memory = Memory::new(
+            "Dogs played basketball in nature".to_string(),
+            vec![0.1; 384],
+        );
+        let id = memory.id.clone();
+        pipeline.storage.store_memory(&memory).unwrap();
+
+        let extraction = ExtractionResult {
+            entities: vec![
+                ExtractedEntity {
+                    name: "Caroline".to_string(),
+                    entity_type: "person".to_string(),
+                },
+                ExtractedEntity {
+                    name: "dogs".to_string(),
+                    entity_type: "animal".to_string(),
+                },
+                ExtractedEntity {
+                    name: "basketball".to_string(),
+                    entity_type: "activity".to_string(),
+                },
+            ],
+            entity_facts: vec![
+                ExtractedFact {
+                    entity: "Caroline".to_string(),
+                    fact_type: "hobby".to_string(),
+                    value: "basketball".to_string(),
+                    confidence: 0.8,
+                },
+                ExtractedFact {
+                    entity: "dogs".to_string(),
+                    fact_type: "activity".to_string(),
+                    value: "playing".to_string(),
+                    confidence: 0.7,
+                },
+            ],
+            ..Default::default()
+        };
+
+        pipeline
+            .update_entity_profiles_from_llm(&id, &extraction)
+            .unwrap();
+
+        // Person entity should have profile
+        let caroline = pipeline.storage.get_entity_profile("Caroline").unwrap();
+        assert!(caroline.is_some(), "Person entity should have profile");
+        assert_eq!(caroline.unwrap().total_facts(), 1);
+
+        // Non-person entities should NOT have profiles
+        let dogs = pipeline.storage.get_entity_profile("dogs").unwrap();
+        assert!(dogs.is_none(), "Animal entity should be filtered out");
+
+        let basketball = pipeline.storage.get_entity_profile("basketball").unwrap();
+        assert!(basketball.is_none(), "Activity entity should be filtered out");
+    }
+
+    #[cfg(feature = "entity-extraction")]
+    #[test]
+    fn test_entity_type_filter_empty_allows_all() {
+        use crate::extraction::{ExtractedEntity, ExtractedFact, ExtractionResult};
+
+        let (mut pipeline, _dir) = create_test_pipeline();
+        // Clear the filter to allow all types
+        pipeline.set_profile_entity_types(Vec::new());
+
+        let memory = Memory::new("Dogs are pets".to_string(), vec![0.1; 384]);
+        let id = memory.id.clone();
+        pipeline.storage.store_memory(&memory).unwrap();
+
+        let extraction = ExtractionResult {
+            entities: vec![ExtractedEntity {
+                name: "dogs".to_string(),
+                entity_type: "animal".to_string(),
+            }],
+            entity_facts: vec![ExtractedFact {
+                entity: "dogs".to_string(),
+                fact_type: "category".to_string(),
+                value: "pet".to_string(),
+                confidence: 0.9,
+            }],
+            ..Default::default()
+        };
+
+        pipeline
+            .update_entity_profiles_from_llm(&id, &extraction)
+            .unwrap();
+
+        // With empty filter, all types should be allowed
+        let dogs = pipeline.storage.get_entity_profile("dogs").unwrap();
+        assert!(dogs.is_some(), "Empty filter should allow all entity types");
     }
 }

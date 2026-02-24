@@ -33,6 +33,13 @@ impl EntityEdge {
             relationship: "mentions".to_string(),
         }
     }
+
+    /// Create a new entity-to-entity relationship edge
+    pub fn entity_relation(relation_type: &str) -> Self {
+        Self {
+            relationship: relation_type.to_string(),
+        }
+    }
 }
 
 /// Result from entity graph queries
@@ -160,6 +167,82 @@ impl EntityGraph {
         }
 
         entities
+    }
+
+    /// Link two entities with a relationship (entity-to-entity edge).
+    ///
+    /// Creates a directed edge from entity_a → entity_b with the given relation type.
+    /// For bidirectional relationships (e.g., "spouse"), call this twice with swapped args.
+    ///
+    /// # Arguments
+    ///
+    /// * `from_entity_id` - The source entity
+    /// * `to_entity_id` - The target entity
+    /// * `relation_type` - Relationship type (e.g., "spouse", "colleague", "sibling")
+    pub fn link_entity_to_entity(
+        &mut self,
+        from_entity_id: &EntityId,
+        to_entity_id: &EntityId,
+        relation_type: &str,
+    ) {
+        let from_idx = self.get_or_create_entity_node(from_entity_id);
+        let to_idx = self.get_or_create_entity_node(to_entity_id);
+
+        // Check if this exact edge already exists to avoid duplicates
+        let exists = self
+            .graph
+            .edges_directed(from_idx, petgraph::Direction::Outgoing)
+            .any(|e| {
+                e.target() == to_idx && e.weight().relationship == relation_type
+            });
+
+        if !exists {
+            self.graph
+                .add_edge(from_idx, to_idx, EntityEdge::entity_relation(relation_type));
+        }
+    }
+
+    /// Get entities related to a given entity via entity-to-entity edges.
+    ///
+    /// Returns a list of (EntityId, relationship_type) tuples for all 1-hop
+    /// entity-to-entity relationships (both outgoing and incoming).
+    ///
+    /// # Arguments
+    ///
+    /// * `entity_id` - The entity to find relationships for
+    pub fn get_related_entities(&self, entity_id: &EntityId) -> Vec<(EntityId, String)> {
+        let mut related = Vec::new();
+
+        if let Some(&entity_idx) = self.entity_nodes.get(entity_id) {
+            // Outgoing entity-to-entity edges
+            for edge_ref in self
+                .graph
+                .edges_directed(entity_idx, petgraph::Direction::Outgoing)
+            {
+                let target_idx = edge_ref.target();
+                if let Some(EntityNode::Entity(target_id)) = self.graph.node_weight(target_idx) {
+                    // Skip "mentions" edges (those are memory→entity)
+                    if edge_ref.weight().relationship != "mentions" {
+                        related.push((target_id.clone(), edge_ref.weight().relationship.clone()));
+                    }
+                }
+            }
+
+            // Incoming entity-to-entity edges (bidirectional traversal)
+            for edge_ref in self
+                .graph
+                .edges_directed(entity_idx, petgraph::Direction::Incoming)
+            {
+                let source_idx = edge_ref.source();
+                if let Some(EntityNode::Entity(source_id)) = self.graph.node_weight(source_idx) {
+                    if edge_ref.weight().relationship != "mentions" {
+                        related.push((source_id.clone(), edge_ref.weight().relationship.clone()));
+                    }
+                }
+            }
+        }
+
+        related
     }
 
     /// Remove all links for a memory (when memory is deleted)
@@ -348,6 +431,81 @@ mod tests {
 
         // Memory node should still exist
         assert_eq!(graph.memory_count(), 1);
+    }
+
+    #[test]
+    fn test_entity_to_entity_link() {
+        let mut graph = EntityGraph::new();
+
+        let alice = Entity::new("Alice");
+        let bob = Entity::new("Bob");
+
+        graph.link_entity_to_entity(&alice.id, &bob.id, "spouse");
+
+        // Should have 2 entity nodes and 1 edge
+        assert_eq!(graph.entity_count(), 2);
+        assert_eq!(graph.edge_count(), 1);
+
+        // Alice should see Bob as related
+        let alice_related = graph.get_related_entities(&alice.id);
+        assert_eq!(alice_related.len(), 1);
+        assert_eq!(alice_related[0].0, bob.id);
+        assert_eq!(alice_related[0].1, "spouse");
+
+        // Bob should also see Alice (incoming direction)
+        let bob_related = graph.get_related_entities(&bob.id);
+        assert_eq!(bob_related.len(), 1);
+        assert_eq!(bob_related[0].0, alice.id);
+        assert_eq!(bob_related[0].1, "spouse");
+    }
+
+    #[test]
+    fn test_entity_to_entity_no_duplicate_edges() {
+        let mut graph = EntityGraph::new();
+
+        let alice = Entity::new("Alice");
+        let bob = Entity::new("Bob");
+
+        // Link twice with same relation — should not create duplicate
+        graph.link_entity_to_entity(&alice.id, &bob.id, "colleague");
+        graph.link_entity_to_entity(&alice.id, &bob.id, "colleague");
+
+        assert_eq!(graph.edge_count(), 1);
+    }
+
+    #[test]
+    fn test_entity_to_entity_multiple_relations() {
+        let mut graph = EntityGraph::new();
+
+        let alice = Entity::new("Alice");
+        let bob = Entity::new("Bob");
+        let carol = Entity::new("Carol");
+
+        graph.link_entity_to_entity(&alice.id, &bob.id, "spouse");
+        graph.link_entity_to_entity(&alice.id, &carol.id, "colleague");
+
+        let alice_related = graph.get_related_entities(&alice.id);
+        assert_eq!(alice_related.len(), 2);
+    }
+
+    #[test]
+    fn test_entity_to_entity_excludes_mentions() {
+        let mut graph = EntityGraph::new();
+
+        let memory_id = MemoryId::new();
+        let alice = Entity::new("Alice");
+        let bob = Entity::new("Bob");
+
+        // Memory mentions Alice (mentions edge)
+        graph.link_memory_to_entity(&memory_id, &alice.id);
+        // Alice related to Bob (entity-to-entity edge)
+        graph.link_entity_to_entity(&alice.id, &bob.id, "friend");
+
+        // get_related_entities should only return entity-to-entity links, not mentions
+        let alice_related = graph.get_related_entities(&alice.id);
+        assert_eq!(alice_related.len(), 1);
+        assert_eq!(alice_related[0].0, bob.id);
+        assert_eq!(alice_related[0].1, "friend");
     }
 
     #[test]

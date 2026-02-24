@@ -124,6 +124,11 @@ impl MemoryEngine {
         // Create and load graph manager
         let mut graph_manager = GraphManager::new();
         crate::graph::persist::load_graph(&mut graph_manager, &storage)?;
+
+        // One-time migration: repair Entity→Entity edges from profile facts
+        // (older DBs stored relationship facts but lost graph edges on save)
+        crate::graph::persist::repair_relationship_edges(&mut graph_manager, &storage)?;
+
         let graph_manager = Arc::new(RwLock::new(graph_manager));
 
         // Create ingestion pipeline
@@ -164,6 +169,9 @@ impl MemoryEngine {
             pipeline = pipeline.with_extraction_passes(config.extraction_passes);
         }
 
+        // Wire profile entity type filter from config to pipeline
+        pipeline.set_profile_entity_types(config.profile_entity_types.clone());
+
         // Create query planner
         let query_planner = QueryPlanner::new(
             Arc::clone(&storage),
@@ -178,6 +186,7 @@ impl MemoryEngine {
             #[cfg(feature = "slm")]
             config.slm_config.clone(),
             config.slm_query_classification_enabled,
+            config.adaptive_k_threshold,
         )?;
 
         Ok(Self {
@@ -328,6 +337,63 @@ impl MemoryEngine {
         }
 
         Ok(computed)
+    }
+
+    /// Run entity extraction on text without adding to the database.
+    ///
+    /// Useful for testing extraction quality or comparing model outputs.
+    /// Requires `with_llm_entity_extraction*()` to have been called first.
+    ///
+    /// # Arguments
+    /// * `content` - The text to extract entities from
+    /// * `speaker` - Optional speaker name for first-person attribution
+    ///
+    /// # Returns
+    /// The extraction result with entities, facts, records, and relationships.
+    #[cfg(feature = "entity-extraction")]
+    pub fn extract_text(
+        &self,
+        content: &str,
+        speaker: Option<&str>,
+    ) -> Result<crate::extraction::ExtractionResult> {
+        self.pipeline.extract_text(content, speaker)
+    }
+
+    /// Apply an externally-produced extraction result to a memory's entity profiles.
+    ///
+    /// This enables API-based extraction backends (e.g., NScale cloud inference)
+    /// to inject entity profiles without requiring a local LLM. The extraction
+    /// result must match the same JSON schema as the local Qwen3 extractor.
+    ///
+    /// # Arguments
+    /// * `memory_id` - The memory ID to associate the extraction with
+    /// * `extraction` - The extraction result from an external source
+    #[cfg(feature = "entity-extraction")]
+    pub fn apply_extraction(
+        &self,
+        memory_id: &MemoryId,
+        extraction: &crate::extraction::ExtractionResult,
+    ) -> Result<()> {
+        // Update entity profiles from facts
+        self.pipeline
+            .update_entity_profiles_from_llm(memory_id, extraction)?;
+
+        // Store entity-to-entity relationships
+        if !extraction.relationships.is_empty() {
+            self.pipeline
+                .store_relationships(memory_id, &extraction.relationships)?;
+        }
+
+        // Annotate parent memory with typed record metadata (record_type, event_date)
+        // Note: We do NOT create child memories — they flood the vector index and
+        // cause recall collapse (-14.9 pts in S30 testing). Instead, typed decomposition
+        // is stored as metadata on the parent for type-aware retrieval balancing.
+        if !extraction.records.is_empty() {
+            self.pipeline
+                .annotate_parent_with_types(memory_id, &extraction.records);
+        }
+
+        Ok(())
     }
 
     /// Generate summaries for all entity profiles.
@@ -1141,7 +1207,7 @@ impl MemoryEngine {
     /// # use mnemefusion_core::{MemoryEngine, Config};
     /// # let engine = MemoryEngine::open("test.mfdb", Config::default()).unwrap();
     /// # let query_embedding = vec![0.1; 384];
-    /// let (intent, results) = engine.query(
+    /// let (intent, results, profile_context) = engine.query(
     ///     "Why was the meeting cancelled?",
     ///     &query_embedding,
     ///     10,
@@ -1150,6 +1216,7 @@ impl MemoryEngine {
     /// ).unwrap();
     ///
     /// println!("Query intent: {:?}", intent.intent);
+    /// println!("Profile context: {} entries", profile_context.len());
     /// for result in results {
     ///     println!("Score: {:.3} - {}", result.1.fused_score, result.0.content);
     /// }
@@ -1161,37 +1228,30 @@ impl MemoryEngine {
         limit: usize,
         namespace: Option<&str>,
         filters: Option<&[MetadataFilter]>,
-    ) -> Result<(IntentClassification, Vec<(Memory, FusedResult)>)> {
+    ) -> Result<(IntentClassification, Vec<(Memory, FusedResult)>, Vec<String>)> {
         // Execute query using query planner
         let (intent, fused_results, matched_facts) =
             self.query_planner
                 .query(query_text, query_embedding, limit, namespace, filters)?;
 
-        // Prepend synthetic profile context (not counted against limit)
-        // These are EXTRA — they don't displace real memories
-        let mut results = Vec::new();
+        // Build profile context as SEPARATE strings (not mixed into results).
+        // Profile facts contain entity knowledge ("Caroline's hobby: painting") but
+        // lack dates, speaker context, and conversational detail. Mixing them into
+        // the results Vec with high scores pushes real memories out of top-K context.
+        let mut profile_context = Vec::new();
 
         // Group matched facts by entity name
         let mut facts_by_entity: HashMap<String, Vec<&crate::query::MatchedProfileFact>> = HashMap::new();
-        let mut max_score_by_entity: HashMap<String, f32> = HashMap::new();
         for fact in &matched_facts {
             facts_by_entity
                 .entry(fact.entity_name.clone())
                 .or_default()
                 .push(fact);
-            let entry = max_score_by_entity
-                .entry(fact.entity_name.clone())
-                .or_insert(0.0);
-            if fact.score > *entry {
-                *entry = fact.score;
-            }
         }
 
         for (entity_name, facts) in &facts_by_entity {
-            let best_score = max_score_by_entity.get(entity_name).copied().unwrap_or(0.0);
-
-            // If profile has a pre-computed summary, inject it as ONE context item
-            // Otherwise, fall back to individual fact format (backward compat)
+            // If profile has a pre-computed summary, use it as ONE context item
+            // Otherwise, fall back to individual fact format
             let profile_summary = self
                 .storage
                 .get_entity_profile(entity_name)
@@ -1200,30 +1260,9 @@ impl MemoryEngine {
                 .and_then(|p| p.summary.clone());
 
             if let Some(summary) = profile_summary {
-                let mut metadata = HashMap::new();
-                metadata.insert("_source".into(), "profile_summary".into());
-                metadata.insert("_entity".into(), entity_name.clone());
-
-                let memory = Memory {
-                    id: MemoryId::new(),
-                    content: summary,
-                    embedding: vec![],
-                    created_at: Timestamp::now(),
-                    metadata,
-                };
-                let fused = FusedResult {
-                    id: memory.id.clone(),
-                    semantic_score: 0.0,
-                    bm25_score: 0.0,
-                    temporal_score: 0.0,
-                    causal_score: 0.0,
-                    entity_score: 1.0,
-                    fused_score: 1.0 + best_score,
-                    confidence: 1.0,
-                };
-                results.push((memory, fused));
+                profile_context.push(summary);
             } else {
-                // No summary — inject individual facts (backward compat)
+                // No summary — format individual facts
                 for fact in facts {
                     let content = format!(
                         "{}'s {}: {}",
@@ -1231,29 +1270,7 @@ impl MemoryEngine {
                         fact.fact_type.replace('_', " "),
                         fact.value
                     );
-                    let mut metadata = HashMap::new();
-                    metadata.insert("_source".into(), "profile_fact".into());
-                    metadata.insert("_entity".into(), fact.entity_name.clone());
-                    metadata.insert("_fact_type".into(), fact.fact_type.clone());
-
-                    let memory = Memory {
-                        id: MemoryId::new(),
-                        content,
-                        embedding: vec![],
-                        created_at: Timestamp::now(),
-                        metadata,
-                    };
-                    let fused = FusedResult {
-                        id: memory.id.clone(),
-                        semantic_score: 0.0,
-                        bm25_score: 0.0,
-                        temporal_score: 0.0,
-                        causal_score: 0.0,
-                        entity_score: 1.0,
-                        fused_score: 1.0 + fact.score,
-                        confidence: 1.0,
-                    };
-                    results.push((memory, fused));
+                    profile_context.push(content);
                 }
             }
         }
@@ -1261,6 +1278,7 @@ impl MemoryEngine {
         // Retrieve full memory records using u64 key lookup
         // Note: Vector index returns partial MemoryIds (first 8 bytes only),
         // so we use get_memory_by_u64 which looks up the full UUID from the index table
+        let mut results = Vec::new();
         for fused_result in fused_results {
             let key = fused_result.id.to_u64();
             if let Some(memory) = self.storage.get_memory_by_u64(key)? {
@@ -1268,7 +1286,7 @@ impl MemoryEngine {
             }
         }
 
-        Ok((intent, results))
+        Ok((intent, results, profile_context))
     }
 
     /// Query memories within a time range
@@ -2071,14 +2089,14 @@ impl<'a> ScopedMemory<'a> {
     ///
     /// # Returns
     ///
-    /// Tuple of (intent classification, results)
+    /// Tuple of (intent classification, results, profile context)
     pub fn query(
         &self,
         query_text: &str,
         query_embedding: &[f32],
         limit: usize,
         filters: Option<&[MetadataFilter]>,
-    ) -> Result<(IntentClassification, Vec<(Memory, FusedResult)>)> {
+    ) -> Result<(IntentClassification, Vec<(Memory, FusedResult)>, Vec<String>)> {
         self.engine.query(
             query_text,
             query_embedding,
@@ -2828,7 +2846,7 @@ mod tests {
 
         // Query with filter
         let filters = vec![MetadataFilter::eq("priority", "high")];
-        let (_intent, results) = engine
+        let (_intent, results, _profile_ctx) = engine
             .query("meeting", &vec![0.1; 384], 10, None, Some(&filters))
             .unwrap();
 

@@ -68,6 +68,32 @@ fn word_overlap_score(query_words: &HashSet<String>, fact_words: &HashSet<String
     (overlap as f32 / norm as f32).min(1.0)
 }
 
+/// Resolve an entity name to its canonical profile form.
+///
+/// If `name` is a ≥3-char prefix of a longer existing profile name
+/// (e.g., "mel" → "melanie"), returns the canonical longer form.
+/// Space separators block matching ("jon" won't match "jon smith").
+///
+/// Names are compared case-insensitively. `known_profile_names` should
+/// be lowercase (as returned by `StorageEngine::list_entity_profile_names()`).
+pub fn resolve_entity_alias(name: &str, known_profile_names: &[String]) -> Option<String> {
+    let name_lower = name.to_lowercase();
+    if name_lower.len() < 3 {
+        return None;
+    }
+    for candidate in known_profile_names {
+        if candidate.len() > name_lower.len()
+            && candidate.starts_with(name_lower.as_str())
+        {
+            let suffix_char = candidate.as_bytes()[name_lower.len()];
+            if suffix_char.is_ascii_alphanumeric() {
+                return Some(candidate.clone());
+            }
+        }
+    }
+    None
+}
+
 /// Compute cosine similarity between two vectors.
 pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {
@@ -153,28 +179,12 @@ impl ProfileSearch {
             }
         }
 
-        // Resolve prefix-based aliases: if a short name (e.g., "mel") is a proper
-        // prefix of a longer profile name (e.g., "melanie"), replace with the longer
-        // form. The longer name is the canonical form with richer profile data.
-        // Constraints: prefix must be >= 3 chars, and the suffix must continue the
-        // word (no space after prefix — "jon" matches "jonathan" but not "jon smith").
+        // Resolve prefix-based aliases using the shared resolve_entity_alias() function
         if !found.is_empty() {
             let mut resolved = Vec::new();
             for name in &found {
-                let mut canonical = name.clone();
-                for candidate in &entity_names {
-                    if candidate.len() > name.len()
-                        && candidate.starts_with(name.as_str())
-                        && name.len() >= 3
-                    {
-                        // Ensure the suffix continues the word (not a space/separator)
-                        let suffix_char = candidate.as_bytes()[name.len()];
-                        if suffix_char.is_ascii_alphanumeric() {
-                            canonical = candidate.clone();
-                            break; // Use first (and typically only) longer match
-                        }
-                    }
-                }
+                let canonical = resolve_entity_alias(name, &entity_names)
+                    .unwrap_or_else(|| name.clone());
                 if !resolved.contains(&canonical) {
                     resolved.push(canonical);
                 }
@@ -815,6 +825,47 @@ mod tests {
         // "jon" should NOT resolve to "jon smith" (space after "jon")
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0], "jon");
+    }
+
+    // ========== resolve_entity_alias() unit tests ==========
+
+    #[test]
+    fn test_resolve_entity_alias_basic() {
+        let names = vec!["melanie".to_string(), "mel".to_string()];
+        assert_eq!(
+            resolve_entity_alias("mel", &names),
+            Some("melanie".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_entity_alias_no_match() {
+        // "jon" stays when only "jon" exists (no longer form)
+        let names = vec!["jon".to_string()];
+        assert_eq!(resolve_entity_alias("jon", &names), None);
+    }
+
+    #[test]
+    fn test_resolve_entity_alias_space_separator() {
+        // "jon" should NOT match "jon smith" (space after prefix)
+        let names = vec!["jon".to_string(), "jon smith".to_string()];
+        assert_eq!(resolve_entity_alias("jon", &names), None);
+    }
+
+    #[test]
+    fn test_resolve_entity_alias_too_short() {
+        // 2-char names don't resolve
+        let names = vec!["al".to_string(), "alice".to_string()];
+        assert_eq!(resolve_entity_alias("al", &names), None);
+    }
+
+    #[test]
+    fn test_resolve_entity_alias_case_insensitive() {
+        let names = vec!["melanie".to_string()];
+        assert_eq!(
+            resolve_entity_alias("Mel", &names),
+            Some("melanie".to_string())
+        );
     }
 
     #[test]

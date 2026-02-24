@@ -16,7 +16,7 @@ fn test_causal_basic_001_why_query() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("why", 384);
-    let (intent, _) = ctx
+    let (intent, _, _) = ctx
         .engine
         .query("Why was the meeting cancelled?", &query_emb, 10, None, None)
         .unwrap();
@@ -33,7 +33,7 @@ fn test_causal_basic_002_because_query() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("because", 384);
-    let (intent, _) = ctx
+    let (intent, _, _) = ctx
         .engine
         .query(
             "What happened because of the storm?",
@@ -52,7 +52,7 @@ fn test_causal_basic_003_caused_query() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("caused", 384);
-    let (intent, _) = ctx
+    let (intent, _, _) = ctx
         .engine
         .query("What caused the delay?", &query_emb, 10, None, None)
         .unwrap();
@@ -65,7 +65,7 @@ fn test_causal_basic_004_reason_query() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("reason", 384);
-    let (intent, _) = ctx
+    let (intent, _, _) = ctx
         .engine
         .query(
             "What's the reason for the error?",
@@ -84,7 +84,7 @@ fn test_causal_basic_005_led_to_query() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("led to", 384);
-    let (intent, _) = ctx
+    let (intent, _, _) = ctx
         .engine
         .query("What led to the decision?", &query_emb, 10, None, None)
         .unwrap();
@@ -97,7 +97,7 @@ fn test_causal_basic_006_result_in_query() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("result", 384);
-    let (intent, _) = ctx
+    let (intent, _, _) = ctx
         .engine
         .query("What will this result in?", &query_emb, 10, None, None)
         .unwrap();
@@ -110,7 +110,7 @@ fn test_causal_basic_007_consequence_query() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("consequences", 384);
-    let (intent, _) = ctx
+    let (intent, _, _) = ctx
         .engine
         .query("What are the consequences?", &query_emb, 10, None, None)
         .unwrap();
@@ -123,7 +123,7 @@ fn test_causal_basic_008_impact_query() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("impact", 384);
-    let (intent, _) = ctx
+    let (intent, _, _) = ctx
         .engine
         .query(
             "What's the impact of this change?",
@@ -142,7 +142,7 @@ fn test_causal_basic_009_effect_query() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("effect", 384);
-    let (intent, _) = ctx
+    let (intent, _, _) = ctx
         .engine
         .query(
             "What's the effect of the update?",
@@ -161,7 +161,7 @@ fn test_causal_basic_010_outcome_query() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("outcome", 384);
-    let (intent, _) = ctx
+    let (intent, _, _) = ctx
         .engine
         .query("What was the outcome?", &query_emb, 10, None, None)
         .unwrap();
@@ -1428,7 +1428,7 @@ fn test_causal_mixed_001_causal_with_temporal() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("why recently", 384);
-    let (intent, _) = ctx
+    let (intent, _, _) = ctx
         .engine
         .query("Why did this happen recently?", &query_emb, 10, None, None)
         .unwrap();
@@ -1442,7 +1442,7 @@ fn test_causal_mixed_002_multiple_why() {
     let ctx = TestContext::new(Config::default());
 
     let query_emb = generate_test_embedding("why why", 384);
-    let (intent, _) = ctx
+    let (intent, _, _) = ctx
         .engine
         .query("Why, oh why, did this happen?", &query_emb, 10, None, None)
         .unwrap();
@@ -1483,7 +1483,7 @@ fn test_causal_mixed_003_causal_chain_semantic_query() {
 
     // Query with causal intent
     let query_emb = generate_test_embedding("storm work home", 384);
-    let (intent, _results) = ctx
+    let (intent, _results, _profile_ctx) = ctx
         .engine
         .query("Why did I work from home?", &query_emb, 10, None, None)
         .unwrap();

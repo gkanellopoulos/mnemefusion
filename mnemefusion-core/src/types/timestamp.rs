@@ -97,6 +97,32 @@ impl Timestamp {
         self.0.to_le_bytes()
     }
 
+    /// Parse ISO-8601 date string "YYYY-MM-DD" into Timestamp (midnight UTC).
+    /// Returns None if the string is malformed or out of range.
+    pub fn from_iso8601_date(s: &str) -> Option<Self> {
+        let parts: Vec<&str> = s.split('-').collect();
+        if parts.len() != 3 {
+            return None;
+        }
+        let year: i64 = parts[0].parse().ok()?;
+        let month: u32 = parts[1].parse().ok()?;
+        let day: u32 = parts[2].parse().ok()?;
+        if month < 1 || month > 12 || day < 1 || day > 31 {
+            return None;
+        }
+        // Reject dates before Unix epoch
+        if year < 1970 {
+            return None;
+        }
+
+        let days = days_from_civil(year, month, day);
+        if days < 0 {
+            return None;
+        }
+        let micros = (days as u64) * 86_400 * 1_000_000;
+        Some(Self(micros))
+    }
+
     /// Create from bytes
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         if bytes.len() != 8 {
@@ -109,6 +135,18 @@ impl Timestamp {
         array.copy_from_slice(bytes);
         Ok(Self(u64::from_le_bytes(array)))
     }
+}
+
+/// Convert civil date (year, month, day) to days since Unix epoch (1970-01-01).
+/// Uses Howard Hinnant's algorithm. Accurate for all dates in the Gregorian calendar.
+fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = (y - era * 400) as u32; // year of era [0, 399]
+    let m_adj = if m > 2 { m - 3 } else { m + 9 }; // adjusted month [0, 11]
+    let doy = (153 * m_adj as u32 + 2) / 5 + d - 1; // day of year [0, 365]
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // day of era [0, 146096]
+    era * 146097 + doe as i64 - 719468 // days since 1970-01-01
 }
 
 impl Default for Timestamp {
@@ -212,6 +250,65 @@ mod tests {
     fn test_timestamp_invalid_bytes() {
         let result = Timestamp::from_bytes(&[1, 2, 3]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_iso8601_date_valid() {
+        // 2023-03-11 = known date
+        let ts = Timestamp::from_iso8601_date("2023-03-11").unwrap();
+        // 2023-03-11 00:00:00 UTC = 1678492800 Unix seconds
+        let expected_secs = 1678492800.0;
+        assert!(
+            (ts.as_unix_secs() - expected_secs).abs() < 1.0,
+            "Expected ~{}, got {}",
+            expected_secs,
+            ts.as_unix_secs()
+        );
+    }
+
+    #[test]
+    fn test_from_iso8601_date_invalid_format() {
+        assert!(Timestamp::from_iso8601_date("not-a-date").is_none());
+        assert!(Timestamp::from_iso8601_date("2023/03/11").is_none());
+        assert!(Timestamp::from_iso8601_date("2023-13-01").is_none()); // month > 12
+        assert!(Timestamp::from_iso8601_date("2023-00-01").is_none()); // month < 1
+        assert!(Timestamp::from_iso8601_date("2023-01-00").is_none()); // day < 1
+        assert!(Timestamp::from_iso8601_date("2023-01-32").is_none()); // day > 31
+        assert!(Timestamp::from_iso8601_date("").is_none());
+    }
+
+    #[test]
+    fn test_from_iso8601_date_boundary() {
+        // Unix epoch
+        let epoch = Timestamp::from_iso8601_date("1970-01-01").unwrap();
+        assert_eq!(epoch.as_micros(), 0);
+
+        // Before epoch
+        assert!(Timestamp::from_iso8601_date("1969-12-31").is_none());
+
+        // Y2K
+        let y2k = Timestamp::from_iso8601_date("2000-01-01").unwrap();
+        let expected_secs = 946684800.0; // 2000-01-01 00:00:00 UTC
+        assert!(
+            (y2k.as_unix_secs() - expected_secs).abs() < 1.0,
+            "Y2K expected ~{}, got {}",
+            expected_secs,
+            y2k.as_unix_secs()
+        );
+    }
+
+    #[test]
+    fn test_from_iso8601_date_leap_year() {
+        // 2024 is a leap year — Feb 29 should work
+        let leap = Timestamp::from_iso8601_date("2024-02-29").unwrap();
+        // 2024-02-29 = one day after 2024-02-28
+        let feb28 = Timestamp::from_iso8601_date("2024-02-28").unwrap();
+        let diff_secs = leap.seconds_since(&feb28);
+        assert!(
+            (diff_secs - 86400.0).abs() < 1.0,
+            "Leap day should be 1 day after Feb 28, diff={}",
+            diff_secs
+        );
     }
 
     #[test]
