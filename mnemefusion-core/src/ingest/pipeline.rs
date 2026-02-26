@@ -91,7 +91,7 @@ impl IngestionPipeline {
     /// recreated on the next call to prevent GPU memory fragmentation that can
     /// cause unrecoverable crashes in llama.cpp's C++ layer.
     #[cfg(feature = "entity-extraction")]
-    const GPU_CONTEXT_RESET_INTERVAL: usize = 200;
+    const GPU_CONTEXT_RESET_INTERVAL: usize = 500;
 
     /// Create a new ingestion pipeline
     ///
@@ -1180,8 +1180,9 @@ impl IngestionPipeline {
         memory_id: &MemoryId,
         extraction: &ExtractionResult,
     ) -> Result<()> {
-        // Load known profile names once for alias resolution
-        let known_names = self.storage.list_entity_profile_names()?;
+        // Load known profile names for alias resolution (mutable: new profiles are pushed
+        // so later entities in the same extraction can resolve aliases to them)
+        let mut known_names = self.storage.list_entity_profile_names()?;
 
         // Track which entities we've already linked via entity_facts
         let mut linked_entities = std::collections::HashSet::new();
@@ -1268,7 +1269,13 @@ impl IngestionPipeline {
             // Save profile
             self.storage.store_entity_profile(&profile)?;
 
-            linked_entities.insert(entity_name.to_lowercase());
+            // Register newly-created profile so later entities can resolve aliases to it
+            let entity_name_lower = entity_name.to_lowercase();
+            if !known_names.contains(&entity_name_lower) {
+                known_names.push(entity_name_lower.clone());
+            }
+
+            linked_entities.insert(entity_name_lower);
 
             tracing::debug!(
                 "Updated entity profile '{}' with LLM fact: {} = {} (raw: '{}')",
@@ -1321,6 +1328,12 @@ impl IngestionPipeline {
 
             profile.add_source_memory(memory_id.clone());
             self.storage.store_entity_profile(&profile)?;
+
+            // Register newly-created profile so later entities can resolve aliases to it
+            let entity_name_lower = entity_name.to_lowercase();
+            if !known_names.contains(&entity_name_lower) {
+                known_names.push(entity_name_lower);
+            }
 
             tracing::debug!(
                 "Linked source memory to entity profile '{}' (no facts, entity-only, raw: '{}')",
@@ -2747,5 +2760,104 @@ mod tests {
         // With empty filter, all types should be allowed
         let dogs = pipeline.storage.get_entity_profile("dogs").unwrap();
         assert!(dogs.is_some(), "Empty filter should allow all entity types");
+    }
+
+    #[cfg(feature = "entity-extraction")]
+    #[test]
+    fn test_ingestion_alias_ordering() {
+        // Bug 1: If "Mel" is processed before "Melanie" exists, known_names
+        // won't contain "melanie" yet. With mutable known_names, "melanie" gets
+        // pushed after first profile creation, so the second extraction resolves.
+        use crate::extraction::{ExtractedEntity, ExtractedFact, ExtractionResult};
+        use crate::types::{EntityId, EntityProfile};
+
+        let (pipeline, _dir) = create_test_pipeline();
+
+        let mem1 = Memory::new("Mel loves hiking".to_string(), vec![0.1; 384]);
+        let id1 = mem1.id.clone();
+        pipeline.storage.store_memory(&mem1).unwrap();
+
+        let mem2 = Memory::new("Melanie plays guitar".to_string(), vec![0.2; 384]);
+        let id2 = mem2.id.clone();
+        pipeline.storage.store_memory(&mem2).unwrap();
+
+        // First extraction: "Mel" — no canonical exists yet, creates "mel" profile
+        let extraction1 = ExtractionResult {
+            entities: vec![ExtractedEntity {
+                name: "Mel".to_string(),
+                entity_type: "person".to_string(),
+            }],
+            entity_facts: vec![ExtractedFact {
+                entity: "Mel".to_string(),
+                fact_type: "hobby".to_string(),
+                value: "hiking".to_string(),
+                confidence: 0.9,
+            }],
+            ..Default::default()
+        };
+        pipeline
+            .update_entity_profiles_from_llm(&id1, &extraction1)
+            .unwrap();
+
+        // Second extraction: "Melanie" — should create "melanie" profile
+        let extraction2 = ExtractionResult {
+            entities: vec![ExtractedEntity {
+                name: "Melanie".to_string(),
+                entity_type: "person".to_string(),
+            }],
+            entity_facts: vec![ExtractedFact {
+                entity: "Melanie".to_string(),
+                fact_type: "instrument".to_string(),
+                value: "guitar".to_string(),
+                confidence: 0.9,
+            }],
+            ..Default::default()
+        };
+        pipeline
+            .update_entity_profiles_from_llm(&id2, &extraction2)
+            .unwrap();
+
+        // Now process a THIRD extraction with "Mel" again — should resolve to "melanie"
+        // because known_names was updated with "melanie" after extraction2
+        let mem3 = Memory::new("Mel went to the park".to_string(), vec![0.3; 384]);
+        let id3 = mem3.id.clone();
+        pipeline.storage.store_memory(&mem3).unwrap();
+
+        let extraction3 = ExtractionResult {
+            entities: vec![ExtractedEntity {
+                name: "Mel".to_string(),
+                entity_type: "person".to_string(),
+            }],
+            entity_facts: vec![ExtractedFact {
+                entity: "Mel".to_string(),
+                fact_type: "activity".to_string(),
+                value: "went to the park".to_string(),
+                confidence: 0.9,
+            }],
+            ..Default::default()
+        };
+        pipeline
+            .update_entity_profiles_from_llm(&id3, &extraction3)
+            .unwrap();
+
+        // "melanie" profile should have the guitar fact + the park activity
+        let melanie = pipeline
+            .storage
+            .get_entity_profile("melanie")
+            .unwrap()
+            .expect("melanie profile should exist");
+        assert!(
+            melanie.total_facts() >= 2,
+            "melanie should have guitar + park facts, got {}",
+            melanie.total_facts()
+        );
+        assert!(
+            melanie.source_memories.contains(&id2),
+            "melanie should have source memory from extraction2"
+        );
+        assert!(
+            melanie.source_memories.contains(&id3),
+            "melanie should have source memory from extraction3 (resolved from Mel)"
+        );
     }
 }

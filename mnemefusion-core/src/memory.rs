@@ -427,13 +427,69 @@ impl MemoryEngine {
     ///
     /// Returns (facts_removed, profiles_deleted).
     pub fn consolidate_profiles(&self) -> Result<(usize, usize)> {
-        use crate::query::profile_search::cosine_similarity;
+        use crate::query::profile_search::{cosine_similarity, resolve_entity_alias};
 
         let embed_fn = self.pipeline.embedding_fn();
 
-        let profiles = self.storage.list_entity_profiles()?;
         let mut total_facts_removed = 0usize;
         let mut profiles_deleted = 0usize;
+
+        // Phase 0: Merge alias profiles into their canonical forms.
+        // E.g., "mel" → "melanie", "mell" → "melanie" (via fuzzy matching).
+        {
+            let mut all_names = self.storage.list_entity_profile_names()?;
+            // Sort by length (shortest first) so short aliases resolve to longer canonicals
+            all_names.sort_by_key(|n| n.len());
+
+            let mut merged_away: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+            for i in 0..all_names.len() {
+                let short_name = &all_names[i];
+                if merged_away.contains(short_name) {
+                    continue;
+                }
+                if let Some(canonical) = resolve_entity_alias(short_name, &all_names) {
+                    if merged_away.contains(&canonical) {
+                        continue;
+                    }
+                    // Load both profiles
+                    let short_profile = match self.storage.get_entity_profile(short_name)? {
+                        Some(p) => p,
+                        None => continue,
+                    };
+                    let mut canon_profile = match self.storage.get_entity_profile(&canonical)? {
+                        Some(p) => p,
+                        None => continue,
+                    };
+
+                    // Move all facts from short → canonical (add_fact handles dedup)
+                    for (_fact_type, facts) in &short_profile.facts {
+                        for fact in facts {
+                            canon_profile.add_fact(fact.clone());
+                        }
+                    }
+
+                    // Move all source_memories
+                    for mem_id in &short_profile.source_memories {
+                        canon_profile.add_source_memory(mem_id.clone());
+                    }
+
+                    // Save canonical, delete alias
+                    self.storage.store_entity_profile(&canon_profile)?;
+                    self.storage.delete_entity_profile(short_name)?;
+                    merged_away.insert(short_name.clone());
+                    profiles_deleted += 1;
+
+                    tracing::info!(
+                        "Merged alias profile '{}' into canonical '{}'",
+                        short_name,
+                        canonical,
+                    );
+                }
+            }
+        }
+
+        let profiles = self.storage.list_entity_profiles()?;
 
         const NULL_INDICATORS: &[&str] = &[
             "none", "n/a", "na", "not specified", "not mentioned",
@@ -2894,5 +2950,86 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.content, "Event 1");
+    }
+
+    #[test]
+    fn test_consolidate_merges_aliases() {
+        use crate::types::{EntityFact, EntityId, EntityProfile};
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+
+        let mem1 = MemoryId::new();
+        let mem2 = MemoryId::new();
+
+        // Create orphan "mel" profile with 1 fact
+        let mut mel_profile = EntityProfile::new(
+            EntityId::new(),
+            "mel".to_string(),
+            "person".to_string(),
+        );
+        mel_profile.add_fact(EntityFact::new(
+            "hobby",
+            "hiking",
+            0.9,
+            mem1.clone(),
+        ));
+        mel_profile.add_source_memory(mem1.clone());
+        engine.storage.store_entity_profile(&mel_profile).unwrap();
+
+        // Create canonical "melanie" profile with 2 facts
+        let mut melanie_profile = EntityProfile::new(
+            EntityId::new(),
+            "melanie".to_string(),
+            "person".to_string(),
+        );
+        melanie_profile.add_fact(EntityFact::new(
+            "instrument",
+            "guitar",
+            0.9,
+            mem2.clone(),
+        ));
+        melanie_profile.add_fact(EntityFact::new(
+            "occupation",
+            "teacher",
+            0.8,
+            mem2.clone(),
+        ));
+        melanie_profile.add_source_memory(mem2.clone());
+        engine.storage.store_entity_profile(&melanie_profile).unwrap();
+
+        // Verify both exist before consolidation
+        assert!(engine.storage.get_entity_profile("mel").unwrap().is_some());
+        assert!(engine.storage.get_entity_profile("melanie").unwrap().is_some());
+
+        let (_facts_removed, profiles_deleted) = engine.consolidate_profiles().unwrap();
+
+        // "mel" should be merged into "melanie" and deleted
+        assert!(profiles_deleted >= 1, "At least 1 profile should be deleted (mel)");
+        assert!(
+            engine.storage.get_entity_profile("mel").unwrap().is_none(),
+            "mel profile should be deleted after merge"
+        );
+
+        // "melanie" should have all facts merged
+        let melanie = engine
+            .storage
+            .get_entity_profile("melanie")
+            .unwrap()
+            .expect("melanie should still exist");
+        assert!(
+            melanie.total_facts() >= 3,
+            "melanie should have merged facts (hiking + guitar + teacher), got {}",
+            melanie.total_facts()
+        );
+        assert!(
+            melanie.source_memories.contains(&mem1),
+            "melanie should have mem1 from merged mel"
+        );
+        assert!(
+            melanie.source_memories.contains(&mem2),
+            "melanie should have mem2 from original melanie"
+        );
     }
 }

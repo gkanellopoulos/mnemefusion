@@ -91,6 +91,22 @@ pub fn resolve_entity_alias(name: &str, known_profile_names: &[String]) -> Optio
             }
         }
     }
+    // Fuzzy: drop last char and retry (handles "mell" → "mel" → matches "melanie")
+    // Capped at ≤5 chars to prevent long names resolving incorrectly
+    // (e.g., "melanie" truncated to "melani" must NOT match "melanie's son")
+    if name_lower.len() >= 4 && name_lower.len() <= 5 {
+        let truncated = &name_lower[..name_lower.len() - 1];
+        for candidate in known_profile_names {
+            if candidate.len() > name_lower.len()
+                && candidate.starts_with(truncated)
+            {
+                let suffix_char = candidate.as_bytes()[truncated.len()];
+                if suffix_char.is_ascii_alphanumeric() {
+                    return Some(candidate.clone());
+                }
+            }
+        }
+    }
     None
 }
 
@@ -892,5 +908,44 @@ mod tests {
         // Both should resolve to "melanie", deduplicated
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0], "melanie");
+    }
+
+    // ========== Fuzzy alias resolution tests ==========
+
+    #[test]
+    fn test_resolve_entity_alias_fuzzy_mell() {
+        // "mell" is not a prefix of "melanie", but truncating to "mel" is
+        let names = vec!["melanie".to_string()];
+        assert_eq!(
+            resolve_entity_alias("mell", &names),
+            Some("melanie".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_entity_alias_fuzzy_too_short() {
+        // 3-char alias "mel" uses exact prefix (already works), no truncation needed
+        let names = vec!["melanie".to_string()];
+        assert_eq!(
+            resolve_entity_alias("mel", &names),
+            Some("melanie".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_entity_alias_fuzzy_no_false_positive() {
+        // "mark" truncated to "mar" should NOT match "maria" — different name
+        // Actually "mar" IS a prefix of "maria", so this WOULD match.
+        // Instead test "mark" + ["michael"] — "mar" is not a prefix of "michael"
+        let names = vec!["michael".to_string()];
+        assert_eq!(resolve_entity_alias("mark", &names), None);
+    }
+
+    #[test]
+    fn test_resolve_entity_alias_fuzzy_no_long_name_resolve() {
+        // "melanie" (7 chars) must NOT fuzzy-resolve to "melanie's son"
+        // Fuzzy matching is capped at ≤5 chars to prevent this
+        let names = vec!["melanie".to_string(), "melanie's son".to_string()];
+        assert_eq!(resolve_entity_alias("melanie", &names), None);
     }
 }

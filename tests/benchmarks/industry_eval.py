@@ -678,7 +678,11 @@ class MnemeFusionEvaluator:
     def __init__(self, embedding_model: str = "BAAI/bge-base-en-v1.5", use_gpu: bool = True):
         print(f"Loading embedding model: {embedding_model}")
         self.embedding_model_name = embedding_model
-        self.embedder = SentenceTransformer(embedding_model, trust_remote_code=True)
+        if use_gpu:
+            self.embedder = SentenceTransformer(embedding_model, trust_remote_code=True)
+        else:
+            self.embedder = SentenceTransformer(embedding_model, trust_remote_code=True, device="cpu")
+            print(f"  [Embedding] Forced CPU (GPU reserved for LLM extraction)")
 
         # Detect if model supports instruction-based asymmetric encoding
         self.use_query_prompt = embedding_model in self.INSTRUCTION_MODELS
@@ -1531,7 +1535,9 @@ def run_evaluation(
     print(f"Prepared {len(documents)} documents ({len(session_map)} sessions)")
 
     # Initialize components
-    evaluator = MnemeFusionEvaluator(embedding_model=embedding_model)
+    # When LLM extraction is active, keep embedder on CPU so LLM gets full GPU VRAM
+    embed_gpu = not use_llm
+    evaluator = MnemeFusionEvaluator(embedding_model=embedding_model, use_gpu=embed_gpu)
     evaluator.session_map = session_map
     evaluator.session_expand = session_expand
     evaluator.neighbor_expand = neighbor_expand
