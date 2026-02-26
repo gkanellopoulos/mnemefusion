@@ -67,14 +67,13 @@ except ImportError:
         print("Install with: cd mnemefusion-python && pip install -e .")
         sys.exit(1)
 
-# Check dependencies
+# Check dependencies — sentence-transformers is optional when using Rust embedding
 try:
     from sentence_transformers import SentenceTransformer
     import numpy as np
+    _SENTENCE_TRANSFORMERS_AVAILABLE = True
 except ImportError:
-    print("ERROR: Required packages not installed.")
-    print("Install with: pip install sentence-transformers numpy")
-    sys.exit(1)
+    _SENTENCE_TRANSFORMERS_AVAILABLE = False
 
 try:
     from openai import OpenAI
@@ -678,35 +677,53 @@ class MnemeFusionEvaluator:
     def __init__(self, embedding_model: str = "BAAI/bge-base-en-v1.5", use_gpu: bool = True):
         print(f"Loading embedding model: {embedding_model}")
         self.embedding_model_name = embedding_model
-        if use_gpu:
-            self.embedder = SentenceTransformer(embedding_model, trust_remote_code=True)
+        self.use_query_prompt = False
+        self.query_prefix = ""
+        self.doc_prefix = ""
+
+        # Rust embedding mode: if embedding_model is a local directory path, let
+        # mnemefusion-core (fastembed/ONNX) handle embedding — no Python ML stack needed.
+        self._rust_embed = Path(embedding_model).is_dir()
+
+        if self._rust_embed:
+            print(f"  [Embedding] Rust mode: local model dir detected — fastembed will embed in Rust")
+            self.embedder = None
+            # BGE-base-en-v1.5 produces 768-dim vectors
+            self.embedding_dim = 768
         else:
-            self.embedder = SentenceTransformer(embedding_model, trust_remote_code=True, device="cpu")
-            print(f"  [Embedding] Forced CPU (GPU reserved for LLM extraction)")
+            if not _SENTENCE_TRANSFORMERS_AVAILABLE:
+                print("ERROR: sentence-transformers not installed and embedding_model is not a local path.")
+                print("Either install sentence-transformers or pass a local model directory path.")
+                sys.exit(1)
+            if use_gpu:
+                self.embedder = SentenceTransformer(embedding_model, trust_remote_code=True)
+            else:
+                self.embedder = SentenceTransformer(embedding_model, trust_remote_code=True, device="cpu")
+                print(f"  [Embedding] Forced CPU (GPU reserved for LLM extraction)")
 
-        # Detect if model supports instruction-based asymmetric encoding
-        self.use_query_prompt = embedding_model in self.INSTRUCTION_MODELS
-        if self.use_query_prompt:
-            print(f"  [Embedding] Asymmetric mode: queries use prompt_name='query'")
+            # Detect if model supports instruction-based asymmetric encoding
+            self.use_query_prompt = embedding_model in self.INSTRUCTION_MODELS
+            if self.use_query_prompt:
+                print(f"  [Embedding] Asymmetric mode: queries use prompt_name='query'")
 
-        # Detect if model needs manual text prefixes
-        prefixes = self.PREFIX_MODELS.get(embedding_model)
-        self.query_prefix = prefixes[0] if prefixes else ""
-        self.doc_prefix = prefixes[1] if prefixes else ""
-        if prefixes:
-            print(f"  [Embedding] Prefix mode: query='{self.query_prefix}', doc='{self.doc_prefix}'")
+            # Detect if model needs manual text prefixes
+            prefixes = self.PREFIX_MODELS.get(embedding_model)
+            self.query_prefix = prefixes[0] if prefixes else ""
+            self.doc_prefix = prefixes[1] if prefixes else ""
+            if prefixes:
+                print(f"  [Embedding] Prefix mode: query='{self.query_prefix}', doc='{self.doc_prefix}'")
 
-        if use_gpu:
-            try:
-                import torch
-                if torch.cuda.is_available():
-                    self.embedder.to('cuda')
-                    print(f"  [OK] Using GPU: {torch.cuda.get_device_name(0)}")
-            except:
-                print("  [INFO] GPU not available, using CPU")
+            if use_gpu:
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        self.embedder.to('cuda')
+                        print(f"  [OK] Using GPU: {torch.cuda.get_device_name(0)}")
+                except:
+                    print("  [INFO] GPU not available, using CPU")
 
-        self.embedding_dim = self.embedder.get_sentence_embedding_dimension()
-        print(f"  Embedding dimension: {self.embedding_dim}")
+            self.embedding_dim = self.embedder.get_sentence_embedding_dimension()
+            print(f"  Embedding dimension: {self.embedding_dim}")
 
         self.memory = None
         self.db_path = None
@@ -724,6 +741,11 @@ class MnemeFusionEvaluator:
             "embedding_dim": self.embedding_dim,
             "entity_extraction_enabled": True,
         }
+
+        # Pass local model path to Rust for fastembed auto-embedding
+        if self._rust_embed:
+            config["embedding_model"] = self.embedding_model_name
+            print(f"  [Embedding] Rust embedding model path: {self.embedding_model_name}")
 
         if adaptive_k_threshold > 0.0:
             config["adaptive_k_threshold"] = adaptive_k_threshold
@@ -748,12 +770,14 @@ class MnemeFusionEvaluator:
                 print(f"  [LLM] Make sure the wheel was built with --features entity-extraction")
 
         # Set embedding function for fact embeddings (enables semantic ProfileSearch)
-        try:
-            doc_pfx = self.doc_prefix
-            self.memory.set_embedding_fn(lambda text: self.embedder.encode(doc_pfx + text, show_progress_bar=False).tolist())
-            print(f"  [Embedding] Fact embedding function set (semantic ProfileSearch enabled)")
-        except Exception as e:
-            print(f"  [Embedding] Warning: set_embedding_fn not available: {e}")
+        # Skip in Rust mode — fastembed handles all embedding internally
+        if not self._rust_embed:
+            try:
+                doc_pfx = self.doc_prefix
+                self.memory.set_embedding_fn(lambda text: self.embedder.encode(doc_pfx + text, show_progress_bar=False).tolist())
+                print(f"  [Embedding] Fact embedding function set (semantic ProfileSearch enabled)")
+            except Exception as e:
+                print(f"  [Embedding] Warning: set_embedding_fn not available: {e}")
 
         # Backfill fact embeddings for existing profiles (one-time, ~4s)
         try:
@@ -799,22 +823,27 @@ class MnemeFusionEvaluator:
         # Note: Speaker differentiation is handled by the entity scoring dimension
         # (Step 2.1/2.2), not the embedding space. Contextual embeddings were tested
         # in S22 and caused a -12.9pt regression due to query/document mismatch.
-        print("  Generating embeddings...")
-        # Batch size 16 for larger models (0.6B+) on 4GB VRAM GPUs.
-        # BGE-base (110M) handles 64, but Qwen3-Embedding (0.6B) OOMs at 64.
-        batch_size = 16
-        all_embeddings = []
+        # In Rust mode, skip Python embedding — fastembed handles it in Rust.
+        if self._rust_embed:
+            all_embeddings = [None] * len(contents)
+            print("  [Embedding] Rust mode — skipping Python embedding generation")
+        else:
+            print("  Generating embeddings...")
+            # Batch size 16 for larger models (0.6B+) on 4GB VRAM GPUs.
+            # BGE-base (110M) handles 64, but Qwen3-Embedding (0.6B) OOMs at 64.
+            batch_size = 16
+            all_embeddings = []
 
-        for i in range(0, len(contents), batch_size):
-            batch_contents = contents[i:i+batch_size]
+            for i in range(0, len(contents), batch_size):
+                batch_contents = contents[i:i+batch_size]
 
-            # Apply document prefix for models that need it (e.g., nomic).
-            encode_contents = [self.doc_prefix + c for c in batch_contents] if self.doc_prefix else batch_contents
-            embeddings = self.embedder.encode(encode_contents, show_progress_bar=False)
-            all_embeddings.extend(embeddings.tolist())
+                # Apply document prefix for models that need it (e.g., nomic).
+                encode_contents = [self.doc_prefix + c for c in batch_contents] if self.doc_prefix else batch_contents
+                embeddings = self.embedder.encode(encode_contents, show_progress_bar=False)
+                all_embeddings.extend(embeddings.tolist())
 
-            if (i + batch_size) % 500 == 0:
-                print(f"    Embedded {min(i + batch_size, len(contents))}/{len(contents)}")
+                if (i + batch_size) % 500 == 0:
+                    print(f"    Embedded {min(i + batch_size, len(contents))}/{len(contents)}")
 
         # Ingest into MnemeFusion
         print("  Adding to memory store...")
@@ -911,9 +940,11 @@ class MnemeFusionEvaluator:
             for i, (doc_id, content, metadata) in enumerate(documents):
                 mem_entry = {
                     "content": content,
-                    "embedding": all_embeddings[i],
                     "metadata": metadata
                 }
+                # Only include embedding when not in Rust mode
+                if all_embeddings[i] is not None:
+                    mem_entry["embedding"] = all_embeddings[i]
                 # Parse session_date to Unix timestamp for temporal indexing
                 session_date = metadata.get('session_date', '')
                 if session_date:
@@ -963,12 +994,15 @@ class MnemeFusionEvaluator:
         Returns:
             Tuple of (formatted contents, dialog_ids, latency_ms, profile_context)
         """
-        # Generate query embedding (with instruction prefix for asymmetric models)
-        encode_kwargs = {"show_progress_bar": False}
-        if self.use_query_prompt:
-            encode_kwargs["prompt_name"] = "query"
-        query_text = self.query_prefix + query if self.query_prefix else query
-        query_embedding = self.embedder.encode([query_text], **encode_kwargs)[0].tolist()
+        # Generate query embedding — in Rust mode, fastembed handles it internally
+        if self._rust_embed:
+            query_embedding = None
+        else:
+            encode_kwargs = {"show_progress_bar": False}
+            if self.use_query_prompt:
+                encode_kwargs["prompt_name"] = "query"
+            query_text = self.query_prefix + query if self.query_prefix else query
+            query_embedding = self.embedder.encode([query_text], **encode_kwargs)[0].tolist()
 
         # Use multi-dimensional query (not just vector search)
         start = time.time()
@@ -2050,8 +2084,9 @@ Examples:
     parser.add_argument(
         "--embedding-model",
         default="BAAI/bge-base-en-v1.5",
-        help="Sentence-transformers embedding model (default: BAAI/bge-base-en-v1.5). "
-             "Try Qwen/Qwen3-Embedding-0.6B for better retrieval quality."
+        help="Embedding model. Two modes: (1) HuggingFace model ID (e.g. BAAI/bge-base-en-v1.5) — "
+             "uses sentence-transformers in Python; (2) local directory path (e.g. models/bge-base-en-v1.5) "
+             "— uses fastembed in Rust (no sentence-transformers needed)."
     )
     parser.add_argument(
         "--nscale-extract",

@@ -18,6 +18,10 @@ slm = ["mnemefusion-core/slm"]
 entity-extraction = ["mnemefusion-core/entity-extraction"]
 # Entity extraction with CUDA GPU acceleration
 entity-extraction-cuda = ["entity-extraction", "mnemefusion-core/entity-extraction-cuda"]
+# ONNX embedding model (fastembed) — automatic text vectorization
+embedding-onnx = ["mnemefusion-core/embedding-onnx"]
+# Everything: CUDA entity extraction + ONNX embedding
+full = ["entity-extraction-cuda", "embedding-onnx"]
 
 [profile.release]
 lto = true

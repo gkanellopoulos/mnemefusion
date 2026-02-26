@@ -52,7 +52,7 @@ fn test_entity_basic_001_about_query() {
     let query_embedding = generate_test_embedding("about Alice", 384);
     let (intent, _results, _profile_ctx) = ctx
         .engine
-        .query("Tell me about Alice", &query_embedding, 10, None, None)
+        .query("Tell me about Alice", query_embedding.clone(), 10, None, None)
         .unwrap();
 
     // Should detect entity intent
@@ -80,7 +80,7 @@ fn test_entity_basic_002_regarding_query() {
         .engine
         .query(
             "Information regarding Project Alpha",
-            &query_embedding,
+            query_embedding.clone(),
             10,
             None,
             None,
@@ -111,7 +111,7 @@ fn test_entity_basic_003_concerning_query() {
         .engine
         .query(
             "What concerning Team Beta?",
-            &query_embedding,
+            query_embedding.clone(),
             10,
             None,
             None,
@@ -142,7 +142,7 @@ fn test_entity_basic_004_related_to_query() {
         .engine
         .query(
             "Show me items related to Q1",
-            &query_embedding,
+            query_embedding.clone(),
             10,
             None,
             None,
@@ -171,7 +171,7 @@ fn test_entity_basic_005_with_entity() {
     let query_embedding = generate_test_embedding("with Charlie", 384);
     let (intent, _results, _profile_ctx) = ctx
         .engine
-        .query("Meetings with Charlie", &query_embedding, 10, None, None)
+        .query("Meetings with Charlie", query_embedding.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(
@@ -196,7 +196,7 @@ fn test_entity_basic_006_involving_entity() {
     let query_embedding = generate_test_embedding("involving Diana", 384);
     let (intent, _results, _profile_ctx) = ctx
         .engine
-        .query("Issues involving Diana", &query_embedding, 10, None, None)
+        .query("Issues involving Diana", query_embedding.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(
@@ -221,7 +221,7 @@ fn test_entity_basic_007_mention_query() {
     let query_embedding = generate_test_embedding("mention AWS", 384);
     let (intent, _results, _profile_ctx) = ctx
         .engine
-        .query("Mention AWS", &query_embedding, 10, None, None)
+        .query("Mention AWS", query_embedding.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(
@@ -248,7 +248,7 @@ fn test_entity_basic_008_capitalized_word_trigger() {
         .engine
         .query(
             "Tell me about GitHub Actions",
-            &query_embedding,
+            query_embedding.clone(),
             10,
             None,
             None,
@@ -280,7 +280,7 @@ fn test_entity_basic_009_multi_word_entity() {
         .engine
         .query(
             "What about Project Alpha Beta?",
-            &query_embedding,
+            query_embedding.clone(),
             10,
             None,
             None,
@@ -309,7 +309,7 @@ fn test_entity_basic_010_lowercase_not_entity() {
     let query_embedding = generate_test_embedding("about testing", 384);
     let (intent, _results, _profile_ctx) = ctx
         .engine
-        .query("about testing", &query_embedding, 10, None, None)
+        .query("about testing", query_embedding.clone(), 10, None, None)
         .unwrap();
 
     // Lowercase word after 'about' should NOT trigger entity intent
@@ -959,7 +959,7 @@ fn test_entity_mixed_001_entity_plus_temporal() {
         .engine
         .query(
             "What did Alice do in the last 2 days?",
-            &query_embedding,
+            query_embedding.clone(),
             10,
             None,
             None,
@@ -1011,7 +1011,7 @@ fn test_entity_mixed_002_entity_plus_causal() {
         .engine
         .query(
             "What happened because Alice joined?",
-            &query_embedding,
+            query_embedding.clone(),
             10,
             None,
             None,
@@ -1058,7 +1058,7 @@ fn test_entity_mixed_003_entity_in_recent_time() {
         .engine
         .query(
             "What did Alice do recently?",
-            &query_embedding,
+            query_embedding.clone(),
             10,
             None,
             None,
@@ -1107,7 +1107,7 @@ fn test_entity_mixed_004_multiple_entities_query() {
         .engine
         .query(
             "Interactions between Alice and Bob",
-            &query_embedding,
+            query_embedding.clone(),
             10,
             None,
             None,
@@ -1147,7 +1147,7 @@ fn test_entity_mixed_005_entity_with_factual() {
     let query_embedding = generate_test_embedding("Who knows Rust", 384);
     let (intent, _results, _profile_ctx) = ctx
         .engine
-        .query("Who knows Rust?", &query_embedding, 10, None, None)
+        .query("Who knows Rust?", query_embedding.clone(), 10, None, None)
         .unwrap();
 
     // "Who" is an entity-related question word
@@ -1182,7 +1182,7 @@ fn test_entity_mixed_006_entity_before_date() {
         .engine
         .query(
             "What did Alice do before last week?",
-            &query_embedding,
+            query_embedding.clone(),
             10,
             None,
             None,
@@ -1241,7 +1241,7 @@ fn test_entity_mixed_007_entity_causal_chain() {
         .engine
         .query(
             "What resulted from Alice's discovery?",
-            &query_embedding,
+            query_embedding.clone(),
             10,
             None,
             None,
@@ -1284,7 +1284,7 @@ fn test_entity_mixed_008_entity_with_location() {
     let query_embedding = generate_test_embedding("Alice San Francisco", 384);
     let (_intent, results, _profile_ctx) = ctx
         .engine
-        .query("Alice in San Francisco", &query_embedding, 10, None, None)
+        .query("Alice in San Francisco", query_embedding.clone(), 10, None, None)
         .unwrap();
 
     // Should find memories with both Alice and San Francisco
@@ -1326,7 +1326,7 @@ fn test_entity_mixed_009_project_timeline() {
         .engine
         .query(
             "Project Omega progress over time",
-            &query_embedding,
+            query_embedding.clone(),
             10,
             None,
             None,
@@ -1400,7 +1400,7 @@ fn test_entity_mixed_010_real_world_scenario() {
         .engine
         .query(
             "Alice's work on Acme Corp issue",
-            &query_embedding,
+            query_embedding.clone(),
             10,
             None,
             None,
@@ -1614,7 +1614,7 @@ fn test_entity_query_001_entity_intent_returns_relevant() {
     let query_embedding = generate_test_embedding("Tell me about Alice", 384);
     let (intent, results, _profile_ctx) = ctx
         .engine
-        .query("Tell me about Alice", &query_embedding, 10, None, None)
+        .query("Tell me about Alice", query_embedding.clone(), 10, None, None)
         .unwrap();
 
     // Should detect entity intent
@@ -1651,7 +1651,7 @@ fn test_entity_query_002_mixed_entity_temporal() {
         .engine
         .query(
             "What did Alice do yesterday?",
-            &query_embedding,
+            query_embedding.clone(),
             10,
             None,
             None,

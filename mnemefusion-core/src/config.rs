@@ -187,6 +187,30 @@ pub struct Config {
     /// When enabled, results are bounded by [limit/3, limit] to prevent
     /// pathological cases (too few or too many results).
     pub adaptive_k_threshold: f32,
+
+    /// Path to a local embedding model directory for automatic text vectorization.
+    ///
+    /// When set, `add()` and `query()` can be called without supplying an embedding
+    /// vector — the engine computes it automatically using fastembed (ONNX Runtime).
+    ///
+    /// The path should be the root of a fastembed/HF-hub cache directory containing
+    /// BGE-base-en-v1.5 model files. Pre-download with:
+    /// `python -c "from fastembed import TextEmbedding; TextEmbedding(['hi'])"`
+    ///
+    /// Requires the `embedding-onnx` feature at compile time.
+    ///
+    /// Default: `None` (caller must supply embeddings explicitly)
+    pub embedding_model: Option<String>,
+
+    /// Path to the LLM model file (.gguf) for entity extraction.
+    ///
+    /// Convenience alias — equivalent to calling
+    /// `engine.with_llm_entity_extraction_from_path(path, ModelTier::Balanced)` after `open()`.
+    ///
+    /// Requires the `entity-extraction` feature at compile time.
+    ///
+    /// Default: `None` (entity extraction disabled unless wired separately)
+    pub llm_model: Option<String>,
 }
 
 impl Default for Config {
@@ -215,6 +239,8 @@ impl Default for Config {
                 "location".to_string(),
             ],
             adaptive_k_threshold: 0.0, // Disabled by default (always return exactly limit)
+            embedding_model: None,
+            llm_model: None,
         }
     }
 }
@@ -545,6 +571,25 @@ impl Config {
     /// * `threshold` - Top-p threshold (0.0 to 1.0). 0.0 disables, 0.7 recommended.
     pub fn with_adaptive_k(mut self, threshold: f32) -> Self {
         self.adaptive_k_threshold = threshold.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Set the path to a local embedding model directory.
+    ///
+    /// When set, the engine automatically computes embeddings for `add()` and
+    /// `query()` calls that do not supply an explicit embedding vector.
+    ///
+    /// Requires the `embedding-onnx` feature at compile time.
+    pub fn with_embedding_model(mut self, path: impl Into<String>) -> Self {
+        self.embedding_model = Some(path.into());
+        self
+    }
+
+    /// Set the path to the LLM model file (.gguf) for entity extraction.
+    ///
+    /// Requires the `entity-extraction` feature at compile time.
+    pub fn with_llm_model(mut self, path: impl Into<String>) -> Self {
+        self.llm_model = Some(path.into());
         self
     }
 

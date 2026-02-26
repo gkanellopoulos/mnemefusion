@@ -412,7 +412,7 @@ proptest! {
 
         let (_intent, results, _profile_ctx) = engine.query(
             "test query",
-            &query_emb,
+            query_emb.clone(),
             10,
             None,
             None,
@@ -473,7 +473,7 @@ proptest! {
 
         let (_intent, results, _profile_ctx) = engine.query(
             "test query",
-            &query_emb,
+            query_emb.clone(),
             5,
             None,
             None,

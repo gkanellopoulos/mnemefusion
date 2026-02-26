@@ -129,6 +129,17 @@ pub enum Error {
     /// Entity extraction feature not available
     #[error("Entity extraction feature not available - compile with 'entity-extraction' feature")]
     EntityExtractionNotAvailable,
+
+    /// Embedding engine not configured — cannot auto-compute embeddings
+    #[error(
+        "No embedding engine configured. Either pass an explicit embedding vector \
+         or set 'embedding_model' in Config to enable automatic embedding."
+    )]
+    NoEmbeddingEngine,
+
+    /// Embedding engine feature not available
+    #[error("Embedding feature not available - compile with 'embedding-onnx' feature")]
+    EmbeddingNotAvailable,
 }
 
 /// Result type alias for MnemeFusion operations

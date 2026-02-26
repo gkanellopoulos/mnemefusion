@@ -18,7 +18,7 @@ fn test_causal_basic_001_why_query() {
     let query_emb = generate_test_embedding("why", 384);
     let (intent, _, _) = ctx
         .engine
-        .query("Why was the meeting cancelled?", &query_emb, 10, None, None)
+        .query("Why was the meeting cancelled?", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(
@@ -37,7 +37,7 @@ fn test_causal_basic_002_because_query() {
         .engine
         .query(
             "What happened because of the storm?",
-            &query_emb,
+            query_emb.clone(),
             10,
             None,
             None,
@@ -54,7 +54,7 @@ fn test_causal_basic_003_caused_query() {
     let query_emb = generate_test_embedding("caused", 384);
     let (intent, _, _) = ctx
         .engine
-        .query("What caused the delay?", &query_emb, 10, None, None)
+        .query("What caused the delay?", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Causal);
@@ -69,7 +69,7 @@ fn test_causal_basic_004_reason_query() {
         .engine
         .query(
             "What's the reason for the error?",
-            &query_emb,
+            query_emb.clone(),
             10,
             None,
             None,
@@ -86,7 +86,7 @@ fn test_causal_basic_005_led_to_query() {
     let query_emb = generate_test_embedding("led to", 384);
     let (intent, _, _) = ctx
         .engine
-        .query("What led to the decision?", &query_emb, 10, None, None)
+        .query("What led to the decision?", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Causal);
@@ -99,7 +99,7 @@ fn test_causal_basic_006_result_in_query() {
     let query_emb = generate_test_embedding("result", 384);
     let (intent, _, _) = ctx
         .engine
-        .query("What will this result in?", &query_emb, 10, None, None)
+        .query("What will this result in?", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Causal);
@@ -112,7 +112,7 @@ fn test_causal_basic_007_consequence_query() {
     let query_emb = generate_test_embedding("consequences", 384);
     let (intent, _, _) = ctx
         .engine
-        .query("What are the consequences?", &query_emb, 10, None, None)
+        .query("What are the consequences?", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Causal);
@@ -127,7 +127,7 @@ fn test_causal_basic_008_impact_query() {
         .engine
         .query(
             "What's the impact of this change?",
-            &query_emb,
+            query_emb.clone(),
             10,
             None,
             None,
@@ -146,7 +146,7 @@ fn test_causal_basic_009_effect_query() {
         .engine
         .query(
             "What's the effect of the update?",
-            &query_emb,
+            query_emb.clone(),
             10,
             None,
             None,
@@ -163,7 +163,7 @@ fn test_causal_basic_010_outcome_query() {
     let query_emb = generate_test_embedding("outcome", 384);
     let (intent, _, _) = ctx
         .engine
-        .query("What was the outcome?", &query_emb, 10, None, None)
+        .query("What was the outcome?", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Causal);
@@ -1430,7 +1430,7 @@ fn test_causal_mixed_001_causal_with_temporal() {
     let query_emb = generate_test_embedding("why recently", 384);
     let (intent, _, _) = ctx
         .engine
-        .query("Why did this happen recently?", &query_emb, 10, None, None)
+        .query("Why did this happen recently?", query_emb.clone(), 10, None, None)
         .unwrap();
 
     // Should detect causal intent (stronger than temporal)
@@ -1444,7 +1444,7 @@ fn test_causal_mixed_002_multiple_why() {
     let query_emb = generate_test_embedding("why why", 384);
     let (intent, _, _) = ctx
         .engine
-        .query("Why, oh why, did this happen?", &query_emb, 10, None, None)
+        .query("Why, oh why, did this happen?", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Causal);
@@ -1485,7 +1485,7 @@ fn test_causal_mixed_003_causal_chain_semantic_query() {
     let query_emb = generate_test_embedding("storm work home", 384);
     let (intent, _results, _profile_ctx) = ctx
         .engine
-        .query("Why did I work from home?", &query_emb, 10, None, None)
+        .query("Why did I work from home?", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Causal);

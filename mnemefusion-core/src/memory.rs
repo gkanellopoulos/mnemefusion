@@ -65,6 +65,12 @@ pub struct MemoryEngine {
     pipeline: IngestionPipeline,
     query_planner: QueryPlanner,
     config: Config,
+    /// Auto-embedding engine. Set via `Config::embedding_model` or `with_embedding_engine()`.
+    #[cfg(feature = "embedding-onnx")]
+    embedding_engine: Option<std::sync::Arc<crate::embedding::EmbeddingEngine>>,
+    /// Default namespace applied to all add/query calls when `namespace` arg is None.
+    /// Set via `with_user(user_name)`.
+    default_namespace: Option<String>,
 }
 
 impl MemoryEngine {
@@ -189,6 +195,29 @@ impl MemoryEngine {
             config.adaptive_k_threshold,
         )?;
 
+        // Initialize embedding engine if configured
+        #[cfg(feature = "embedding-onnx")]
+        let embedding_engine = if let Some(ref model_path) = config.embedding_model {
+            tracing::info!("Initializing embedding engine from '{}'...", model_path);
+            match crate::embedding::EmbeddingEngine::from_path(model_path) {
+                Ok(engine) => {
+                    tracing::info!("Embedding engine ready (dim={})", engine.dim);
+                    Some(std::sync::Arc::new(engine))
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to load embedding model from '{}': {}. \
+                         Embeddings must be supplied explicitly.",
+                        model_path,
+                        e
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Ok(Self {
             storage,
             vector_index,
@@ -198,6 +227,9 @@ impl MemoryEngine {
             pipeline,
             query_planner,
             config,
+            #[cfg(feature = "embedding-onnx")]
+            embedding_engine,
+            default_namespace: None,
         })
     }
 
@@ -282,6 +314,58 @@ impl MemoryEngine {
     #[cfg(feature = "entity-extraction")]
     pub fn set_extraction_passes(&mut self, passes: usize) {
         self.pipeline.set_extraction_passes(passes);
+    }
+
+    /// Set a default namespace (user identity) for all add/query operations.
+    ///
+    /// When set, any call to `add()` or `query()` that does not supply an explicit
+    /// `namespace` argument will use this value automatically. Equivalent to always
+    /// passing `namespace = Some(user)` — enables "Memory is per-user" semantics
+    /// without changing every call site.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mnemefusion_core::{MemoryEngine, Config};
+    /// let engine = MemoryEngine::open("./brain.mfdb", Config::default()).unwrap()
+    ///     .with_user("alice");
+    /// // All subsequent add/query calls default to namespace="alice"
+    /// ```
+    pub fn with_user(mut self, user: impl Into<String>) -> Self {
+        self.default_namespace = Some(user.into());
+        self
+    }
+
+    /// Attach an embedding engine for automatic text vectorization.
+    ///
+    /// After this call, `add()` and `query()` can be called without supplying
+    /// explicit embedding vectors.
+    ///
+    /// Requires the `embedding-onnx` feature at compile time.
+    #[cfg(feature = "embedding-onnx")]
+    pub fn with_embedding_engine(
+        mut self,
+        engine: crate::embedding::EmbeddingEngine,
+    ) -> Self {
+        self.embedding_engine = Some(std::sync::Arc::new(engine));
+        self
+    }
+
+    /// Auto-compute an embedding using the configured engine.
+    ///
+    /// Returns `Err(Error::NoEmbeddingEngine)` if no engine is configured.
+    #[cfg(feature = "embedding-onnx")]
+    fn auto_embed(&self, text: &str) -> Result<Vec<f32>> {
+        self.embedding_engine
+            .as_ref()
+            .ok_or(Error::NoEmbeddingEngine)?
+            .embed(text)
+    }
+
+    /// Auto-compute an embedding (always errors when feature is disabled).
+    #[cfg(not(feature = "embedding-onnx"))]
+    fn auto_embed(&self, _text: &str) -> Result<Vec<f32>> {
+        Err(Error::NoEmbeddingEngine)
     }
 
     /// Set the embedding function for computing fact embeddings at ingestion time.
@@ -641,12 +725,18 @@ impl MemoryEngine {
     pub fn add(
         &self,
         content: String,
-        embedding: Vec<f32>,
+        embedding: impl Into<Option<Vec<f32>>>,
         metadata: Option<HashMap<String, String>>,
         timestamp: Option<Timestamp>,
         source: Option<Source>,
         namespace: Option<&str>,
     ) -> Result<MemoryId> {
+        // Resolve embedding: use provided value or auto-compute from content
+        let embedding = match embedding.into() {
+            Some(e) => e,
+            None => self.auto_embed(&content)?,
+        };
+
         // Validate embedding dimension
         if embedding.len() != self.config.embedding_dim {
             return Err(Error::InvalidEmbeddingDimension {
@@ -654,6 +744,9 @@ impl MemoryEngine {
                 got: embedding.len(),
             });
         }
+
+        // Apply default namespace if caller didn't supply one
+        let effective_ns = namespace.or(self.default_namespace.as_deref());
 
         // Create memory
         let mut memory = if let Some(ts) = timestamp {
@@ -675,8 +768,8 @@ impl MemoryEngine {
             memory.set_source(src)?;
         }
 
-        // Set namespace if provided (defaults to empty string)
-        memory.set_namespace(namespace.unwrap_or(""));
+        // Set namespace (defaults to empty string)
+        memory.set_namespace(effective_ns.unwrap_or(""));
 
         // Delegate to ingestion pipeline for atomic indexing
         self.pipeline.add(memory)
@@ -1280,15 +1373,24 @@ impl MemoryEngine {
     pub fn query(
         &self,
         query_text: &str,
-        query_embedding: &[f32],
+        query_embedding: impl Into<Option<Vec<f32>>>,
         limit: usize,
         namespace: Option<&str>,
         filters: Option<&[MetadataFilter]>,
     ) -> Result<(IntentClassification, Vec<(Memory, FusedResult)>, Vec<String>)> {
+        // Resolve query embedding: use provided value or auto-compute from query text
+        let embedding_vec: Vec<f32> = match query_embedding.into() {
+            Some(e) => e,
+            None => self.auto_embed(query_text)?,
+        };
+
+        // Apply default namespace if caller didn't supply one
+        let effective_ns = namespace.or(self.default_namespace.as_deref());
+
         // Execute query using query planner
         let (intent, fused_results, matched_facts) =
             self.query_planner
-                .query(query_text, query_embedding, limit, namespace, filters)?;
+                .query(query_text, &embedding_vec, limit, effective_ns, filters)?;
 
         // Build profile context as SEPARATE strings (not mixed into results).
         // Profile facts contain entity knowledge ("Caroline's hobby: painting") but
@@ -2155,7 +2257,7 @@ impl<'a> ScopedMemory<'a> {
     ) -> Result<(IntentClassification, Vec<(Memory, FusedResult)>, Vec<String>)> {
         self.engine.query(
             query_text,
-            query_embedding,
+            query_embedding.to_vec(),
             limit,
             Some(&self.namespace),
             filters,
@@ -2903,7 +3005,7 @@ mod tests {
         // Query with filter
         let filters = vec![MetadataFilter::eq("priority", "high")];
         let (_intent, results, _profile_ctx) = engine
-            .query("meeting", &vec![0.1; 384], 10, None, Some(&filters))
+            .query("meeting", vec![0.1f32; 384], 10, None, Some(&filters))
             .unwrap();
 
         assert_eq!(results.len(), 1);
@@ -3031,5 +3133,82 @@ mod tests {
             melanie.source_memories.contains(&mem2),
             "melanie should have mem2 from original melanie"
         );
+    }
+
+    // ======= Embedding-auto tests =======
+
+    #[test]
+    fn test_add_explicit_embedding_still_works() {
+        // Existing callers that pass Vec<f32> directly should compile and work
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+        let embedding = vec![0.1f32; 384];
+        // Vec<f32> implements Into<Option<Vec<f32>>> — this must compile
+        let id = engine
+            .add("Alice loves hiking".to_string(), embedding, None, None, None, None)
+            .unwrap();
+        assert!(engine.get(&id).unwrap().is_some());
+    }
+
+    #[test]
+    fn test_add_some_embedding_works() {
+        // Some(Vec<f32>) should also compile
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+        let id = engine
+            .add(
+                "Test content".to_string(),
+                Some(vec![0.2f32; 384]),
+                None, None, None, None,
+            )
+            .unwrap();
+        assert!(engine.get(&id).unwrap().is_some());
+    }
+
+    #[test]
+    fn test_add_none_embedding_without_engine_errors() {
+        // None embedding without embedding engine configured → Error::NoEmbeddingEngine
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+        let result = engine.add(
+            "Test".to_string(),
+            None::<Vec<f32>>,
+            None, None, None, None,
+        );
+        assert!(
+            result.is_err(),
+            "Expected error when no embedding engine configured"
+        );
+        assert!(matches!(result.unwrap_err(), Error::NoEmbeddingEngine));
+    }
+
+    #[test]
+    fn test_with_user_sets_default_namespace() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = MemoryEngine::open(&path, Config::default())
+            .unwrap()
+            .with_user("alice");
+        assert_eq!(engine.default_namespace.as_deref(), Some("alice"));
+
+        // add() with no explicit namespace should use "alice"
+        let id = engine
+            .add("Alice's memory".to_string(), vec![0.1f32; 384], None, None, None, None)
+            .unwrap();
+        let mem = engine.get(&id).unwrap().unwrap();
+        assert_eq!(mem.get_namespace(), "alice");
+    }
+
+    #[test]
+    fn test_query_none_embedding_without_engine_errors() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+        let result = engine.query("test query", None::<Vec<f32>>, 10, None, None);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), Error::NoEmbeddingEngine));
     }
 }

@@ -61,6 +61,9 @@ pub mod inference;
 #[cfg(feature = "entity-extraction")]
 pub mod extraction;
 
+// Embedding engine module (only available with embedding-onnx feature)
+pub mod embedding;
+
 // Public API exports
 pub use config::Config;
 pub use error::{Error, Result};
@@ -87,6 +90,10 @@ pub use inference::{InferenceEngine, JsonGrammar};
 // Entity extraction exports (only available with entity-extraction feature)
 #[cfg(feature = "entity-extraction")]
 pub use extraction::{ExtractedEntity, ExtractedFact, ExtractionResult, LlmEntityExtractor, ModelTier};
+
+// Embedding engine export (only available with embedding-onnx feature)
+#[cfg(feature = "embedding-onnx")]
+pub use embedding::EmbeddingEngine;
 
 pub use types::{
     AddResult, BatchError, BatchResult, Entity, EntityId, FilterOp, Memory, MemoryId, MemoryInput,

@@ -213,21 +213,30 @@ impl PyMemory {
     ///
     /// Args:
     ///     path: Path to the .mfdb file
-    ///     config: Optional configuration dictionary
+    ///     config: Optional configuration dictionary. Supported keys:
+    ///         - embedding_dim (int): Embedding vector dimension (default: 384)
+    ///         - embedding_model (str): Path to fastembed model cache for auto-embedding
+    ///         - llm_model (str): Path to GGUF file for entity extraction
+    ///         - entity_extraction_enabled (bool)
+    ///         - extraction_passes (int): LLM passes per document (1-10)
+    ///         - adaptive_k_threshold (float): Top-p threshold (0=disabled)
+    ///         - indexed_metadata (list[str]): Metadata fields to index
+    ///     user: Optional user identity string. When set, all add/query calls
+    ///           default to this namespace — enables per-user memory isolation.
     ///
     /// Returns:
     ///     A new Memory instance
     ///
     /// Example:
     ///     >>> memory = Memory("brain.mfdb")
-    ///     >>> memory = Memory("brain.mfdb", config={"embedding_dim": 384})
-    ///     >>> # Enable SLM metadata extraction at ingestion (recommended)
-    ///     >>> memory = Memory("brain.mfdb", config={"use_slm": True, "slm_model_path": "/path/to/model"})
-    ///     >>> # Disable SLM query classification for fast queries (default: False)
-    ///     >>> memory = Memory("brain.mfdb", config={"use_slm": True, "slm_query_classification_enabled": False})
+    ///     >>> memory = Memory("brain.mfdb", config={"embedding_dim": 768})
+    ///     >>> # Auto-embedding (no need to pass embeddings manually):
+    ///     >>> memory = Memory("brain.mfdb", config={"embedding_model": "~/.cache/fastembed"})
+    ///     >>> # Per-user memory:
+    ///     >>> memory = Memory("brain.mfdb", user="alice")
     #[new]
-    #[pyo3(signature = (path, config=None))]
-    fn new(path: &str, config: Option<&PyDict>) -> PyResult<Self> {
+    #[pyo3(signature = (path, config=None, user=None))]
+    fn new(path: &str, config: Option<&PyDict>, user: Option<&str>) -> PyResult<Self> {
         let mut rust_config = Config::default();
 
         if let Some(cfg) = config {
@@ -245,6 +254,14 @@ impl PyMemory {
             }
             if let Some(ak) = cfg.get_item("adaptive_k_threshold")? {
                 rust_config.adaptive_k_threshold = ak.extract::<f32>()?.clamp(0.0, 1.0);
+            }
+            if let Some(embedding_model) = cfg.get_item("embedding_model")? {
+                let model_path: String = embedding_model.extract()?;
+                rust_config = rust_config.with_embedding_model(model_path);
+            }
+            if let Some(llm_model) = cfg.get_item("llm_model")? {
+                let model_path: String = llm_model.extract()?;
+                rust_config = rust_config.with_llm_model(model_path);
             }
 
             // SLM configuration (only available with 'slm' feature)
@@ -276,8 +293,13 @@ impl PyMemory {
             }
         }
 
-        let engine = MemoryEngine::open(PathBuf::from(path), rust_config)
+        let mut engine = MemoryEngine::open(PathBuf::from(path), rust_config)
             .map_err(|e| PyIOError::new_err(format!("Failed to open database: {}", e)))?;
+
+        // Apply user identity if provided
+        if let Some(u) = user {
+            engine = engine.with_user(u);
+        }
 
         Ok(Self {
             engine: RefCell::new(Some(engine)),
@@ -288,7 +310,8 @@ impl PyMemory {
     ///
     /// Args:
     ///     content: Text content to store
-    ///     embedding: Vector embedding (list of floats)
+    ///     embedding: Optional vector embedding (list of floats).
+    ///                If omitted, requires `embedding_model` in config for auto-computation.
     ///     metadata: Optional metadata dictionary
     ///     timestamp: Optional Unix timestamp (seconds since epoch)
     ///     source: Optional source/provenance tracking dictionary
@@ -298,17 +321,16 @@ impl PyMemory {
     ///     Memory ID as a string
     ///
     /// Example:
-    ///     >>> embedding = [0.1] * 384
-    ///     >>> memory_id = memory.add("Meeting notes", embedding)
-    ///     >>> memory_id = memory.add("Meeting notes", embedding, metadata={"project": "Alpha"})
-    ///     >>> source = {"type": "conversation", "id": "conv_123", "confidence": 0.95}
-    ///     >>> memory_id = memory.add("Meeting notes", embedding, source=source)
-    ///     >>> memory_id = memory.add("Meeting notes", embedding, namespace="user_123")
-    #[pyo3(signature = (content, embedding, metadata=None, timestamp=None, source=None, namespace=None))]
+    ///     >>> # With explicit embedding (backward-compatible):
+    ///     >>> memory_id = memory.add("Meeting notes", embedding=[0.1] * 768)
+    ///     >>> # Without embedding (requires embedding_model in config):
+    ///     >>> memory_id = memory.add("Meeting notes")
+    ///     >>> memory_id = memory.add("Meeting notes", metadata={"project": "Alpha"})
+    #[pyo3(signature = (content, embedding=None, metadata=None, timestamp=None, source=None, namespace=None))]
     fn add(
         &self,
         content: String,
-        embedding: Vec<f32>,
+        embedding: Option<Vec<f32>>,
         metadata: Option<HashMap<String, String>>,
         timestamp: Option<f64>,
         source: Option<&PyDict>,
@@ -756,9 +778,11 @@ impl PyMemory {
     ///
     /// Args:
     ///     query_text: Natural language query
-    ///     query_embedding: Query vector (list of floats)
+    ///     query_embedding: Optional query vector (list of floats).
+    ///                      If omitted, requires `embedding_model` in config for auto-computation.
     ///     limit: Maximum number of results
     ///     namespace: Optional namespace filter. Only returns memories from this namespace
+    ///     filters: Optional list of metadata filter dicts
     ///
     /// Returns:
     ///     Tuple of (intent_dict, results_list, profile_context)
@@ -767,21 +791,17 @@ impl PyMemory {
     ///     - profile_context: List of profile context strings (summaries or formatted facts)
     ///
     /// Example:
-    ///     >>> intent, results, profile_ctx = memory.query("Why was the meeting cancelled?", embedding, 10)
-    ///     >>> intent, results, profile_ctx = memory.query("Why?", embedding, 10, namespace="user_123")
-    ///     >>> # With filters
-    ///     >>> filters = [{"field": "priority", "op": "eq", "value": "high"}]
-    ///     >>> intent, results, profile_ctx = memory.query("meetings", embedding, 10, filters=filters)
-    ///     >>> print(f"Intent: {intent['intent']} (confidence: {intent['confidence']:.2f})")
-    ///     >>> print(f"Profile context: {len(profile_ctx)} entries")
-    ///     >>> for mem, scores in results:
-    ///     >>>     print(f"Fused score: {scores['fused_score']:.3f}")
-    ///     >>>     print(f"  Content: {mem['content']}")
-    #[pyo3(signature = (query_text, query_embedding, limit, namespace=None, filters=None))]
+    ///     >>> # With explicit embedding (backward-compatible):
+    ///     >>> intent, results, ctx = memory.query("Why cancelled?", query_embedding=[...], limit=10)
+    ///     >>> # Without embedding (requires embedding_model in config):
+    ///     >>> intent, results, ctx = memory.query("Why cancelled?", limit=10)
+    ///     >>> # With namespace filter:
+    ///     >>> intent, results, ctx = memory.query("Why?", limit=10, namespace="user_123")
+    #[pyo3(signature = (query_text, query_embedding=None, limit=10, namespace=None, filters=None))]
     fn query(
         &self,
         query_text: &str,
-        query_embedding: Vec<f32>,
+        query_embedding: Option<Vec<f32>>,
         limit: usize,
         namespace: Option<&str>,
         filters: Option<&PyList>,
@@ -794,7 +814,7 @@ impl PyMemory {
         let (intent, results, profile_context) = engine
             .query(
                 query_text,
-                &query_embedding,
+                query_embedding,
                 limit,
                 namespace,
                 parsed_filters.as_ref().map(|v| v.as_slice()),

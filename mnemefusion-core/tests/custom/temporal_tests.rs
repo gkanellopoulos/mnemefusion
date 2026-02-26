@@ -62,7 +62,7 @@ fn test_temporal_recency_001_recent() {
     let query_emb = generate_test_embedding("recent", 384);
     let (intent, results, _profile_ctx) = ctx
         .engine
-        .query("What happened recently?", &query_emb, 10, None, None)
+        .query("What happened recently?", query_emb.clone(), 10, None, None)
         .unwrap();
 
     // Assert temporal intent detected
@@ -99,7 +99,7 @@ fn test_temporal_recency_002_latest() {
     let query_emb = generate_test_embedding("latest", 384);
     let (intent, results, _profile_ctx) = ctx
         .engine
-        .query("Show me the latest updates", &query_emb, 5, None, None)
+        .query("Show me the latest updates", query_emb.clone(), 5, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -133,7 +133,7 @@ fn test_temporal_recency_003_newest() {
     let query_emb = generate_test_embedding("newest", 384);
     let (intent, results, _profile_ctx) = ctx
         .engine
-        .query("Get newest memories", &query_emb, 10, None, None)
+        .query("Get newest memories", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -159,7 +159,7 @@ fn test_temporal_recency_004_yesterday() {
     let query_emb = generate_test_embedding("yesterday", 384);
     let (intent, _, _) = ctx
         .engine
-        .query("What happened yesterday?", &query_emb, 10, None, None)
+        .query("What happened yesterday?", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -182,7 +182,7 @@ fn test_temporal_recency_005_today() {
     let query_emb = generate_test_embedding("today", 384);
     let (intent, _, _) = ctx
         .engine
-        .query("Show me what I did today", &query_emb, 10, None, None)
+        .query("Show me what I did today", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -195,7 +195,7 @@ fn test_temporal_recency_006_tomorrow() {
 
     let (intent, _, _) = ctx
         .engine
-        .query("What's scheduled for tomorrow?", &query_emb, 10, None, None)
+        .query("What's scheduled for tomorrow?", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -208,7 +208,7 @@ fn test_temporal_recency_007_when() {
 
     let (intent, _, _) = ctx
         .engine
-        .query("When did this happen?", &query_emb, 10, None, None)
+        .query("When did this happen?", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -221,7 +221,7 @@ fn test_temporal_recency_008_since() {
 
     let (intent, _, _) = ctx
         .engine
-        .query("What changed since Monday?", &query_emb, 10, None, None)
+        .query("What changed since Monday?", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -236,7 +236,7 @@ fn test_temporal_recency_009_before() {
         .engine
         .query(
             "Show me tasks before the meeting",
-            &query_emb,
+            query_emb.clone(),
             10,
             None,
             None,
@@ -253,7 +253,7 @@ fn test_temporal_recency_010_after() {
 
     let (intent, _, _) = ctx
         .engine
-        .query("What happened after lunch?", &query_emb, 10, None, None)
+        .query("What happened after lunch?", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -266,7 +266,7 @@ fn test_temporal_recency_011_earlier() {
 
     let (intent, _, _) = ctx
         .engine
-        .query("Show me earlier notes", &query_emb, 10, None, None)
+        .query("Show me earlier notes", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -279,7 +279,7 @@ fn test_temporal_recency_012_until() {
 
     let (intent, _, _) = ctx
         .engine
-        .query("Events until Friday", &query_emb, 10, None, None)
+        .query("Events until Friday", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -294,7 +294,7 @@ fn test_temporal_recency_013_multiple_temporal_keywords() {
         .engine
         .query(
             "Show me the most recent and latest updates from yesterday",
-            &query_emb,
+            query_emb.clone(),
             10,
             None,
             None,
@@ -325,7 +325,7 @@ fn test_temporal_recency_014_ordering() {
     let query_emb = generate_test_embedding("recent", 384);
     let (_, results, _) = ctx
         .engine
-        .query("Show recent memories", &query_emb, 5, None, None)
+        .query("Show recent memories", query_emb.clone(), 5, None, None)
         .unwrap();
 
     // Results should be ordered by recency (newest first)
@@ -357,7 +357,7 @@ fn test_temporal_recency_015_temporal_score_decreasing() {
     let query_emb = generate_test_embedding("recent", 384);
     let (_, results, _) = ctx
         .engine
-        .query("recent memories", &query_emb, 3, None, None)
+        .query("recent memories", query_emb.clone(), 3, None, None)
         .unwrap();
 
     // Temporal scores should decrease for older memories
@@ -380,7 +380,7 @@ fn test_temporal_range_001_last_week() {
 
     let (intent, _, _) = ctx
         .engine
-        .query("What did I work on last week?", &query_emb, 10, None, None)
+        .query("What did I work on last week?", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -393,7 +393,7 @@ fn test_temporal_range_002_next_week() {
 
     let (intent, _, _) = ctx
         .engine
-        .query("Plans for next week", &query_emb, 10, None, None)
+        .query("Plans for next week", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -427,7 +427,7 @@ fn test_temporal_range_003_this_month() {
         .engine
         .query(
             "Show me this month's activities",
-            &query_emb,
+            query_emb.clone(),
             10,
             None,
             None,
@@ -444,7 +444,7 @@ fn test_temporal_range_004_january() {
 
     let (intent, _, _) = ctx
         .engine
-        .query("Events in January", &query_emb, 10, None, None)
+        .query("Events in January", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -473,7 +473,7 @@ fn test_temporal_range_005_month_names() {
 
         let (intent, _, _) = ctx
             .engine
-            .query(&query, &query_emb, 10, None, None)
+            .query(&query, query_emb.clone(), 10, None, None)
             .unwrap();
         assert_eq!(
             intent.intent,
@@ -491,7 +491,7 @@ fn test_temporal_range_006_monday() {
 
     let (intent, _, _) = ctx
         .engine
-        .query("What happened on Monday?", &query_emb, 10, None, None)
+        .query("What happened on Monday?", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -515,7 +515,7 @@ fn test_temporal_range_007_weekday_names() {
 
         let (intent, _, _) = ctx
             .engine
-            .query(&query, &query_emb, 10, None, None)
+            .query(&query, query_emb.clone(), 10, None, None)
             .unwrap();
         assert_eq!(
             intent.intent,
@@ -533,7 +533,7 @@ fn test_temporal_range_008_specific_date() {
 
     let (intent, _, _) = ctx
         .engine
-        .query("What happened on January 15?", &query_emb, 10, None, None)
+        .query("What happened on January 15?", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -744,7 +744,7 @@ fn test_temporal_relative_001_days_ago() {
 
     let (intent, _, _) = ctx
         .engine
-        .query("Show me notes from 3 days ago", &query_emb, 10, None, None)
+        .query("Show me notes from 3 days ago", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -757,7 +757,7 @@ fn test_temporal_relative_002_weeks_ago() {
 
     let (intent, _, _) = ctx
         .engine
-        .query("What happened 2 weeks ago?", &query_emb, 10, None, None)
+        .query("What happened 2 weeks ago?", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -770,7 +770,7 @@ fn test_temporal_relative_003_months_ago() {
 
     let (intent, _, _) = ctx
         .engine
-        .query("Events from 1 month ago", &query_emb, 10, None, None)
+        .query("Events from 1 month ago", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -783,7 +783,7 @@ fn test_temporal_relative_004_years_ago() {
 
     let (intent, _, _) = ctx
         .engine
-        .query("Memories from 1 year ago", &query_emb, 10, None, None)
+        .query("Memories from 1 year ago", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -796,7 +796,7 @@ fn test_temporal_relative_005_hours_ago() {
 
     let (intent, _, _) = ctx
         .engine
-        .query("What happened 2 hours ago?", &query_emb, 10, None, None)
+        .query("What happened 2 hours ago?", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -811,7 +811,7 @@ fn test_temporal_relative_006_earlier_today() {
         .engine
         .query(
             "Show me notes from earlier today",
-            &query_emb,
+            query_emb.clone(),
             10,
             None,
             None,
@@ -828,7 +828,7 @@ fn test_temporal_relative_007_this_morning() {
 
     let (intent, _, _) = ctx
         .engine
-        .query("What did I do this morning?", &query_emb, 10, None, None)
+        .query("What did I do this morning?", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -841,7 +841,7 @@ fn test_temporal_relative_008_last_night() {
 
     let (intent, _, _) = ctx
         .engine
-        .query("Events from last night", &query_emb, 10, None, None)
+        .query("Events from last night", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -854,7 +854,7 @@ fn test_temporal_relative_009_this_afternoon() {
 
     let (intent, _, _) = ctx
         .engine
-        .query("What happened this afternoon?", &query_emb, 10, None, None)
+        .query("What happened this afternoon?", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -869,7 +869,7 @@ fn test_temporal_relative_010_mixed_relative() {
         .engine
         .query(
             "Show me tasks from the past few days",
-            &query_emb,
+            query_emb.clone(),
             10,
             None,
             None,
@@ -907,7 +907,7 @@ fn test_temporal_edge_001_oldest() {
     let query_emb = generate_test_embedding("oldest", 384);
     let (intent, _, _) = ctx
         .engine
-        .query("Show me the oldest memory", &query_emb, 10, None, None)
+        .query("Show me the oldest memory", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -920,7 +920,7 @@ fn test_temporal_edge_002_empty_database() {
     let query_emb = generate_test_embedding("recent", 384);
     let (intent, results, _profile_ctx) = ctx
         .engine
-        .query("Show recent memories", &query_emb, 10, None, None)
+        .query("Show recent memories", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(intent.intent, QueryIntent::Temporal);
@@ -946,7 +946,7 @@ fn test_temporal_edge_003_future_timestamp() {
     let query_emb = generate_test_embedding("recent", 384);
     let (_, results, _) = ctx
         .engine
-        .query("recent memories", &query_emb, 10, None, None)
+        .query("recent memories", query_emb.clone(), 10, None, None)
         .unwrap();
 
     // Future memory should still be returned (no filtering by default)
@@ -1028,7 +1028,7 @@ fn test_temporal_edge_007_single_memory() {
     let query_emb = generate_test_embedding("recent", 384);
     let (_, results, _) = ctx
         .engine
-        .query("recent", &query_emb, 10, None, None)
+        .query("recent", query_emb.clone(), 10, None, None)
         .unwrap();
 
     assert_eq!(results.len(), 1);
@@ -1098,7 +1098,7 @@ fn test_temporal_edge_009_limit_exceeded() {
     let (_, results, _) = ctx
         .engine
         .query(
-            "recent", &query_emb, 10, // limit to 10
+            "recent", query_emb.clone(), 10, // limit to 10
             None, None,
         )
         .unwrap();
@@ -1124,7 +1124,7 @@ fn test_temporal_edge_010_zero_limit() {
     let (_, results, _) = ctx
         .engine
         .query(
-            "recent", &query_emb, 0, // zero limit
+            "recent", query_emb.clone(), 0, // zero limit
             None, None,
         )
         .unwrap();

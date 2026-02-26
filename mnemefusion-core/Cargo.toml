@@ -34,11 +34,17 @@ rust-stemmers = "1.2"
 llama-cpp-2 = { version = "0.1", optional = true }
 llama-cpp-sys-2 = { version = "0.1", optional = true }
 
+# ONNX embedding model via fastembed (optional)
+# Windows note: requires pre-built ONNX Runtime. Set ORT_LIB_LOCATION or use load-dynamic.
+# On Linux/Mac builds from source automatically.
+fastembed = { version = "4", optional = true }
+
 [features]
 default = []
 slm = []
 entity-extraction = ["llama-cpp-2", "llama-cpp-sys-2"]
 entity-extraction-cuda = ["entity-extraction", "llama-cpp-2/cuda", "llama-cpp-2/dynamic-link"]
+embedding-onnx = ["fastembed"]
 
 [dev-dependencies]
 tempfile = "3.10"
