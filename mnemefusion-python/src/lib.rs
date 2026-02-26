@@ -1423,6 +1423,28 @@ impl PyMemory {
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to consolidate: {}", e)))
     }
 
+    /// Repair entity profiles by re-processing llm_extraction metadata stored in memories.
+    ///
+    /// Scans every memory in the DB and:
+    /// 1. Re-processes the `llm_extraction` JSON to rebuild entity_facts / profiles
+    /// 2. Adds speaker-attributed source_memory links (fixes first-person statement gap)
+    ///
+    /// Use this after consolidation has over-pruned profiles, or when main-character
+    /// profiles are missing (entity_score=0 for known entities).
+    ///
+    /// Returns:
+    ///     Tuple (profiles_created, source_memories_added)
+    ///
+    /// Example:
+    ///     >>> created, linked = memory.repair_profiles_from_metadata()
+    ///     >>> print(f"Created {created} profiles, added {linked} source links")
+    fn repair_profiles_from_metadata(&self) -> PyResult<(usize, usize)> {
+        let engine = self.get_engine()?;
+        engine
+            .repair_profiles_from_metadata()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to repair profiles: {}", e)))
+    }
+
     /// Apply an externally-produced extraction result to a memory's entity profiles.
     ///
     /// Enables API-based extraction backends (e.g., NScale cloud inference) to inject

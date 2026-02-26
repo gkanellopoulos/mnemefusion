@@ -94,9 +94,19 @@ pub fn resolve_entity_alias(name: &str, known_profile_names: &[String]) -> Optio
     // Fuzzy: drop last char and retry (handles "mell" → "mel" → matches "melanie")
     // Capped at ≤5 chars to prevent long names resolving incorrectly
     // (e.g., "melanie" truncated to "melani" must NOT match "melanie's son")
+    //
+    // Critical constraint: skip candidates that contain apostrophes or possessives.
+    // Without this, "john" (truncated to "joh") would match "john's cousin" since
+    // "john's cousin" starts with "joh" + 'n' (alphanumeric). Similarly "maria"
+    // → "mari" → "maria's little one" (starts with "mari" + 'a'). These are
+    // compound relational names, not canonical forms of "john" or "maria".
     if name_lower.len() >= 4 && name_lower.len() <= 5 {
         let truncated = &name_lower[..name_lower.len() - 1];
         for candidate in known_profile_names {
+            // Skip compound relational names (e.g., "john's cousin", "maria's mom")
+            if candidate.contains('\'') || candidate.contains('\u{2019}') {
+                continue;
+            }
             if candidate.len() > name_lower.len()
                 && candidate.starts_with(truncated)
             {

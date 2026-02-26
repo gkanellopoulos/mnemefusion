@@ -674,6 +674,183 @@ impl MemoryEngine {
         Ok((total_facts_removed, profiles_deleted))
     }
 
+    /// Repair entity profiles by re-processing llm_extraction metadata stored in memories.
+    ///
+    /// This is a recovery function for databases where entity profiles are missing or
+    /// incomplete due to extraction failures, consolidation over-pruning, or ingestion bugs.
+    ///
+    /// For every memory in the DB:
+    /// 1. Parse the `llm_extraction` JSON from metadata (if present)
+    /// 2. For each entity_fact: create/update the entity profile with the fact
+    ///    and add the memory as a source_memory
+    /// 3. For the `speaker` metadata field: ensure the speaker entity's profile
+    ///    includes this memory as a source_memory (handles first-person statements
+    ///    where the speaker name isn't in the content text)
+    ///
+    /// Respects the pipeline's `profile_entity_types` filter and type allowlist.
+    /// Skips entities whose names appear to be pronouns or generic placeholders.
+    ///
+    /// Returns (profiles_created, source_memories_added).
+    pub fn repair_profiles_from_metadata(&self) -> Result<(usize, usize)> {
+        use crate::types::{EntityFact, EntityId};
+        use crate::query::profile_search::resolve_entity_alias;
+
+        let junk_names: &[&str] = &[
+            "i", "me", "my", "we", "our", "you", "your", "he", "she", "it",
+            "they", "them", "his", "her", "their", "him", "this", "that",
+            "unknown", "unspecified", "someone", "somebody", "anyone",
+        ];
+
+        let allowed_types: &[&str] = &["person", "organization", "location"];
+
+        let mut profiles_created = 0usize;
+        let mut source_memories_added = 0usize;
+
+        let all_ids = self.storage.list_memory_ids()?;
+        let total = all_ids.len();
+        tracing::info!("repair_profiles_from_metadata: scanning {} memories", total);
+
+        for (idx, mem_id) in all_ids.iter().enumerate() {
+            if idx % 500 == 0 {
+                tracing::info!("  {}/{}", idx, total);
+            }
+
+            let memory = match self.storage.get_memory(mem_id)? {
+                Some(m) => m,
+                None => continue,
+            };
+
+            // Load fresh known_names once per memory (profiles may have been added)
+            let known_names = self.storage.list_entity_profile_names()?;
+
+            // ── Step A: re-process llm_extraction entity_facts ──────────────────
+            if let Some(json_str) = memory.metadata.get("llm_extraction") {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
+                    // Build entity_type lookup from "entities" array
+                    let mut entity_types: HashMap<String, String> = HashMap::new();
+                    if let Some(ents) = v["entities"].as_array() {
+                        for e in ents {
+                            if let (Some(name), Some(etype)) =
+                                (e["name"].as_str(), e["type"].as_str())
+                            {
+                                entity_types
+                                    .insert(name.to_lowercase(), etype.to_lowercase());
+                            }
+                        }
+                    }
+
+                    if let Some(facts_arr) = v["entity_facts"].as_array() {
+                        for fact_val in facts_arr {
+                            let entity_raw = match fact_val["entity"].as_str() {
+                                Some(e) => e,
+                                None => continue,
+                            };
+                            let entity_lower = entity_raw.to_lowercase();
+
+                            // Skip junk names and single-char names
+                            if entity_lower.len() < 2
+                                || junk_names.contains(&entity_lower.as_str())
+                            {
+                                continue;
+                            }
+
+                            let etype = entity_types
+                                .get(&entity_lower)
+                                .map(|s| s.as_str())
+                                .unwrap_or("person");
+
+                            // Only create profiles for allowed entity types
+                            if !allowed_types.contains(&etype) {
+                                continue;
+                            }
+
+                            // Canonicalize via alias resolution
+                            let canonical = resolve_entity_alias(&entity_lower, &known_names)
+                                .unwrap_or_else(|| entity_lower.clone());
+
+                            let fact_type = fact_val["fact_type"]
+                                .as_str()
+                                .unwrap_or("unknown")
+                                .to_string();
+                            let value = fact_val["value"]
+                                .as_str()
+                                .unwrap_or("")
+                                .to_string();
+                            let confidence = fact_val["confidence"]
+                                .as_f64()
+                                .unwrap_or(0.8) as f32;
+
+                            if value.is_empty() || value.len() > 100 {
+                                continue;
+                            }
+
+                            let is_new =
+                                self.storage.get_entity_profile(&canonical)?.is_none();
+
+                            let mut profile = self
+                                .storage
+                                .get_entity_profile(&canonical)?
+                                .unwrap_or_else(|| {
+                                    EntityProfile::new(
+                                        EntityId::new(),
+                                        canonical.clone(),
+                                        etype.to_string(),
+                                    )
+                                });
+
+                            profile.add_fact(EntityFact {
+                                fact_type,
+                                value,
+                                confidence,
+                                source_memory: mem_id.clone(),
+                                extracted_at: Timestamp::now(),
+                            });
+                            profile.add_source_memory(mem_id.clone());
+
+                            self.storage.store_entity_profile(&profile)?;
+
+                            if is_new {
+                                profiles_created += 1;
+                            }
+                            source_memories_added += 1;
+                        }
+                    }
+                }
+            }
+
+            // ── Step B: speaker → source_memory attribution ─────────────────────
+            // When the speaker says "I joined a gym", the entity name ("Maria") isn't
+            // in the content. If an entity profile exists for the speaker, add this
+            // memory as a source_memory so query-time entity injection can find it.
+            if let Some(speaker_raw) = memory.metadata.get("speaker") {
+                let speaker_lower = speaker_raw.trim().to_lowercase();
+                if speaker_lower.len() < 2 || junk_names.contains(&speaker_lower.as_str()) {
+                    continue;
+                }
+
+                // Re-load known_names (may have been updated by Step A above)
+                let known_names2 = self.storage.list_entity_profile_names()?;
+                let canonical = resolve_entity_alias(&speaker_lower, &known_names2)
+                    .unwrap_or_else(|| speaker_lower.clone());
+
+                if let Ok(Some(mut profile)) = self.storage.get_entity_profile(&canonical) {
+                    if !profile.source_memories.contains(mem_id) {
+                        profile.add_source_memory(mem_id.clone());
+                        self.storage.store_entity_profile(&profile)?;
+                        source_memories_added += 1;
+                    }
+                }
+            }
+        }
+
+        tracing::info!(
+            "repair_profiles_from_metadata: created {} profiles, added {} source_memory links",
+            profiles_created,
+            source_memories_added
+        );
+        Ok((profiles_created, source_memories_added))
+    }
+
     /// Add a new memory to the database
     ///
     /// This will automatically index the memory across all dimensions:
