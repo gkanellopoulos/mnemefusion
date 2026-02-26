@@ -988,8 +988,18 @@ impl QueryPlanner {
 
             Ok(score_vec.into_iter().collect())
         } else {
-            // No temporal matches found - fall back to weak recency signal
-            self.temporal_search_recency_fallback(limit)
+            // No temporal expression matches found — return empty rather than recency noise.
+            //
+            // For "when did X happen?" queries (no explicit date), the recency fallback
+            // returns all ~3643 memories at near-identical scores (batch-ingested DBs have
+            // similar timestamps). In RRF this fills the temporal pathway with noise,
+            // competing with the entity and BM25 signals that correctly identify relevant
+            // evidence. Removing this noise improves RRF precision.
+            //
+            // Queries WITH explicit time references ("last week", "january", "2023") still
+            // get proper temporal content scores above and are unaffected by this change.
+            // The recency_fallback path is preserved for callers that explicitly need it.
+            Ok(HashMap::new())
         }
     }
 
@@ -1826,7 +1836,7 @@ mod tests {
     fn test_temporal_search() {
         let (planner, _dir) = create_test_planner();
 
-        // Add memories
+        // Add memories without temporal_expressions metadata
         let mem1 = Memory::new("Memory 1".to_string(), vec![0.1; 384]);
         let mem2 = Memory::new("Memory 2".to_string(), vec![0.2; 384]);
 
@@ -1843,14 +1853,12 @@ mod tests {
             .add(&mem2.id, mem2.created_at)
             .unwrap();
 
-        // Search with query text (no temporal expressions = fallback to recency)
+        // Query without temporal expressions ("test query" has no date references).
+        // New behavior: returns empty rather than noisy recency fallback.
+        // Recency ordering adds noise for batch-ingested DBs where all memories
+        // have similar timestamps; entity + BM25 + semantic cover "when" queries.
         let scores = planner.temporal_search("test query", 10).unwrap();
-        assert_eq!(scores.len(), 2);
-
-        // With fallback, most recent should have higher score (but weak signal)
-        let score1 = scores[&mem1.id];
-        let score2 = scores[&mem2.id];
-        assert!(score2 >= score1); // mem2 was added later
+        assert_eq!(scores.len(), 0, "No temporal expression match → empty scores");
     }
 
     #[test]
@@ -2340,6 +2348,11 @@ mod tests {
 
     #[test]
     fn test_temporal_fallback_to_recency() {
+        // Tests temporal_search_recency_fallback() directly.
+        // temporal_search() no longer calls this for queries without explicit dates
+        // (returns empty instead to avoid recency noise on batch-ingested DBs).
+        // This test verifies the fallback function itself still works for callers
+        // that need it (e.g., production use with real timestamp spread).
         use crate::ingest::IngestionPipeline;
 
         let (planner, _dir) = create_test_planner();
@@ -2370,19 +2383,18 @@ mod tests {
         let mem2_id = mem2.id.clone();
         pipeline.add(mem2).unwrap();
 
-        // Query without temporal expression
-        let scores = planner
-            .temporal_search("Tell me about AI", 10)
-            .unwrap();
+        // temporal_search() returns empty when no expressions match (new behavior)
+        let scores = planner.temporal_search("Tell me about AI", 10).unwrap();
+        assert!(scores.is_empty(), "No temporal expressions → empty from temporal_search()");
 
-        // Should fall back to weak recency signal
-        // Both memories should have scores (recency fallback)
-        assert!(scores.contains_key(&mem1_id));
-        assert!(scores.contains_key(&mem2_id));
+        // temporal_search_recency_fallback() still works correctly when called directly
+        let fallback_scores = planner.temporal_search_recency_fallback(10).unwrap();
+        assert!(fallback_scores.contains_key(&mem1_id));
+        assert!(fallback_scores.contains_key(&mem2_id));
 
         // Scores should be weak (0.0-0.3 range)
-        let score1 = scores.get(&mem1_id).unwrap();
-        let score2 = scores.get(&mem2_id).unwrap();
+        let score1 = fallback_scores.get(&mem1_id).unwrap();
+        let score2 = fallback_scores.get(&mem2_id).unwrap();
         assert!(
             *score1 <= 0.31 && *score2 <= 0.31,
             "Fallback scores should be weak (≤ 0.3)"
@@ -2442,8 +2454,10 @@ mod tests {
         let new_id = mem_new.id.clone();
         pipeline.add(mem_new).unwrap();
 
+        // Call fallback directly — temporal_search() returns empty for queries
+        // without explicit date expressions (removed recency noise for "when" queries).
         let scores = planner
-            .temporal_search("What have we discussed?", 10)
+            .temporal_search_recency_fallback(10)
             .unwrap();
 
         let score_old = *scores.get(&old_id).unwrap();
@@ -2507,8 +2521,10 @@ mod tests {
             pipeline.add(mem).unwrap();
         }
 
+        // Call fallback directly — temporal_search() returns empty for queries
+        // without explicit date expressions (removed recency noise for "when" queries).
         let scores = planner
-            .temporal_search("Tell me something", 10)
+            .temporal_search_recency_fallback(10)
             .unwrap();
 
         // All 5 memories should be present
