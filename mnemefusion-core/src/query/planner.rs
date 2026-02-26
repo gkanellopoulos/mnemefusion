@@ -251,7 +251,21 @@ impl QueryPlanner {
         let mut bm25_scores = self.bm25_search(query_text, limit * fetch_multiplier)?;
         let mut temporal_scores = self.temporal_search(query_text, limit * fetch_multiplier)?;
         let mut causal_scores = self.causal_search(query_text, limit * fetch_multiplier)?;
-        let mut entity_scores = self.entity_search(query_text, limit * fetch_multiplier)?;
+        // Normalize entity_scores to partial MemoryId format immediately.
+        // entity_search() returns full UUIDs (from storage), but semantic_search() returns
+        // partial UUIDs (from vector index, first 8 bytes only). Without normalization the
+        // same physical memory gets two entries in the fusion HashSet → duplicate results.
+        // See: MemoryId::from_u64 / MemoryId::to_u64 for the partial-UUID convention.
+        let mut entity_scores: HashMap<MemoryId, f32> = {
+            let raw = self.entity_search(query_text, limit * fetch_multiplier)?;
+            let mut norm: HashMap<MemoryId, f32> = HashMap::with_capacity(raw.len());
+            for (id, score) in raw {
+                norm.entry(MemoryId::from_u64(id.to_u64()))
+                    .and_modify(|s: &mut f32| *s = (*s).max(score))
+                    .or_insert(score);
+            }
+            norm
+        };
 
         // Step 2.1: Add profile source memories to entity candidates with HIGH priority.
         // The entity graph only contains memories where entity names appear in text.
@@ -269,8 +283,10 @@ impl QueryPlanner {
         for entity_name in &query_entities {
             if let Ok(Some(profile)) = self.storage.get_entity_profile(entity_name) {
                 for source_id in &profile.source_memories {
+                    // Normalize to partial ID so entity injection merges with semantic search.
+                    // source_memories store full UUIDs; vector index uses partial (first 8 bytes).
                     entity_scores
-                        .entry(source_id.clone())
+                        .entry(MemoryId::from_u64(source_id.to_u64()))
                         .and_modify(|s| *s = (*s).max(2.0))
                         .or_insert(2.0);
                 }
@@ -287,13 +303,46 @@ impl QueryPlanner {
         let matched_facts = profile_result.matched_facts;
         for (memory_id, profile_score) in profile_result.source_scores {
             let boosted = 2.0 + profile_score; // fact-matched get 2.0-3.0
+            // Normalize to partial ID (source_scores contain full UUIDs from storage).
             entity_scores
-                .entry(memory_id)
+                .entry(MemoryId::from_u64(memory_id.to_u64()))
                 .and_modify(|s| {
                     *s = (*s).max(boosted);
                 })
                 .or_insert(boosted);
         }
+
+        // Normalize bm25/temporal/causal to partial MemoryId format before Step 2.3.
+        // These searches return full UUIDs from storage; semantic uses partial UUIDs.
+        // Normalization is required for Step 2.3's entity exemption check to work
+        // correctly (partial semantic IDs must match entity_scores keys).
+        let mut bm25_scores: HashMap<MemoryId, f32> = {
+            let mut norm: HashMap<MemoryId, f32> = HashMap::with_capacity(bm25_scores.len());
+            for (id, score) in bm25_scores {
+                norm.entry(MemoryId::from_u64(id.to_u64()))
+                    .and_modify(|s: &mut f32| *s = (*s).max(score))
+                    .or_insert(score);
+            }
+            norm
+        };
+        let mut temporal_scores: HashMap<MemoryId, f32> = {
+            let mut norm: HashMap<MemoryId, f32> = HashMap::with_capacity(temporal_scores.len());
+            for (id, score) in temporal_scores {
+                norm.entry(MemoryId::from_u64(id.to_u64()))
+                    .and_modify(|s: &mut f32| *s = (*s).max(score))
+                    .or_insert(score);
+            }
+            norm
+        };
+        let mut causal_scores: HashMap<MemoryId, f32> = {
+            let mut norm: HashMap<MemoryId, f32> = HashMap::with_capacity(causal_scores.len());
+            for (id, score) in causal_scores {
+                norm.entry(MemoryId::from_u64(id.to_u64()))
+                    .and_modify(|s: &mut f32| *s = (*s).max(score))
+                    .or_insert(score);
+            }
+            norm
+        };
 
         // Step 2.3: Adaptive pre-fusion semantic filtering
         // Aggregation queries ("What activities does X do?") need more recall — answer
@@ -346,11 +395,11 @@ impl QueryPlanner {
         // Step 2.7: Graph traversal expansion for retrieval augmentation (conditional)
         // Only expand if seed results have high quality scores (>0.6 threshold)
         // This prevents noise from over-expansion in session-based retrieval
-        let mut seed_results = semantic_scores.clone();
+        let mut seed_results: HashMap<MemoryId, f32> = semantic_scores.clone();
         for (id, score) in &bm25_scores {
             seed_results
                 .entry(id.clone())
-                .and_modify(|s| *s = (*s).max(*score))
+                .and_modify(|s: &mut f32| *s = (*s).max(*score))
                 .or_insert(*score);
         }
 
@@ -375,26 +424,29 @@ impl QueryPlanner {
             // Merge expanded results into dimension scores
             // Expanded memories get added to entity/causal scores based on their source
             for (expanded_id, expansion_score) in expanded_results {
-                // Skip if already in seed results
-                if seed_results.contains_key(&expanded_id) {
+                // Normalize to partial ID before checking and inserting.
+                // Graph traversal returns full UUIDs; score maps use partial UUIDs.
+                let expanded_partial = MemoryId::from_u64(expanded_id.to_u64());
+                // Skip if already in seed results (now correctly checks partial IDs)
+                if seed_results.contains_key(&expanded_partial) {
                     continue;
                 }
 
                 // Add to appropriate dimension score maps based on intent
                 match intent.intent {
                     crate::query::QueryIntent::Causal => {
-                        causal_scores.insert(expanded_id.clone(), expansion_score);
+                        causal_scores.insert(expanded_partial, expansion_score);
                     }
                     crate::query::QueryIntent::Entity | crate::query::QueryIntent::Factual => {
-                        entity_scores.insert(expanded_id.clone(), expansion_score);
+                        entity_scores.insert(expanded_partial, expansion_score);
                     }
                     crate::query::QueryIntent::Temporal => {
                         // Hybrid expansion - add to both temporal and entity
                         temporal_scores
-                            .entry(expanded_id.clone())
+                            .entry(expanded_partial.clone())
                             .and_modify(|s| *s = (*s).max(expansion_score * 0.7))
                             .or_insert(expansion_score * 0.7);
-                        entity_scores.insert(expanded_id, expansion_score * 0.5);
+                        entity_scores.insert(expanded_partial, expansion_score * 0.5);
                     }
                 }
             }
@@ -1384,7 +1436,8 @@ impl QueryPlanner {
         let mut to_remove = Vec::new();
 
         for memory_id in scores.keys() {
-            if let Some(memory) = self.storage.get_memory(memory_id)? {
+            // Use get_memory_by_u64 to support both full and partial (normalized) MemoryIds.
+            if let Some(memory) = self.storage.get_memory_by_u64(memory_id.to_u64())? {
                 if memory.get_namespace() != namespace {
                     to_remove.push(memory_id.clone());
                 }
@@ -1418,7 +1471,8 @@ impl QueryPlanner {
         let mut to_remove = Vec::new();
 
         for memory_id in scores.keys() {
-            if let Some(memory) = self.storage.get_memory(memory_id)? {
+            // Use get_memory_by_u64 to support both full and partial (normalized) MemoryIds.
+            if let Some(memory) = self.storage.get_memory_by_u64(memory_id.to_u64())? {
                 // Check if memory matches ALL filters
                 if !Self::memory_matches_filters(&memory, filters) {
                     to_remove.push(memory_id.clone());
@@ -1838,7 +1892,8 @@ mod tests {
         // Should have results
         assert!(!results.is_empty());
         // Results should contain our memory (may not be first if other memories exist)
-        assert!(results.iter().any(|r| r.id == mem_id));
+        // Compare by u64 key: partial (normalized) and full UUIDs share the same first 8 bytes.
+        assert!(results.iter().any(|r| r.id.to_u64() == mem_id.to_u64()));
     }
 
     #[test]
@@ -1915,7 +1970,7 @@ mod tests {
 
         // Should only contain mem1
         assert!(!results.is_empty());
-        assert!(results.iter().all(|r| r.id == mem1_id));
+        assert!(results.iter().all(|r| r.id.to_u64() == mem1_id.to_u64()));
 
         // Query with ns2 filter
         let (_, results, _) = planner
@@ -1924,7 +1979,7 @@ mod tests {
 
         // Should only contain mem2
         assert!(!results.is_empty());
-        assert!(results.iter().all(|r| r.id == mem2_id));
+        assert!(results.iter().all(|r| r.id.to_u64() == mem2_id.to_u64()));
 
         // Query with default namespace filter
         let (_, results, _) = planner
@@ -1933,7 +1988,7 @@ mod tests {
 
         // Should only contain mem3
         assert!(!results.is_empty());
-        assert!(results.iter().all(|r| r.id == mem3_id));
+        assert!(results.iter().all(|r| r.id.to_u64() == mem3_id.to_u64()));
     }
 
     #[test]

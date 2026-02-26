@@ -90,9 +90,9 @@ def main():
         for rank, r in enumerate(results, start=1):
             mem_dict, fused = r[0], r[1]
             did = mem_dict.get("metadata", {}).get("dialog_id", "")
-            if did == ev_id:
+            if did == ev_id and ev_result is None:
                 ev_result = (rank, mem_dict, fused)
-            elif did == near_id:
+            elif did == near_id and near_result is None:
                 near_result = (rank, mem_dict, fused)
 
         # Print evidence turn info
