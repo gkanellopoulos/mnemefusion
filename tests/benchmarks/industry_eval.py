@@ -787,12 +787,12 @@ class MnemeFusionEvaluator:
             print(f"  [Embedding] Backfill not available: {e}")
 
         # Rebuild embeddings for first-person content using speaker-aware pronoun substitution.
-        # "I joined a gym" → "Alice joined a gym" for embedding — +0.25 cosine similarity gain
+        # "I joined a gym" -> "Alice joined a gym" for embedding (+0.25 cosine similarity gain
         # with entity-centric queries. One-time backfill, safe to re-run (no-op if already done).
         if not self._rust_embed:
             try:
                 n = self.memory.rebuild_speaker_embeddings()
-                print(f"  [Embedding] Rebuilt {n} speaker embeddings (1p→3p pronoun substitution)")
+                print(f"  [Embedding] Rebuilt {n} speaker embeddings (1p->3p pronoun substitution)")
             except Exception as e:
                 print(f"  [Embedding] Speaker embedding rebuild not available: {e}")
 
