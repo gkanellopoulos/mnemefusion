@@ -667,7 +667,7 @@ impl QueryPlanner {
                 if let Ok(Some(memory)) = self.storage.get_memory_by_u64(parent.id.to_u64()) {
                     if let Some(dialog_id) = memory.metadata.get("dialog_id") {
                         if let Some((conv, turn)) = Self::parse_dialog_id(dialog_id) {
-                            for delta in [-3i32, -2, -1, 1, 2, 3] {
+                            for delta in [-2i32, -1, 1, 2] {
                                 let neighbor_turn = turn + delta;
                                 if neighbor_turn < 1 {
                                     continue;
