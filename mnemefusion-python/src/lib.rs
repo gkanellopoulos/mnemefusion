@@ -216,7 +216,8 @@ impl PyMemory {
     ///     config: Optional configuration dictionary. Supported keys:
     ///         - embedding_dim (int): Embedding vector dimension (default: 384)
     ///         - embedding_model (str): Path to fastembed model cache for auto-embedding
-    ///         - llm_model (str): Path to GGUF file for entity extraction
+    ///         - llm_model (str): Path to GGUF file — auto-enables LLM entity extraction
+    ///                            (Balanced tier). No separate enable_llm_entity_extraction() needed.
     ///         - entity_extraction_enabled (bool)
     ///         - extraction_passes (int): LLM passes per document (1-10)
     ///         - adaptive_k_threshold (float): Top-p threshold (0=disabled)
@@ -238,6 +239,9 @@ impl PyMemory {
     #[pyo3(signature = (path, config=None, user=None))]
     fn new(path: &str, config: Option<&PyDict>, user: Option<&str>) -> PyResult<Self> {
         let mut rust_config = Config::default();
+        // Saved for auto-enable after engine open (consumed by MemoryEngine::open)
+        let mut llm_model_path: Option<String> = None;
+        let mut configured_extraction_passes: usize = 1;
 
         if let Some(cfg) = config {
             if let Some(dim) = cfg.get_item("embedding_dim")? {
@@ -250,7 +254,9 @@ impl PyMemory {
                 rust_config.indexed_metadata = indexed_metadata.extract()?;
             }
             if let Some(passes) = cfg.get_item("extraction_passes")? {
-                rust_config.extraction_passes = passes.extract::<usize>()?.clamp(1, 10);
+                let p = passes.extract::<usize>()?.clamp(1, 10);
+                rust_config.extraction_passes = p;
+                configured_extraction_passes = p;
             }
             if let Some(ak) = cfg.get_item("adaptive_k_threshold")? {
                 rust_config.adaptive_k_threshold = ak.extract::<f32>()?.clamp(0.0, 1.0);
@@ -261,7 +267,8 @@ impl PyMemory {
             }
             if let Some(llm_model) = cfg.get_item("llm_model")? {
                 let model_path: String = llm_model.extract()?;
-                rust_config = rust_config.with_llm_model(model_path);
+                rust_config = rust_config.with_llm_model(model_path.clone());
+                llm_model_path = Some(model_path);
             }
 
             // SLM configuration (only available with 'slm' feature)
@@ -299,6 +306,20 @@ impl PyMemory {
         // Apply user identity if provided
         if let Some(u) = user {
             engine = engine.with_user(u);
+        }
+
+        // Auto-enable LLM entity extraction when llm_model is specified in config.
+        // Equivalent to calling enable_llm_entity_extraction() explicitly.
+        // Defaults to ModelTier::Balanced; use enable_llm_entity_extraction() for Quality tier.
+        #[cfg(feature = "entity-extraction")]
+        if let Some(ref model_path) = llm_model_path {
+            use mnemefusion_core::extraction::ModelTier;
+            engine = engine
+                .with_llm_entity_extraction_from_path(model_path, ModelTier::Balanced)
+                .map_err(|e| PyIOError::new_err(format!("Failed to enable LLM extraction: {}", e)))?;
+            if configured_extraction_passes > 1 {
+                engine.set_extraction_passes(configured_extraction_passes);
+            }
         }
 
         Ok(Self {
