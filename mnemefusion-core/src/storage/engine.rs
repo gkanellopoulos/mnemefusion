@@ -340,6 +340,26 @@ impl StorageEngine {
         Ok(table.len()? as usize)
     }
 
+    /// Find a memory by its dialog_id metadata value (O(n) scan).
+    ///
+    /// dialog_id is not stored in a separate index, so this iterates all memories.
+    /// With ~3643 memories in current DBs, this takes ~1-5ms — acceptable for the
+    /// bounded number of calls (≤18 per query for adjacent-turn bridging).
+    ///
+    /// Returns the first memory whose metadata["dialog_id"] == dialog_id.
+    pub fn find_memory_by_dialog_id(&self, dialog_id: &str) -> Result<Option<Memory>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(MEMORIES)?;
+        for item in table.iter()? {
+            let (_, val) = item?;
+            let memory = self.deserialize_memory(val.value())?;
+            if memory.metadata.get("dialog_id").map(|s| s.as_str()) == Some(dialog_id) {
+                return Ok(Some(memory));
+            }
+        }
+        Ok(None)
+    }
+
     /// Serialize memory to bytes
     fn serialize_memory(&self, memory: &Memory) -> Result<Vec<u8>> {
         // Simple serialization format:

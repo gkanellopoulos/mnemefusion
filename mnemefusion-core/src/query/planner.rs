@@ -639,6 +639,82 @@ impl QueryPlanner {
             }
         }
 
+        // Step 3.85: Dialog-ID adjacent-turn bridging
+        //
+        // Many retrieval near-misses are "same conversation, adjacent turn" failures:
+        // we retrieve D7:5 but the evidence is D7:9. For single-hop, 91% of R@20 misses
+        // fall in this pattern. For multi-hop partial hits, the missing piece often lives
+        // 1-3 turns from a retrieved turn in the same conversation.
+        //
+        // Placed BEFORE MMR so neighbors (score=0.8×parent) participate in the 50-candidate
+        // MMR pool and can be selected into the final top-20. If placed after MMR, the
+        // compressed post-MMR scores mean neighbors always fall below the rank-20 threshold,
+        // and MMR's diversity penalty (0.3×cosine) actively de-selects adjacent turns.
+        //
+        // Research basis: context-window retrieval / iterative RAG (FLARE, IRCoT).
+        // Cost: ≤ 18 O(n) storage scans, ≈ 5-15ms on a 3643-memory DB.
+        {
+            let existing_ids: std::collections::HashSet<MemoryId> =
+                fused_results.iter().map(|r| r.id.clone()).collect();
+            let mut neighbors: Vec<FusedResult> = Vec::new();
+
+            for parent in fused_results.iter().take(3) {
+                let parent_score = parent.fused_score;
+                // Only expand when the parent itself has meaningful retrieval signal
+                if parent_score < 0.05 {
+                    continue;
+                }
+                if let Ok(Some(memory)) = self.storage.get_memory_by_u64(parent.id.to_u64()) {
+                    if let Some(dialog_id) = memory.metadata.get("dialog_id") {
+                        if let Some((conv, turn)) = Self::parse_dialog_id(dialog_id) {
+                            for delta in [-3i32, -2, -1, 1, 2, 3] {
+                                let neighbor_turn = turn + delta;
+                                if neighbor_turn < 1 {
+                                    continue;
+                                }
+                                let neighbor_did = format!("{}:{}", conv, neighbor_turn);
+                                if let Ok(Some(nbr)) =
+                                    self.storage.find_memory_by_dialog_id(&neighbor_did)
+                                {
+                                    let partial_id = MemoryId::from_u64(nbr.id.to_u64());
+                                    if existing_ids.contains(&partial_id) {
+                                        continue;
+                                    }
+                                    // Skip memories without embeddings or wrong dim
+                                    if nbr.embedding.is_empty()
+                                        || nbr.embedding.len() != query_embedding.len()
+                                    {
+                                        continue;
+                                    }
+                                    let sem_score =
+                                        cosine_similarity(query_embedding, &nbr.embedding);
+                                    neighbors.push(FusedResult {
+                                        id: partial_id,
+                                        semantic_score: sem_score,
+                                        bm25_score: 0.0,
+                                        temporal_score: 0.0,
+                                        causal_score: 0.0,
+                                        entity_score: parent.entity_score * 0.8,
+                                        fused_score: parent_score * 0.8,
+                                        confidence: 0.6,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !neighbors.is_empty() {
+                fused_results.extend(neighbors);
+                fused_results.sort_by(|a, b| {
+                    b.fused_score
+                        .partial_cmp(&a.fused_score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+            }
+        }
+
         // Step 3.9: MMR Diversity Reranking
         // After all scoring/penalties, apply Maximal Marginal Relevance to break ties
         // among entity-matched memories (168-205 memories at flat 2.0 compete randomly).
@@ -1432,6 +1508,20 @@ impl QueryPlanner {
         }
 
         Ok(fused)
+    }
+
+    /// Parse a dialog_id string of the form "D7:5" into ("D7", 5).
+    ///
+    /// Returns None if the string does not contain ':' or the turn portion
+    /// is not a valid integer. Handles longer formats like "D7:25" correctly.
+    fn parse_dialog_id(dialog_id: &str) -> Option<(&str, i32)> {
+        let colon = dialog_id.rfind(':')?;
+        let conv = &dialog_id[..colon];
+        let turn: i32 = dialog_id[colon + 1..].parse().ok()?;
+        if conv.is_empty() {
+            return None;
+        }
+        Some((conv, turn))
     }
 
     /// Filter a score map by namespace
@@ -3233,6 +3323,27 @@ mod tests {
         let results: Vec<FusedResult> = vec![];
         let k = adaptive_k_select(&results, 0.7, 25);
         assert_eq!(k, 0);
+    }
+
+    // ── parse_dialog_id tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_dialog_id_basic() {
+        assert_eq!(QueryPlanner::parse_dialog_id("D7:5"), Some(("D7", 5)));
+        assert_eq!(QueryPlanner::parse_dialog_id("D1:1"), Some(("D1", 1)));
+        assert_eq!(QueryPlanner::parse_dialog_id("D25:27"), Some(("D25", 27)));
+    }
+
+    #[test]
+    fn test_parse_dialog_id_invalid() {
+        assert_eq!(QueryPlanner::parse_dialog_id("D7"), None); // no colon
+        assert_eq!(QueryPlanner::parse_dialog_id(":5"), None); // empty conv
+        assert_eq!(QueryPlanner::parse_dialog_id("D7:abc"), None); // non-integer turn
+    }
+
+    #[test]
+    fn test_parse_dialog_id_high_turn() {
+        assert_eq!(QueryPlanner::parse_dialog_id("D10:100"), Some(("D10", 100)));
     }
 
     #[test]
