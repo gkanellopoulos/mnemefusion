@@ -70,7 +70,7 @@ pub use error::{Error, Result};
 pub use graph::{CausalEdge, CausalPath, CausalTraversalResult, EntityQueryResult, GraphManager};
 pub use index::{TemporalIndex, TemporalResult, VectorIndex, VectorIndexConfig, VectorResult};
 pub use ingest::{EntityExtractor, SimpleEntityExtractor};
-pub use memory::{contextualize_for_embedding, EmbeddingFn, MemoryEngine, ScopedMemory};
+pub use memory::{contextualize_for_embedding, first_person_to_third, EmbeddingFn, MemoryEngine, ScopedMemory};
 pub use query::{
     AdaptiveWeightConfig, FusedResult, FusionEngine, IntentClassification, IntentClassifier,
     IntentWeights, QueryIntent, QueryPlanner,

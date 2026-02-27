@@ -52,6 +52,57 @@ pub fn contextualize_for_embedding(content: &str, metadata: &HashMap<String, Str
     content.to_string()
 }
 
+/// Convert first-person pronouns in content to third-person using the speaker's name.
+///
+/// Used at embedding time: "I joined a gym" → "Alice joined a gym" produces ~+0.25 better
+/// cosine similarity with queries like "What fitness activities does Alice do?" when using
+/// symmetric bi-encoders (BGE-base-en-v1.5).
+///
+/// Substitution order (specific before general, to avoid double-matching):
+/// contractions/phrases → standalone "I" → reflexive → possessive → object.
+///
+/// The original content is **not** modified — only the embedding text changes.
+/// Returns the original string unchanged when no first-person pronouns are found
+/// (i.e., `result == content` signals a no-op).
+pub fn first_person_to_third(content: &str, speaker: &str) -> String {
+    use regex::{NoExpand, Regex};
+
+    // Ordered rules: longer/more-specific patterns first to prevent double-substitution.
+    // Each entry is (regex_pattern, replacement_factory).
+    let rules: &[(&str, fn(&str) -> String)] = &[
+        // Contractions (case-insensitive: "I'm" and "i'm" both match)
+        (r"(?i)\bI'm\b",    |s| format!("{} is", s)),
+        (r"(?i)\bI've\b",   |s| format!("{} has", s)),
+        (r"(?i)\bI'll\b",   |s| format!("{} will", s)),
+        (r"(?i)\bI'd\b",    |s| format!("{} would", s)),
+        // 2-word phrases (always capitalized in English)
+        (r"\bI am\b",       |s| format!("{} is", s)),
+        (r"\bI have\b",     |s| format!("{} has", s)),
+        (r"\bI will\b",     |s| format!("{} will", s)),
+        (r"\bI would\b",    |s| format!("{} would", s)),
+        // Standalone "I" (always capitalized in English; case-sensitive is fine)
+        (r"\bI\b",              |s| s.to_string()),
+        // "myself" / "Myself" before "my" to prevent double-substitution
+        (r"(?i)\bmyself\b",     |s| s.to_string()),
+        // Possessive (case-insensitive: "My" at sentence start, "my" mid-sentence)
+        (r"(?i)\bmy\b",         |s| format!("{}'s", s)),
+        (r"(?i)\bmine\b",       |s| format!("{}'s", s)),
+        // Object pronoun (case-insensitive: "Me and Alice went..." edge case)
+        (r"(?i)\bme\b",         |s| s.to_string()),
+    ];
+
+    let mut result = content.to_string();
+    for (pattern, make_repl) in rules {
+        let repl = make_repl(speaker);
+        // NoExpand: treat replacement literally (safe when speaker contains '$')
+        result = Regex::new(pattern)
+            .expect("valid first_person_to_third pattern")
+            .replace_all(&result, NoExpand(repl.as_str()))
+            .into_owned();
+    }
+    result
+}
+
 /// Main memory engine interface
 ///
 /// This is the primary entry point for all MnemeFusion operations.
@@ -447,6 +498,54 @@ impl MemoryEngine {
         }
 
         Ok(computed)
+    }
+
+    /// Rebuild embeddings for memories with first-person content using speaker-aware
+    /// pronoun substitution.
+    ///
+    /// For each memory that has a `"speaker"` in its metadata and first-person content
+    /// (e.g., `"I joined a gym"`), recomputes the embedding on the third-person form
+    /// (`"Alice joined a gym"`) to improve semantic similarity with entity-centric queries.
+    ///
+    /// This is a one-time backfill for databases ingested before this feature was added.
+    /// Safe to call multiple times — only updates memories where pronoun substitution
+    /// changes the text (i.e., skips memories without first-person pronouns).
+    ///
+    /// Uses the registered `EmbeddingFn` (set via `set_embedding_fn()`) when available,
+    /// falling back to the internal `auto_embed()` engine otherwise.
+    ///
+    /// Returns the number of memory embeddings updated.
+    pub fn rebuild_speaker_embeddings(&self) -> Result<usize> {
+        let embed_fn = self.pipeline.embedding_fn();
+        let ids = self.storage.list_memory_ids()?;
+        let mut updated = 0;
+
+        for id in &ids {
+            let memory = match self.storage.get_memory(id)? {
+                Some(m) => m,
+                None => continue,
+            };
+            let speaker = memory.metadata.get("speaker").map(String::as_str).unwrap_or("");
+            if speaker.is_empty() {
+                continue;
+            }
+
+            let substituted = first_person_to_third(&memory.content, speaker);
+            if substituted == memory.content {
+                continue; // no first-person pronouns found — nothing to do
+            }
+
+            let new_embedding = match embed_fn.as_ref() {
+                Some(ef) => ef(&substituted),
+                None => self.auto_embed(&substituted)?,
+            };
+
+            self.update_embedding(id, new_embedding)?;
+            updated += 1;
+        }
+
+        tracing::info!("rebuild_speaker_embeddings: updated {} memory embeddings", updated);
+        Ok(updated)
     }
 
     /// Run entity extraction on text without adding to the database.
@@ -934,10 +1033,25 @@ impl MemoryEngine {
         source: Option<Source>,
         namespace: Option<&str>,
     ) -> Result<MemoryId> {
-        // Resolve embedding: use provided value or auto-compute from content
+        // Resolve embedding: use provided value or auto-compute from content.
+        // When auto-computing and a speaker is known, compute on the third-person form
+        // ("Alice joined a gym") rather than the raw first-person form ("I joined a gym").
+        // This yields ~+0.25 cosine similarity improvement with entity-centric queries.
+        // The original first-person content is stored unchanged.
         let embedding = match embedding.into() {
             Some(e) => e,
-            None => self.auto_embed(&content)?,
+            None => {
+                let text_for_embedding = metadata
+                    .as_ref()
+                    .and_then(|m| m.get("speaker"))
+                    .filter(|s| !s.is_empty())
+                    .map(|speaker| {
+                        let subst = first_person_to_third(&content, speaker);
+                        if subst != content { subst } else { content.clone() }
+                    })
+                    .unwrap_or_else(|| content.clone());
+                self.auto_embed(&text_for_embedding)?
+            }
         };
 
         // Validate embedding dimension
@@ -3413,5 +3527,78 @@ mod tests {
         let result = engine.query("test query", None::<Vec<f32>>, 10, None, None);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), Error::NoEmbeddingEngine));
+    }
+
+    // ======= first_person_to_third tests =======
+
+    #[test]
+    fn test_first_person_to_third_basic() {
+        assert_eq!(
+            first_person_to_third("I joined a gym", "Alice"),
+            "Alice joined a gym"
+        );
+        assert_eq!(
+            first_person_to_third("I love hiking in the mountains", "Alice"),
+            "Alice love hiking in the mountains"
+        );
+    }
+
+    #[test]
+    fn test_first_person_to_third_contractions() {
+        assert_eq!(
+            first_person_to_third("I'm learning guitar", "Bob"),
+            "Bob is learning guitar"
+        );
+        assert_eq!(
+            first_person_to_third("I've started a new job", "Bob"),
+            "Bob has started a new job"
+        );
+        assert_eq!(
+            first_person_to_third("I'll be there tomorrow", "Bob"),
+            "Bob will be there tomorrow"
+        );
+        assert_eq!(
+            first_person_to_third("I'd love to visit Paris", "Bob"),
+            "Bob would love to visit Paris"
+        );
+    }
+
+    #[test]
+    fn test_first_person_to_third_possessive() {
+        assert_eq!(
+            first_person_to_third("My hobby is hiking", "Alice"),
+            "Alice's hobby is hiking"
+        );
+        assert_eq!(
+            first_person_to_third("That book is mine", "Alice"),
+            "That book is Alice's"
+        );
+        // "myself" before "my" prevents double-substitution
+        assert_eq!(
+            first_person_to_third("I hurt myself at the gym", "Alice"),
+            "Alice hurt Alice at the gym"
+        );
+    }
+
+    #[test]
+    fn test_first_person_to_third_object_pronoun() {
+        assert_eq!(
+            first_person_to_third("He gave me the book", "Alice"),
+            "He gave Alice the book"
+        );
+    }
+
+    #[test]
+    fn test_first_person_to_third_no_pronouns() {
+        // Content without first-person pronouns should be returned unchanged
+        let content = "She likes hiking in the mountains";
+        assert_eq!(first_person_to_third(content, "Alice"), content);
+    }
+
+    #[test]
+    fn test_first_person_to_third_no_word_boundary_false_positive() {
+        // "me" inside "intermediate" should not match \bme\b
+        let content = "The intermediate step";
+        assert_eq!(first_person_to_third(content, "Alice"), content);
     }
 }

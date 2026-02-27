@@ -139,6 +139,19 @@ impl VectorIndex {
         // Convert MemoryId to u64 key for usearch
         let key = id.to_u64();
 
+        // Auto-reserve if the usearch index is at capacity.
+        // usearch soft-deletes entries (remove() marks as deleted without reducing size()),
+        // so after remove()+add() cycles the effective size stays at the original capacity.
+        // We auto-expand in chunks of 64 to avoid per-call reallocation overhead.
+        let current_size = self.index.size();
+        let current_cap = self.index.capacity();
+        if current_size >= current_cap {
+            let new_cap = current_cap + 64;
+            self.index
+                .reserve(new_cap)
+                .map_err(|e| Error::VectorIndex(format!("Failed to auto-reserve capacity: {}", e)))?;
+        }
+
         // Add to index
         self.index
             .add(key, embedding)
