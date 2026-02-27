@@ -40,6 +40,18 @@ use crate::{
 #[cfg(any(feature = "entity-extraction", feature = "slm"))]
 use std::sync::Mutex;
 
+/// A memory whose LLM extraction has been deferred (async mode).
+///
+/// When `async_extraction_threshold > 0`, content >= the threshold is stored
+/// immediately and pushed here. `flush_extraction_queue()` drains this list.
+#[cfg(feature = "entity-extraction")]
+struct PendingExtraction {
+    memory_id: MemoryId,
+    content: String,
+    speaker: Option<String>,
+    session_date: Option<String>,
+}
+
 /// Coordinates memory ingestion across all dimensions
 ///
 /// The IngestionPipeline ensures that all dimension indexes are updated
@@ -83,6 +95,12 @@ pub struct IngestionPipeline {
     /// Entity types allowed to have profiles (case-insensitive).
     /// Empty = allow all types. Non-empty = filter to listed types only.
     profile_entity_types: Vec<String>,
+    /// Content size (bytes) threshold for deferred LLM extraction.
+    /// 0 = always sync (default). Content >= threshold is deferred.
+    async_extraction_threshold: usize,
+    /// Queue of memories awaiting deferred LLM extraction.
+    #[cfg(feature = "entity-extraction")]
+    pending_extractions: Mutex<Vec<PendingExtraction>>,
 }
 
 impl IngestionPipeline {
@@ -133,6 +151,9 @@ impl IngestionPipeline {
                 "organization".to_string(),
                 "location".to_string(),
             ],
+            async_extraction_threshold: 0,
+            #[cfg(feature = "entity-extraction")]
+            pending_extractions: Mutex::new(Vec::new()),
         }
     }
 
@@ -249,6 +270,101 @@ impl IngestionPipeline {
         self.profile_entity_types = types;
     }
 
+    /// Set the content size threshold for deferred LLM extraction.
+    ///
+    /// When LLM extraction is enabled and `content.len() >= threshold`, `add()`
+    /// stores the memory immediately and queues LLM extraction for later.
+    /// Call `flush_extraction_queue()` to process all pending extractions.
+    /// Set to `0` (default) to always run LLM extraction synchronously.
+    pub fn set_async_extraction_threshold(&mut self, threshold: usize) {
+        self.async_extraction_threshold = threshold;
+    }
+
+    /// Process all deferred LLM extractions from the pending queue.
+    ///
+    /// When `async_extraction_threshold > 0`, large `add()` calls skip LLM
+    /// extraction and queue work here. This method drains the queue, runs LLM
+    /// extraction for each pending memory, and updates entity profiles.
+    ///
+    /// Returns the number of memories whose extraction was processed.
+    ///
+    /// Safe to call even if the queue is empty (returns 0).
+    /// Thread-safe: queue is locked only briefly for the drain.
+    #[cfg(feature = "entity-extraction")]
+    pub fn flush_extraction_queue(&self) -> crate::error::Result<usize> {
+        let pending = {
+            let mut queue = self.pending_extractions.lock().unwrap();
+            std::mem::take(&mut *queue)
+        };
+        let total = pending.len();
+        if total == 0 {
+            return Ok(0);
+        }
+
+        tracing::info!("Flushing {} deferred LLM extractions", total);
+        for pending_ex in pending {
+            if let Some(ref llm_extractor) = self.llm_extractor {
+                let extractor = llm_extractor.lock().unwrap();
+                let speaker = pending_ex.speaker.as_deref();
+                let session_date = pending_ex.session_date.as_deref();
+                let raw_results = if self.extraction_passes == 1 && session_date.is_some() {
+                    vec![extractor.extract_typed(&pending_ex.content, speaker, session_date)]
+                } else {
+                    extractor.extract_multi_pass(
+                        &pending_ex.content,
+                        speaker,
+                        self.extraction_passes,
+                    )
+                };
+                drop(extractor); // release before profile update
+
+                // GPU context auto-reset
+                let passes = raw_results.len();
+                let prev = self.llm_extraction_count.fetch_add(passes, std::sync::atomic::Ordering::Relaxed);
+                if (prev + passes) / Self::GPU_CONTEXT_RESET_INTERVAL > prev / Self::GPU_CONTEXT_RESET_INTERVAL {
+                    if let Ok(guard) = llm_extractor.lock() {
+                        guard.reset_context();
+                    }
+                }
+
+                for result in raw_results {
+                    match result {
+                        Ok(extraction) => {
+                            if let Err(e) = self.update_entity_profiles_from_llm(
+                                &pending_ex.memory_id,
+                                &extraction,
+                            ) {
+                                tracing::warn!("flush: profile update failed for {}: {}", pending_ex.memory_id, e);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("flush: LLM extraction failed for {}: {}", pending_ex.memory_id, e);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(total)
+    }
+
+    /// Returns the number of memories with pending deferred LLM extractions.
+    #[cfg(feature = "entity-extraction")]
+    pub fn pending_extraction_count(&self) -> usize {
+        self.pending_extractions.lock().unwrap().len()
+    }
+
+    /// Stub for non-entity-extraction builds.
+    #[cfg(not(feature = "entity-extraction"))]
+    pub fn flush_extraction_queue(&self) -> crate::error::Result<usize> {
+        Ok(0)
+    }
+
+    /// Stub for non-entity-extraction builds.
+    #[cfg(not(feature = "entity-extraction"))]
+    pub fn pending_extraction_count(&self) -> usize {
+        0
+    }
+
     /// Reserve capacity in the vector index for future insertions
     ///
     /// This improves performance when adding many memories by avoiding
@@ -312,9 +428,33 @@ impl IngestionPipeline {
         // When session_date is available AND single-pass, use typed extraction prompt
         // (episodic/semantic/procedural records + event dates + relationships).
         // This matches the NScale cloud extraction prompt quality.
+        //
+        // Async mode: when async_extraction_threshold > 0 and content.len() >= threshold,
+        // the extraction is deferred. All fast steps (storage, vector, BM25) still run
+        // synchronously. Call flush_extraction_queue() to process deferred extractions.
         #[cfg(feature = "entity-extraction")]
         let llm_extraction_results: Vec<ExtractionResult> =
             if let Some(ref llm_extractor) = self.llm_extractor {
+                // Check async deferral threshold
+                if self.async_extraction_threshold > 0
+                    && memory.content.len() >= self.async_extraction_threshold
+                {
+                    // Defer: queue for flush_extraction_queue()
+                    let speaker = memory.metadata.get("speaker").cloned();
+                    let session_date = memory.metadata.get("session_date").cloned();
+                    self.pending_extractions.lock().unwrap().push(PendingExtraction {
+                        memory_id: id.clone(),
+                        content: memory.content.clone(),
+                        speaker,
+                        session_date,
+                    });
+                    tracing::debug!(
+                        "Deferred LLM extraction for memory {} ({} bytes >= threshold {})",
+                        id, memory.content.len(), self.async_extraction_threshold
+                    );
+                    vec![] // No results yet; profile updated later via flush()
+                } else {
+                    // Sync extraction (existing path)
                 let speaker = memory.metadata.get("speaker").map(|s| s.as_str());
                 let session_date = memory.metadata.get("session_date").map(|s| s.as_str());
                 let extractor = llm_extractor.lock().unwrap();
@@ -373,7 +513,8 @@ impl IngestionPipeline {
                     }
                 }
 
-                successes
+                    successes
+                } // end sync extraction else-branch
             } else {
                 Vec::new()
             };

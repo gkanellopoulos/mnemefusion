@@ -211,6 +211,20 @@ pub struct Config {
     ///
     /// Default: `None` (entity extraction disabled unless wired separately)
     pub llm_model: Option<String>,
+
+    /// Minimum content size (bytes) to trigger deferred LLM extraction.
+    ///
+    /// When LLM extraction is enabled and `content.len() >= async_extraction_threshold`,
+    /// `add()` stores the memory immediately and queues LLM extraction for later.
+    /// Call `flush_extraction_queue()` to process all deferred extractions.
+    ///
+    /// This allows `add()` to return in ~5ms for large content (instead of ~9s per
+    /// document), enabling real-time AI agent usage without blocking conversation flow.
+    ///
+    /// Default: `0` (always synchronous — backward compatible).
+    /// Recommended: `500` (defer documents >= 500 bytes; short messages still sync).
+    /// Set to `1` to defer all content when LLM is enabled.
+    pub async_extraction_threshold: usize,
 }
 
 impl Default for Config {
@@ -241,6 +255,7 @@ impl Default for Config {
             adaptive_k_threshold: 0.0, // Disabled by default (always return exactly limit)
             embedding_model: None,
             llm_model: None,
+            async_extraction_threshold: 0, // Always sync by default (backward compatible)
         }
     }
 }
@@ -590,6 +605,16 @@ impl Config {
     /// Requires the `entity-extraction` feature at compile time.
     pub fn with_llm_model(mut self, path: impl Into<String>) -> Self {
         self.llm_model = Some(path.into());
+        self
+    }
+
+    /// Set the content size threshold for deferred LLM extraction.
+    ///
+    /// Content >= `threshold` bytes will be stored immediately and queued for
+    /// deferred LLM extraction. Call `flush_extraction_queue()` to process.
+    /// Set to `0` to always run LLM extraction synchronously (default).
+    pub fn with_async_extraction_threshold(mut self, threshold: usize) -> Self {
+        self.async_extraction_threshold = threshold;
         self
     }
 

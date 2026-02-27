@@ -218,6 +218,9 @@ impl PyMemory {
     ///         - embedding_model (str): Path to fastembed model cache for auto-embedding
     ///         - llm_model (str): Path to GGUF file — auto-enables LLM entity extraction
     ///                            (Balanced tier). No separate enable_llm_entity_extraction() needed.
+    ///         - async_extraction_threshold (int): Content size (bytes) above which LLM
+    ///                            extraction is deferred. 0=always sync (default). ~500=
+    ///                            defer documents, keep chat messages sync.
     ///         - entity_extraction_enabled (bool)
     ///         - extraction_passes (int): LLM passes per document (1-10)
     ///         - adaptive_k_threshold (float): Top-p threshold (0=disabled)
@@ -269,6 +272,9 @@ impl PyMemory {
                 let model_path: String = llm_model.extract()?;
                 rust_config = rust_config.with_llm_model(model_path.clone());
                 llm_model_path = Some(model_path);
+            }
+            if let Some(threshold) = cfg.get_item("async_extraction_threshold")? {
+                rust_config = rust_config.with_async_extraction_threshold(threshold.extract::<usize>()?);
             }
 
             // SLM configuration (only available with 'slm' feature)
@@ -1293,6 +1299,35 @@ impl PyMemory {
         }
 
         Ok(true)
+    }
+
+    /// Process all deferred LLM extractions queued by add() in async mode.
+    ///
+    /// When `async_extraction_threshold` is set in config, add() stores large
+    /// memories immediately and defers LLM entity extraction here. Call this
+    /// periodically (e.g., every N messages, or before querying) to ensure
+    /// entity profiles are built.
+    ///
+    /// Returns:
+    ///     Number of memories processed (0 if nothing was pending)
+    ///
+    /// Example:
+    ///     >>> n = memory.flush_extraction_queue()
+    ///     >>> print(f"Processed {n} deferred extractions")
+    fn flush_extraction_queue(&self) -> PyResult<usize> {
+        let engine = self.get_engine()?;
+        engine
+            .flush_extraction_queue()
+            .map_err(|e| PyRuntimeError::new_err(format!("flush_extraction_queue failed: {}", e)))
+    }
+
+    /// Returns the number of memories with deferred LLM extractions pending.
+    ///
+    /// Returns:
+    ///     int: count of pending deferred extractions
+    fn pending_extraction_count(&self) -> PyResult<usize> {
+        let engine = self.get_engine()?;
+        Ok(engine.pending_extraction_count())
     }
 
     /// Run entity extraction on text without adding to the database.

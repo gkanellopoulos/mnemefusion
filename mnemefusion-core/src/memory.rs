@@ -178,6 +178,11 @@ impl MemoryEngine {
         // Wire profile entity type filter from config to pipeline
         pipeline.set_profile_entity_types(config.profile_entity_types.clone());
 
+        // Wire async extraction threshold from config to pipeline
+        if config.async_extraction_threshold > 0 {
+            pipeline.set_async_extraction_threshold(config.async_extraction_threshold);
+        }
+
         // Create query planner
         let query_planner = QueryPlanner::new(
             Arc::clone(&storage),
@@ -314,6 +319,27 @@ impl MemoryEngine {
     #[cfg(feature = "entity-extraction")]
     pub fn set_extraction_passes(&mut self, passes: usize) {
         self.pipeline.set_extraction_passes(passes);
+    }
+
+    /// Process all deferred LLM extractions queued by `add()` in async mode.
+    ///
+    /// When `async_extraction_threshold > 0` (set via config or
+    /// `with_async_extraction_threshold()`), `add()` stores large memories
+    /// immediately and defers LLM extraction here. Call this periodically
+    /// (e.g., every N messages, or before querying) to build entity profiles.
+    ///
+    /// Returns the number of memories whose extraction was processed.
+    /// Safe to call when the queue is empty (returns `Ok(0)`).
+    pub fn flush_extraction_queue(&self) -> Result<usize> {
+        self.pipeline.flush_extraction_queue()
+    }
+
+    /// Returns the number of memories with deferred LLM extractions pending.
+    ///
+    /// Non-zero only when `async_extraction_threshold > 0` and large `add()` calls
+    /// have been made since the last `flush_extraction_queue()`.
+    pub fn pending_extraction_count(&self) -> usize {
+        self.pipeline.pending_extraction_count()
     }
 
     /// Set a default namespace (user identity) for all add/query operations.
