@@ -14,7 +14,7 @@ use llama_cpp_2::sampling::LlamaSampler;
 use llama_cpp_2::token::LlamaToken;
 use std::num::NonZeroU32;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Parameters for controlling LLM text generation
 ///
@@ -40,12 +40,16 @@ impl Default for GenerationParams {
     }
 }
 
+/// Process-global llama backend. Initialized once, lives for the entire process.
+/// This prevents `BackendAlreadyInitialized` errors when creating multiple
+/// `InferenceEngine` instances (e.g., one per question in LongMemEval).
+static LLAMA_BACKEND: OnceLock<LlamaBackend> = OnceLock::new();
+
 /// Native LLM inference engine with grammar-constrained decoding
 ///
 /// Reuses a single GPU context across generate() calls to prevent
 /// GPU memory fragmentation from repeated allocation/deallocation.
 pub struct InferenceEngine {
-    backend: LlamaBackend,
     // SAFETY: ctx borrows from model via Arc. Declared before model so it's
     // dropped first. Lifetime erased via transmute since Arc guarantees the
     // model outlives the engine. See get_or_create_ctx().
@@ -81,26 +85,27 @@ impl InferenceEngine {
             )));
         }
 
-        // Initialize llama.cpp backend
-        let backend =
-            LlamaBackend::init().map_err(|e| Error::InferenceError(format!("Backend init: {e}")))?;
-
-        // Load ggml backends as dynamic libraries.
-        // When gpu_layers=0, skip CUDA to avoid allocating GPU compute buffers
-        // (which can fail on low-VRAM cards and waste memory even when not needed).
-        Self::load_ggml_backends(gpu_layers > 0);
+        // Initialize llama.cpp backend once (process-global).
+        // Subsequent calls reuse the existing backend, avoiding BackendAlreadyInitialized.
+        let backend = LLAMA_BACKEND.get_or_init(|| {
+            let b = LlamaBackend::init().expect("Failed to initialize llama backend");
+            // Load ggml backends as dynamic libraries on first init.
+            // When gpu_layers=0, skip CUDA to avoid allocating GPU compute buffers
+            // (which can fail on low-VRAM cards and waste memory even when not needed).
+            Self::load_ggml_backends(gpu_layers > 0);
+            b
+        });
 
         // Configure model parameters
         let model_params = LlamaModelParams::default().with_n_gpu_layers(gpu_layers);
 
         // Load the model
-        let model = LlamaModel::load_from_file(&backend, model_path, &model_params)
+        let model = LlamaModel::load_from_file(backend, model_path, &model_params)
             .map_err(|e| Error::InferenceError(format!("Model load: {e}")))?;
 
         let n_ctx = 2048; // Context size for entity extraction
 
         Ok(Self {
-            backend,
             ctx: Mutex::new(None),
             model: Arc::new(model),
             n_ctx,
@@ -129,9 +134,11 @@ impl InferenceEngine {
                 .with_n_ctx(NonZeroU32::new(self.n_ctx))
                 .with_n_batch(n_batch);
 
+            let backend = LLAMA_BACKEND.get()
+                .ok_or_else(|| Error::InferenceError("Backend not initialized".to_string()))?;
             let new_ctx = self
                 .model
-                .new_context(&self.backend, ctx_params)
+                .new_context(backend, ctx_params)
                 .map_err(|e| Error::InferenceError(format!("Context creation: {e}")))?;
 
             // SAFETY: model is behind Arc, guaranteed to live as long as InferenceEngine.

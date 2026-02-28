@@ -1,551 +1,559 @@
 #!/usr/bin/env python3
 """
-LongMemEval Benchmark Evaluation for MnemeFusion
+LongMemEval Stepped Evaluation for MnemeFusion
 
-This script evaluates MnemeFusion's retrieval performance on the LongMemEval dataset,
-testing 5 core memory abilities: information extraction, multi-session reasoning,
-temporal reasoning, knowledge updates, and abstention.
+Iterative development benchmark: processes questions one at a time with full
+LLM entity extraction, GPT-4o percentage-based judging.
 
-Dataset: https://github.com/xiaowu0162/LongMemEval
-Paper: "Can Long-Context Language Models Subsume Retrieval, RAG, SQL, and More?"
+NOT for publication — for validating our library works on a second benchmark
+before investing in GPU rental for a full run.
+
+Modes:
+  oracle  — Evidence-only sessions (~36 turns/q, ~5 min/q). Tests extraction + RAG.
+             If we fail here, the problem is us, not retrieval.
+  s       — Full haystack (~490 turns/q, ~75 min/q). Tests full retrieval pipeline.
 
 Usage:
-    python longmemeval_eval.py --variant s        # LongMemEval_S (~115k tokens, for 128k models)
-    python longmemeval_eval.py --variant oracle   # LongMemEval_Oracle (evidence sessions only)
+    # Oracle mode (recommended first)
+    python longmemeval_eval.py --mode oracle \\
+        --llm-model ../../models/phi-4-mini/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf
+
+    # Full haystack mode
+    python longmemeval_eval.py --mode s \\
+        --llm-model ../../models/phi-4-mini/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf
+
+    # Resume from question N
+    python longmemeval_eval.py --mode oracle --start-at 5 \\
+        --llm-model ../../models/phi-4-mini/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf
+
+Dataset: LongMemEval (ICLR 2025), 500 questions, 6 categories.
+    https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned
 """
 
 import argparse
+import gc
 import json
 import os
 import sys
 import time
 import tempfile
+import shutil
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from collections import defaultdict
+from datetime import datetime
 
-# Add parent directory to path for mnemefusion imports
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "mnemefusion-python"))
+# Add parent directory to path
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root / "mnemefusion-python"))
+sys.path.insert(0, str(project_root))
+
+try:
+    from mnemefusion_cuda_wrapper import mnemefusion
+except ImportError:
+    try:
+        import mnemefusion
+    except ImportError:
+        print("ERROR: mnemefusion not installed.")
+        sys.exit(1)
 
 try:
     from sentence_transformers import SentenceTransformer
     import numpy as np
 except ImportError:
-    print("ERROR: Required packages not installed.")
-    print("Install with: pip install sentence-transformers numpy")
+    print("ERROR: sentence-transformers not installed.")
+    sys.exit(1)
+
+try:
+    from openai import OpenAI
+except ImportError:
+    print("ERROR: openai not installed. pip install openai")
     sys.exit(1)
 
 
-class LongMemEvalEvaluator:
-    """Evaluates MnemeFusion on LongMemEval dataset"""
-
-    def __init__(self, model_name: str = "BAAI/bge-base-en-v1.5", use_gpu: bool = True):
-        """
-        Initialize evaluator with embedding model
-
-        Args:
-            model_name: SentenceTransformer model name
-            use_gpu: Whether to use GPU for embeddings
-        """
-        print(f"Loading embedding model: {model_name}")
-        self.model = SentenceTransformer(model_name)
-
-        if use_gpu:
-            try:
-                import torch
-                if torch.cuda.is_available():
-                    self.model.to('cuda')
-                    print(f"[OK] Using GPU: {torch.cuda.get_device_name(0)}")
-                    print(f"  GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
-                else:
-                    print("[WARNING] GPU requested but not available, using CPU")
-            except ImportError:
-                print("[WARNING] PyTorch not found, using CPU")
-        else:
-            print("Using CPU for embeddings")
-
-        self.embedding_dim = self.model.get_sentence_embedding_dimension()
-        print(f"Embedding dimension: {self.embedding_dim}")
-
-    def download_dataset(self, variant: str, data_dir: str = "tests/benchmarks/fixtures") -> str:
-        """
-        Download LongMemEval dataset if not already present
-
-        Args:
-            variant: Dataset variant ('s', 'm', or 'oracle')
-            data_dir: Directory to save dataset
-
-        Returns:
-            Path to downloaded dataset
-        """
-        os.makedirs(data_dir, exist_ok=True)
-
-        variant_map = {
-            's': 'longmemeval_s_cleaned.json',
-            'm': 'longmemeval_m_cleaned.json',
-            'oracle': 'longmemeval_oracle.json'
-        }
-
-        if variant not in variant_map:
-            print(f"ERROR: Invalid variant '{variant}'. Choose from: s, m, oracle")
-            sys.exit(1)
-
-        filename = variant_map[variant]
-        filepath = os.path.join(data_dir, filename)
-
-        if os.path.exists(filepath):
-            print(f"[OK] Dataset already exists: {filepath}")
-            return filepath
-
-        print(f"\nDownloading LongMemEval variant '{variant}'...")
-        base_url = "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main"
-        url = f"{base_url}/{filename}"
-
-        try:
-            import urllib.request
-            print(f"Fetching from: {url}")
-            urllib.request.urlretrieve(url, filepath)
-            print(f"[OK] Downloaded to: {filepath}")
-            return filepath
-        except Exception as e:
-            print(f"ERROR: Failed to download dataset: {e}")
-            print("\nManual download instructions:")
-            print(f"  wget {url} -O {filepath}")
-            sys.exit(1)
-
-    def load_dataset(self, dataset_path: str) -> List[Dict]:
-        """
-        Load LongMemEval dataset from JSON file
-
-        Args:
-            dataset_path: Path to longmemeval JSON file
-
-        Returns:
-            List of evaluation instances
-        """
-        print(f"\nLoading LongMemEval dataset from {dataset_path}...")
-
-        if not os.path.exists(dataset_path):
-            print(f"ERROR: Dataset not found at {dataset_path}")
-            sys.exit(1)
-
-        with open(dataset_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-
-        instances = data if isinstance(data, list) else [data]
-        print(f"[OK] Loaded {len(instances)} evaluation instances")
-
-        return instances
-
-    def prepare_documents(self, instances: List[Dict]) -> Tuple[List[Tuple[str, str, Dict]], int]:
-        """
-        Prepare haystack sessions as documents
-
-        Args:
-            instances: List of LongMemEval evaluation instances
-
-        Returns:
-            Tuple of (documents list, total token count estimate)
-        """
-        print("\nPreparing haystack sessions as documents...")
-        documents = []
-        total_tokens = 0
-
-        for instance_idx, instance in enumerate(instances):
-            question_id = instance.get('question_id', f'q_{instance_idx}')
-            haystack_sessions = instance.get('haystack_sessions', [])
-            haystack_dates = instance.get('haystack_dates', [])
-            haystack_session_ids = instance.get('haystack_session_ids', [])
-
-            for session_idx, session in enumerate(haystack_sessions):
-                # Each session is a conversation with turns
-                session_id = haystack_session_ids[session_idx] if session_idx < len(haystack_session_ids) else f'session_{session_idx}'
-                session_date = haystack_dates[session_idx] if session_idx < len(haystack_dates) else None
-
-                # Concatenate all turns in session
-                session_text = ""
-                for turn in session:
-                    role = turn.get('role', 'user')
-                    content = turn.get('content', '')
-                    session_text += f"{role}: {content}\n"
-
-                # Estimate tokens (rough: 1 token ≈ 4 chars)
-                total_tokens += len(session_text) // 4
-
-                # Create document ID
-                doc_id = f"{question_id}_session_{session_id}"
-
-                # Metadata
-                metadata = {
-                    'question_id': question_id,
-                    'session_id': str(session_id),
-                    'session_date': str(session_date) if session_date else '',
-                    'session_idx': str(session_idx),
-                }
-
-                documents.append((doc_id, session_text.strip(), metadata))
-
-        print(f"[OK] Prepared {len(documents)} sessions (~{total_tokens:,} tokens)")
-        return documents, total_tokens
-
-    def generate_embeddings(self, texts: List[str], instruction: str = None) -> np.ndarray:
-        """
-        Generate embeddings for texts using BGE model
-
-        Args:
-            texts: List of texts to embed
-            instruction: Optional instruction prefix (for queries)
-
-        Returns:
-            Numpy array of embeddings
-        """
-        if instruction:
-            texts = [instruction + text for text in texts]
-
-        embeddings = self.model.encode(
-            texts,
-            normalize_embeddings=True,  # Cosine similarity
-            show_progress_bar=len(texts) > 10,
-            batch_size=32
-        )
-
-        return embeddings
-
-    def build_memory_database(self, documents: List[Tuple[str, str, Dict]], db_path: str):
-        """
-        Build MnemeFusion database with haystack sessions
-
-        Args:
-            documents: List of (doc_id, content, metadata) tuples
-            db_path: Path to save database
-        """
-        print(f"\nBuilding MnemeFusion database at {db_path}...")
-
-        # Import MnemeFusion Python bindings
-        try:
-            import mnemefusion
-        except ImportError:
-            print("ERROR: mnemefusion Python package not installed")
-            print("Install with: cd mnemefusion-python && maturin develop")
-            sys.exit(1)
-
-        # Create config dict with correct embedding dimension
-        config = {"embedding_dim": self.embedding_dim}
-
-        # Open/create database
-        engine = mnemefusion.Memory(db_path, config=config)
-
-        # Reserve capacity for all documents (improves performance)
-        print(f"Reserving capacity for {len(documents)} documents...")
-        engine.reserve_capacity(len(documents))
-
-        # Generate embeddings for all documents
-        print("Generating embeddings for sessions...")
-        contents = [doc[1] for doc in documents]
-        embeddings = self.generate_embeddings(contents)
-
-        # Add documents to database
-        print("Adding sessions to database...")
-        for i, ((doc_id, content, metadata), embedding) in enumerate(zip(documents, embeddings)):
-            # Convert metadata to string dict (Python bindings requirement)
-            metadata_str = {k: str(v) for k, v in metadata.items()}
-
-            # Parse session_date for timestamp if available
-            timestamp = None
-            if metadata.get('session_date'):
-                try:
-                    from datetime import datetime
-                    # Try to parse date (format depends on dataset)
-                    # LongMemEval uses formats like "2023-01-15"
-                    date_str = metadata['session_date']
-                    if date_str and date_str != 'None':
-                        dt = datetime.fromisoformat(date_str)
-                        timestamp = int(dt.timestamp())
-                except Exception:
-                    pass  # Skip if parsing fails
-
-            engine.add(
-                content=content,
-                embedding=embedding.tolist(),
-                metadata=metadata_str,
-                timestamp=timestamp,
-                source=None,
-                namespace=None
-            )
-
-            if (i + 1) % 100 == 0:
-                print(f"  Added {i + 1}/{len(documents)} sessions")
-
-        print(f"[OK] Database built with {len(documents)} sessions")
-        return engine
-
-    def evaluate(self, instances: List[Dict], engine, top_k: int = 10) -> Dict:
-        """
-        Evaluate retrieval performance on LongMemEval instances
-
-        Args:
-            instances: List of LongMemEval evaluation instances
-            engine: MnemeFusion engine
-            top_k: Number of top results to retrieve
-
-        Returns:
-            Dictionary of evaluation metrics
-        """
-        print(f"\nEvaluating retrieval (top-{top_k})...")
-
-        total_questions = len(instances)
-        recall_scores = []
-        precision_scores = []
-        f1_scores = []
-
-        # Track by question type and ability
-        type_metrics = defaultdict(lambda: {'recall': [], 'precision': [], 'f1': []})
-        ability_metrics = defaultdict(lambda: {'recall': [], 'precision': [], 'f1': []})
-
-        # Map question types to abilities
-        type_to_ability = {
-            'single-session-user': 'Information Extraction',
-            'single-session-assistant': 'Information Extraction',
-            'single-session-preference': 'Information Extraction',
-            'temporal-reasoning': 'Temporal Reasoning',
-            'knowledge-update': 'Knowledge Updates',
-            'multi-session': 'Multi-Session Reasoning',
-        }
-
-        # BGE instruction for queries
-        query_instruction = "Represent this sentence for searching relevant passages: "
-
-        for i, instance in enumerate(instances):
-            question_id = instance.get('question_id', f'q_{i}')
-            question = instance.get('question', '')
-            question_type = instance.get('question_type', 'unknown')
-            answer_session_ids = set(str(sid) for sid in instance.get('answer_session_ids', []))
-
-            # Determine if this is abstention query
-            is_abstention = question_type.endswith('_abs')
-            ability = 'Abstention' if is_abstention else type_to_ability.get(
-                question_type.replace('_abs', ''), 'Unknown'
-            )
-
-            # Generate query embedding
-            query_embedding = self.generate_embeddings([question], instruction=query_instruction)[0]
-
-            # Use 4D fusion query
-            intent, results = engine.query(
-                query_text=question,
-                query_embedding=query_embedding.tolist(),
-                limit=top_k,
-                namespace=None,
-                filters=None
-            )
-
-            # Extract retrieved session IDs
-            retrieved_session_ids = set()
-            for memory, scores in results:
-                session_id = memory['metadata'].get('session_id', '')
-                if session_id:
-                    retrieved_session_ids.add(session_id)
-
-            # Calculate metrics
-            if answer_session_ids:
-                # True positives: sessions that should be retrieved and were retrieved
-                true_positives = len(retrieved_session_ids & answer_session_ids)
-
-                # Recall: fraction of relevant sessions retrieved
-                recall = true_positives / len(answer_session_ids)
-                recall_scores.append(recall)
-
-                # Precision: fraction of retrieved sessions that are relevant
-                precision = true_positives / len(retrieved_session_ids) if retrieved_session_ids else 0.0
-                precision_scores.append(precision)
-
-                # F1 score
-                f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
-                f1_scores.append(f1)
-
-                # Track by type and ability
-                type_metrics[question_type]['recall'].append(recall)
-                type_metrics[question_type]['precision'].append(precision)
-                type_metrics[question_type]['f1'].append(f1)
-
-                ability_metrics[ability]['recall'].append(recall)
-                ability_metrics[ability]['precision'].append(precision)
-                ability_metrics[ability]['f1'].append(f1)
-
-            if (i + 1) % 10 == 0 or (i + 1) == total_questions:
-                print(f"  Evaluated {i + 1}/{total_questions} questions")
-
-        # Aggregate metrics
-        metrics = {
-            'num_questions': total_questions,
-            'recall': np.mean(recall_scores) if recall_scores else 0.0,
-            'precision': np.mean(precision_scores) if precision_scores else 0.0,
-            'f1': np.mean(f1_scores) if f1_scores else 0.0,
-            'top_k': top_k,
-            'type_metrics': {},
-            'ability_metrics': {}
-        }
-
-        # Add per-type metrics
-        for qtype, scores in type_metrics.items():
-            metrics['type_metrics'][qtype] = {
-                'recall': np.mean(scores['recall']),
-                'precision': np.mean(scores['precision']),
-                'f1': np.mean(scores['f1']),
-                'count': len(scores['recall'])
-            }
-
-        # Add per-ability metrics
-        for ability, scores in ability_metrics.items():
-            metrics['ability_metrics'][ability] = {
-                'recall': np.mean(scores['recall']),
-                'precision': np.mean(scores['precision']),
-                'f1': np.mean(scores['f1']),
-                'count': len(scores['recall'])
-            }
-
-        return metrics
-
-    def print_results(self, metrics: Dict, variant: str):
-        """Print evaluation results"""
-        print("\n" + "="*60)
-        print(f"LongMemEval Evaluation Results - Variant: {variant.upper()}")
-        print("="*60)
-        print(f"Questions evaluated:  {metrics['num_questions']}")
-        print(f"Top-K retrieved:      {metrics['top_k']}")
-        print(f"\nOverall Metrics:")
-        print(f"  Recall:      {metrics['recall']:.3f} ({metrics['recall']*100:.1f}%)")
-        print(f"  Precision:   {metrics['precision']:.3f} ({metrics['precision']*100:.1f}%)")
-        print(f"  F1 Score:    {metrics['f1']:.3f} ({metrics['f1']*100:.1f}%)")
-
-        if metrics.get('ability_metrics'):
-            print(f"\nMetrics by Memory Ability:")
-            abilities_order = [
-                'Information Extraction',
-                'Multi-Session Reasoning',
-                'Temporal Reasoning',
-                'Knowledge Updates',
-                'Abstention'
-            ]
-            for ability in abilities_order:
-                if ability in metrics['ability_metrics']:
-                    scores = metrics['ability_metrics'][ability]
-                    print(f"  {ability} ({scores['count']} questions):")
-                    print(f"    Recall:    {scores['recall']:.3f}")
-                    print(f"    Precision: {scores['precision']:.3f}")
-                    print(f"    F1:        {scores['f1']:.3f}")
-
-        if metrics.get('type_metrics'):
-            print(f"\nMetrics by Question Type:")
-            for qtype, scores in sorted(metrics['type_metrics'].items()):
-                print(f"  {qtype} ({scores['count']} questions):")
-                print(f"    Recall: {scores['recall']:.3f}, Precision: {scores['precision']:.3f}, F1: {scores['f1']:.3f}")
-
-        print("\n" + "="*60)
-
-        # Compare to target
-        target = 0.70
-        if metrics['f1'] >= target:
-            print(f"[SUCCESS] F1 Score ({metrics['f1']:.3f}) >= target ({target:.3f})")
-        else:
-            print(f"[BELOW TARGET] F1 Score ({metrics['f1']:.3f}) < target ({target:.3f})")
-        print("="*60)
-
-    def save_results(self, metrics: Dict, output_path: str):
-        """Save results to JSON file"""
-        # Convert numpy types to Python types for JSON serialization
-        def convert_to_native(obj):
-            if isinstance(obj, np.integer):
-                return int(obj)
-            elif isinstance(obj, np.floating):
-                return float(obj)
-            elif isinstance(obj, np.ndarray):
-                return obj.tolist()
-            elif isinstance(obj, dict):
-                return {key: convert_to_native(value) for key, value in obj.items()}
-            elif isinstance(obj, list):
-                return [convert_to_native(item) for item in obj]
-            return obj
-
-        metrics_native = convert_to_native(metrics)
-
-        with open(output_path, 'w') as f:
-            json.dump(metrics_native, f, indent=2)
-        print(f"\n[OK] Results saved to: {output_path}")
-
-
-def main():
-    parser = argparse.ArgumentParser(description='LongMemEval Benchmark Evaluation')
-    parser.add_argument('--variant', type=str, default='s', choices=['s', 'm', 'oracle'],
-                       help="Dataset variant: 's' (~115k tokens), 'm' (~500 sessions), 'oracle' (evidence only)")
-    parser.add_argument('--dataset', type=str, default=None,
-                       help='Path to LongMemEval JSON file (auto-downloads if not specified)')
-    parser.add_argument('--top-k', type=int, default=10,
-                       help='Number of top results to retrieve')
-    parser.add_argument('--no-gpu', action='store_true',
-                       help='Disable GPU usage')
-    parser.add_argument('--output', type=str, default=None,
-                       help='Output JSON file for results')
-
-    args = parser.parse_args()
-
-    print("="*60)
-    print(f"LongMemEval Benchmark Evaluation - Variant: {args.variant.upper()}")
-    print("="*60)
-    print(f"Top-K: {args.top_k}")
-    print(f"GPU: {'Enabled' if not args.no_gpu else 'Disabled'}")
-    print()
-
-    # Create evaluator
-    evaluator = LongMemEvalEvaluator(use_gpu=not args.no_gpu)
-
-    # Download or load dataset
-    if args.dataset:
-        dataset_path = args.dataset
+# =============================================================================
+# Configuration
+# =============================================================================
+
+EMBEDDING_MODEL = "BAAI/bge-base-en-v1.5"
+RAG_MODEL = "gpt-4o-mini"
+JUDGE_MODEL = "gpt-5-mini"  # 10x cheaper than gpt-4o, comparable reasoning quality
+TOP_K = 20
+EXTRACTION_PASSES = 1
+
+# Pricing per 1M tokens (for cost tracking)
+MODEL_PRICING = {
+    "gpt-4o-mini":  {"input": 0.15, "output": 0.60},
+    "gpt-4o":       {"input": 2.50, "output": 10.00},
+    "gpt-5-mini":   {"input": 0.25, "output": 2.00},
+    "gpt-5-nano":   {"input": 0.05, "output": 0.40},
+}
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures" / "longmemeval"
+
+RAG_PROMPT = """You are a helpful assistant answering questions based on conversation history.
+
+Retrieved memories (dates in brackets show when each conversation occurred):
+{context}
+
+Question: {question}
+
+Answer the question based on the information in the retrieved memories. Look carefully through ALL the memories for relevant details.
+For temporal questions, use the dates in brackets to calculate the answer.
+If you find ANY relevant information, provide an answer. Only say "I don't have enough information" if the memories truly contain nothing related to the question.
+Keep your answer concise and factual."""
+
+JUDGE_PROMPT = """You are evaluating a conversational memory system's ability to recall information.
+
+Question: {question}
+Ground truth answer: {gold_answer}
+System's answer: {hypothesis}
+
+Rate the system's answer on a scale of 0-100:
+- 95-100: Correct. Contains the key information from the ground truth.
+- 80-94: Mostly correct. Right direction, minor details differ or extra info included.
+- 50-79: Partially correct. Some relevant information but missing key parts.
+- 20-49: Mostly wrong. Tangentially related but misses the core answer.
+- 0-19: Completely wrong, irrelevant, or "I don't know" when the answer exists.
+
+For abstention questions (where the correct answer is that no information exists):
+- 95-100 if the system correctly says it doesn't have that information.
+- 0-20 if the system fabricates an answer.
+
+Respond with ONLY a JSON object, no other text:
+{{"score": <integer 0-100>, "reasoning": "<brief explanation>"}}"""
+
+
+# =============================================================================
+# Core Functions
+# =============================================================================
+
+def load_dataset(mode: str) -> List[Dict]:
+    """Load the LongMemEval dataset."""
+    if mode == "oracle":
+        path = FIXTURES_DIR / "longmemeval_oracle.json"
+    elif mode == "s":
+        path = FIXTURES_DIR / "longmemeval_s_cleaned.json"
     else:
-        dataset_path = evaluator.download_dataset(args.variant)
+        raise ValueError(f"Unknown mode: {mode}")
 
-    # Load dataset
-    instances = evaluator.load_dataset(dataset_path)
-
-    if not instances:
-        print("ERROR: No evaluation instances found in dataset")
+    if not path.exists():
+        print(f"ERROR: Dataset not found at {path}")
+        print(f"Download from: https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned")
         sys.exit(1)
 
-    # Prepare documents (haystack sessions)
-    documents, total_tokens = evaluator.prepare_documents(instances)
+    print(f"Loading {path.name}...")
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    print(f"  Loaded {len(data)} questions")
+    return data
 
-    # Build database in temporary directory
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = os.path.join(tmpdir, "longmemeval.mfdb")
 
-        # Build MnemeFusion database
-        engine = evaluator.build_memory_database(documents, db_path)
+def ingest_question(
+    entry: Dict,
+    embedder: SentenceTransformer,
+    llm_model_path: Optional[str],
+    extraction_passes: int,
+    tmp_dir: str,
+) -> "mnemefusion.Memory":
+    """Create a MnemeFusion instance and ingest all turns for one question."""
+    db_path = os.path.join(tmp_dir, "eval.mfdb")
+    embedding_dim = embedder.get_sentence_embedding_dimension()
+    config = {"embedding_dim": embedding_dim}
+    mem = mnemefusion.Memory(db_path, config)
 
-        # Evaluate
-        start_time = time.time()
-        metrics = evaluator.evaluate(instances, engine, top_k=args.top_k)
-        elapsed = time.time() - start_time
+    # Enable LLM extraction if model provided
+    if llm_model_path:
+        mem.enable_llm_entity_extraction(llm_model_path, "quality", extraction_passes)
 
-        metrics['elapsed_seconds'] = elapsed
-        metrics['variant'] = args.variant
-        metrics['model'] = "BAAI/bge-base-en-v1.5"
-        metrics['embedding_dim'] = evaluator.embedding_dim
-        metrics['total_sessions'] = len(documents)
-        metrics['total_tokens_estimate'] = total_tokens
+    # Set embedding function for fact embeddings
+    mem.set_embedding_fn(lambda text: embedder.encode(text, show_progress_bar=False).tolist())
 
-    # Print results
-    evaluator.print_results(metrics, args.variant)
-    print(f"Evaluation time: {elapsed:.1f} seconds")
+    # Collect all turns with metadata
+    sessions = entry["haystack_sessions"]
+    dates = entry.get("haystack_dates", [])
+    session_ids = entry.get("haystack_session_ids", [])
 
-    # Save results
-    if args.output:
-        evaluator.save_results(metrics, args.output)
+    turns = []
+    for sess_idx, session in enumerate(sessions):
+        session_date = dates[sess_idx] if sess_idx < len(dates) else ""
+        session_id = str(session_ids[sess_idx]) if sess_idx < len(session_ids) else str(sess_idx)
+
+        for turn_idx, turn in enumerate(session):
+            content = turn["content"]
+            if not content or not content.strip():
+                continue
+            metadata = {
+                "speaker": turn["role"],
+                "session_id": session_id,
+                "session_idx": str(sess_idx),
+                "turn_idx": str(turn_idx),
+                "dialog_id": f"S{session_id}:{turn_idx}",
+            }
+            if session_date:
+                metadata["session_date"] = session_date
+            turns.append((content, metadata, session_date))
+
+    # Batch-embed all turns
+    contents = [t[0] for t in turns]
+    print(f"    Embedding {len(contents)} turns...", end=" ", flush=True)
+    t0 = time.time()
+    all_embeddings = embedder.encode(contents, show_progress_bar=False, batch_size=64)
+    print(f"({time.time() - t0:.1f}s)")
+
+    # Ingest one by one (each triggers LLM extraction if enabled)
+    print(f"    Ingesting {len(turns)} turns", end="", flush=True)
+    t0 = time.time()
+    for i, (content, metadata, session_date) in enumerate(turns):
+        embedding = all_embeddings[i].tolist()
+
+        # Parse session_date to Unix timestamp
+        timestamp = None
+        if session_date:
+            for fmt in ("%Y/%m/%d (%a) %H:%M", "%Y/%m/%d (%a)", "%Y-%m-%d", "%m/%d/%Y"):
+                try:
+                    dt = datetime.strptime(session_date.strip(), fmt)
+                    timestamp = dt.timestamp()
+                    break
+                except ValueError:
+                    continue
+
+        mem.add(content, embedding, metadata, timestamp=timestamp)
+
+        # Progress dots
+        if (i + 1) % 50 == 0:
+            print(".", end="", flush=True)
+
+    elapsed = time.time() - t0
+    print(f" ({elapsed:.1f}s, {len(turns) / max(elapsed, 0.01):.1f} turns/s)")
+
+    # Post-ingestion: summarize profiles and precompute fact embeddings
+    try:
+        mem.summarize_profiles()
+        n = mem.precompute_fact_embeddings()
+    except Exception:
+        pass
+
+    return mem
+
+
+def estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+    """Estimate API cost in USD."""
+    pricing = MODEL_PRICING.get(model, {"input": 0, "output": 0})
+    return (input_tokens * pricing["input"] + output_tokens * pricing["output"]) / 1_000_000
+
+
+def query_and_answer(
+    mem: "mnemefusion.Memory",
+    question: str,
+    embedder: SentenceTransformer,
+    client: OpenAI,
+) -> Tuple[str, List[str], float, float]:
+    """Query MnemeFusion and generate answer via RAG. Returns (answer, context, latency_ms, cost)."""
+    query_embedding = embedder.encode([question], show_progress_bar=False)[0].tolist()
+
+    t0 = time.time()
+    intent_info, results, profile_context = mem.query(question, query_embedding, TOP_K)
+    latency_ms = (time.time() - t0) * 1000
+
+    # Format retrieved memories as context
+    context_parts = []
+    for result_dict, scores_dict in results:
+        content = result_dict.get("content", "")
+        metadata = result_dict.get("metadata", {})
+        session_date = metadata.get("session_date", "")
+        speaker = metadata.get("speaker", "")
+
+        if session_date:
+            formatted = f"[{session_date}] {speaker}: {content}" if speaker else f"[{session_date}] {content}"
+        else:
+            formatted = f"{speaker}: {content}" if speaker else content
+        context_parts.append(formatted)
+
+    # Add profile context if available
+    if profile_context:
+        context_parts.append(f"[Profile summary] {profile_context}")
+
+    context_str = "\n".join([f"- {c}" for c in context_parts])
+
+    # Generate answer
+    prompt = RAG_PROMPT.format(context=context_str, question=question)
+    cost = 0.0
+    try:
+        response = client.chat.completions.create(
+            model=RAG_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200,
+            temperature=0,
+        )
+        answer = response.choices[0].message.content.strip()
+        if response.usage:
+            cost = estimate_cost(RAG_MODEL, response.usage.prompt_tokens, response.usage.completion_tokens)
+    except Exception as e:
+        print(f"    [ERROR] Answer generation failed: {e}")
+        answer = "Error generating answer"
+
+    return answer, context_parts, latency_ms, cost
+
+
+def judge_answer(
+    question: str,
+    gold_answer: str,
+    hypothesis: str,
+    client: OpenAI,
+) -> Tuple[int, str, float]:
+    """Judge correctness with GPT-5 mini, returning percentage score + reasoning + cost."""
+    prompt = JUDGE_PROMPT.format(
+        question=question,
+        gold_answer=gold_answer,
+        hypothesis=hypothesis,
+    )
+
+    try:
+        # GPT-5 models use reasoning mode which doesn't support temperature=0
+        # or max_tokens. Omit both — defaults work fine for short JSON output.
+        judge_kwargs = {"model": JUDGE_MODEL, "messages": [{"role": "user", "content": prompt}]}
+        if not JUDGE_MODEL.startswith("gpt-5"):
+            judge_kwargs["max_tokens"] = 200
+            judge_kwargs["temperature"] = 0
+        response = client.chat.completions.create(**judge_kwargs)
+        raw = response.choices[0].message.content.strip()
+        cost = 0.0
+        if response.usage:
+            cost = estimate_cost(JUDGE_MODEL, response.usage.prompt_tokens, response.usage.completion_tokens)
+
+        # Handle markdown-wrapped JSON
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        result = json.loads(raw)
+        score = int(result.get("score", 0))
+        reasoning = result.get("reasoning", "")
+        return score, reasoning, cost
+
+    except Exception as e:
+        print(f"    [ERROR] Judge failed: {e}")
+        return -1, f"Judge error: {e}", 0.0
+
+
+# =============================================================================
+# Main Evaluation Loop
+# =============================================================================
+
+def run_evaluation(args):
+    """Run the stepped LongMemEval evaluation."""
+    # Load dataset
+    data = load_dataset(args.mode)
+
+    # Initialize embedder (loaded once, reused across all questions)
+    print(f"Loading embedding model: {EMBEDDING_MODEL}")
+    embedder = SentenceTransformer(EMBEDDING_MODEL)
+
+    # Initialize OpenAI client
+    client = OpenAI()
+
+    # Results file for persistence
+    results_path = FIXTURES_DIR / f"longmemeval_results_{args.mode}.json"
+    if results_path.exists():
+        with open(results_path, encoding="utf-8") as f:
+            all_results = json.load(f)
+        print(f"  Loaded {len(all_results)} previous results from {results_path.name}")
     else:
-        # Default output path
-        output_path = f"tests/benchmarks/fixtures/longmemeval_{args.variant}_results.json"
-        evaluator.save_results(metrics, output_path)
+        all_results = []
+
+    # Category tracking
+    category_scores = defaultdict(list)
+    for r in all_results:
+        category_scores[r["question_type"]].append(r["score"])
+
+    # Print header
+    print(f"\n{'=' * 70}")
+    print(f"LongMemEval Stepped Evaluation")
+    print(f"  Mode:       {args.mode} ({'evidence-only' if args.mode == 'oracle' else 'full haystack'})")
+    print(f"  LLM:        {args.llm_model or 'DISABLED (no entity extraction)'}")
+    print(f"  RAG model:  {RAG_MODEL}")
+    print(f"  Judge:      {JUDGE_MODEL} (percentage-based, ${MODEL_PRICING.get(JUDGE_MODEL, {}).get('input', '?')}/{MODEL_PRICING.get(JUDGE_MODEL, {}).get('output', '?')} per 1M tok)")
+    print(f"  Questions:  {len(data)} total, starting at #{args.start_at}")
+    print(f"  Results:    {results_path.name}")
+    print(f"{'=' * 70}\n")
+
+    completed_ids = {r["question_id"] for r in all_results}
+    cumulative_cost = sum(r.get("api_cost", 0.0) for r in all_results)
+
+    for q_idx in range(args.start_at, len(data)):
+        entry = data[q_idx]
+        qid = entry["question_id"]
+        qtype = entry["question_type"]
+        question = entry["question"]
+        gold_answer = str(entry["answer"])
+        is_abstention = qid.endswith("_abs")
+
+        # Skip already-evaluated questions
+        if qid in completed_ids:
+            continue
+
+        num_sessions = len(entry["haystack_sessions"])
+        num_turns = sum(len(s) for s in entry["haystack_sessions"])
+
+        print(f"--- Question {q_idx + 1}/{len(data)} ---")
+        print(f"  ID:       {qid}")
+        print(f"  Type:     {qtype}{'  [ABSTENTION]' if is_abstention else ''}")
+        print(f"  Haystack: {num_sessions} sessions, {num_turns} turns")
+        print(f"  Q:        {question[:100]}{'...' if len(question) > 100 else ''}")
+        print(f"  Gold:     {gold_answer[:100]}{'...' if len(gold_answer) > 100 else ''}")
+
+        # Create temp directory for this question's DB
+        tmp_dir = tempfile.mkdtemp(prefix=f"lme_{q_idx}_")
+        try:
+            # Step 1: Ingest
+            print(f"  [INGEST]")
+            t_start = time.time()
+            mem = ingest_question(entry, embedder, args.llm_model, EXTRACTION_PASSES, tmp_dir)
+            ingest_time = time.time() - t_start
+
+            # Step 2: Query + Answer
+            print(f"  [QUERY]")
+            hypothesis, context_parts, latency_ms, rag_cost = query_and_answer(mem, question, embedder, client)
+            print(f"    Latency: {latency_ms:.0f}ms, Retrieved: {len(context_parts)} memories")
+            print(f"    Answer:  {hypothesis[:120]}{'...' if len(hypothesis) > 120 else ''}")
+
+            # Step 3: Judge
+            print(f"  [JUDGE]")
+            score, reasoning, judge_cost = judge_answer(question, gold_answer, hypothesis, client)
+            q_cost = rag_cost + judge_cost
+            cumulative_cost += q_cost
+            print(f"    Score:   {score}/100")
+            print(f"    Reason:  {reasoning[:120]}{'...' if len(reasoning) > 120 else ''}")
+            print(f"    Cost:    ${q_cost:.4f} (cumulative: ${cumulative_cost:.4f})")
+
+            # Record result
+            result = {
+                "question_id": qid,
+                "question_type": qtype,
+                "question": question,
+                "gold_answer": gold_answer,
+                "hypothesis": hypothesis,
+                "score": score,
+                "reasoning": reasoning,
+                "latency_ms": latency_ms,
+                "ingest_time_s": round(ingest_time, 1),
+                "num_turns": num_turns,
+                "is_abstention": is_abstention,
+                "api_cost": round(q_cost, 6),
+            }
+            all_results.append(result)
+            completed_ids.add(qid)
+            category_scores[qtype].append(score)
+
+            # Save after each question (crash-safe)
+            with open(results_path, "w", encoding="utf-8") as f:
+                json.dump(all_results, f, indent=2, ensure_ascii=False)
+
+            # Running summary
+            valid = [r for r in all_results if r["score"] >= 0]
+            total_avg = sum(r["score"] for r in valid) / max(1, len(valid))
+            print(f"\n  Running: {len(all_results)} done, avg score {total_avg:.1f}/100")
+            for cat, scores in sorted(category_scores.items()):
+                vs = [s for s in scores if s >= 0]
+                if vs:
+                    avg = sum(vs) / len(vs)
+                    pass_rate = sum(1 for s in vs if s >= 80) / len(vs) * 100
+                    print(f"    {cat:<30} n={len(vs):>3}  avg={avg:>5.1f}  pass(>=80)={pass_rate:>5.1f}%")
+
+            # Stop on failure if requested
+            if args.stop_on_fail and score < 50:
+                print(f"\n  *** LOW SCORE ({score}/100) --- stopping for diagnosis ***")
+                print(f"  Top retrieved context:")
+                for i, ctx in enumerate(context_parts[:5]):
+                    print(f"    [{i+1}] {ctx[:150]}{'...' if len(ctx) > 150 else ''}")
+                break
+
+            print()  # Blank line between questions
+
+        finally:
+            # Explicitly release Memory to free model resources before next question
+            try:
+                del mem
+            except NameError:
+                pass
+            gc.collect()
+            # Clean up temp directory
+            try:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            except Exception:
+                pass
+
+        # Max questions limit
+        if args.max_questions and len(all_results) >= args.max_questions:
+            print(f"\n  Reached --max-questions {args.max_questions}, stopping.")
+            break
+
+    # Final summary
+    print(f"\n{'=' * 70}")
+    print(f"FINAL SUMMARY ({len(all_results)} questions)")
+    print(f"{'=' * 70}")
+
+    valid_results = [r for r in all_results if r["score"] >= 0]
+    total_cost = sum(r.get("api_cost", 0.0) for r in all_results)
+    if valid_results:
+        overall_avg = sum(r["score"] for r in valid_results) / len(valid_results)
+        pass_80 = sum(1 for r in valid_results if r["score"] >= 80) / len(valid_results) * 100
+        pass_50 = sum(1 for r in valid_results if r["score"] >= 50) / len(valid_results) * 100
+
+        print(f"  Overall avg score:     {overall_avg:.1f}/100")
+        print(f"  Pass rate (>=80):      {pass_80:.1f}%")
+        print(f"  Pass rate (>=50):      {pass_50:.1f}%")
+        print(f"  Total API cost:        ${total_cost:.4f}")
+        print(f"  RAG model:             {RAG_MODEL}")
+        print(f"  Judge model:           {JUDGE_MODEL}")
+        print()
+
+        print(f"  {'Category':<30} {'Count':>5} {'Avg':>6} {'>=80':>6} {'>=50':>6}")
+        print(f"  {'-' * 53}")
+        for cat in sorted(category_scores.keys()):
+            scores = [s for s in category_scores[cat] if s >= 0]
+            if scores:
+                avg = sum(scores) / len(scores)
+                p80 = sum(1 for s in scores if s >= 80) / len(scores) * 100
+                p50 = sum(1 for s in scores if s >= 50) / len(scores) * 100
+                print(f"  {cat:<30} {len(scores):>5} {avg:>5.1f}% {p80:>5.1f}% {p50:>5.1f}%")
+
+        # Abstention breakdown
+        abs_results = [r for r in valid_results if r["is_abstention"]]
+        non_abs = [r for r in valid_results if not r["is_abstention"]]
+        if abs_results:
+            abs_avg = sum(r["score"] for r in abs_results) / len(abs_results)
+            print(f"\n  Abstention questions:   n={len(abs_results)}, avg={abs_avg:.1f}")
+            non_avg = sum(r["score"] for r in non_abs) / len(non_abs) if non_abs else 0
+            print(f"  Non-abstention:         n={len(non_abs)}, avg={non_avg:.1f}")
+
+    print(f"\n  Results saved to: {results_path}")
 
 
-if __name__ == '__main__':
-    main()
+# =============================================================================
+# Entry Point
+# =============================================================================
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="LongMemEval Stepped Evaluation")
+    parser.add_argument("--mode", choices=["oracle", "s"], default="oracle",
+                        help="Dataset mode: oracle (evidence-only) or s (full haystack)")
+    parser.add_argument("--llm-model", type=str, default=None,
+                        help="Path to LLM model for entity extraction (e.g., models/phi-4-mini/...gguf)")
+    parser.add_argument("--start-at", type=int, default=0,
+                        help="Start from question N (0-indexed)")
+    parser.add_argument("--max-questions", type=int, default=None,
+                        help="Stop after N questions")
+    parser.add_argument("--stop-on-fail", action="store_true",
+                        help="Stop when a question scores <50 for diagnosis")
+    parser.add_argument("--extraction-passes", type=int, default=1,
+                        help="Number of LLM extraction passes (default: 1)")
+    args = parser.parse_args()
+
+    EXTRACTION_PASSES = args.extraction_passes
+
+    # Verify OpenAI API key
+    if not os.environ.get("OPENAI_API_KEY"):
+        print("ERROR: OPENAI_API_KEY not set")
+        sys.exit(1)
+
+    run_evaluation(args)
