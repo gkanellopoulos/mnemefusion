@@ -11,7 +11,7 @@ use crate::{
     query::{
         aggregator::MultiTurnAggregator,
         fusion::{FusedResult, FusionEngine},
-        intent::{IntentClassification, IntentClassifier, QueryIntent},
+        intent::{IntentClassification, IntentClassifier},
         profile_search::ProfileSearch,
     },
     storage::StorageEngine,
@@ -62,23 +62,18 @@ impl QueryPlanner {
         // Initialize SLM classifier if configured
         #[cfg(feature = "slm")]
         let slm_classifier = if let Some(config) = slm_config {
-            eprintln!("[DEBUG-QP] SLM config received! model_id: {}", config.model_id);
-            eprintln!("[DEBUG-QP] model_path: {:?}", config.model_path);
             tracing::info!("Initializing SLM classifier with model: {}", config.model_id);
             match crate::slm::SlmClassifier::new(config) {
                 Ok(classifier) => {
-                    eprintln!("[DEBUG-QP] ✓ SLM classifier initialized successfully");
                     tracing::info!("SLM classifier initialized successfully (lazy loading)");
                     Some(Arc::new(std::sync::Mutex::new(classifier)))
                 }
                 Err(e) => {
-                    eprintln!("[DEBUG-QP] ✗ SLM classifier initialization FAILED: {}", e);
                     tracing::warn!("Failed to initialize SLM classifier: {}, falling back to patterns", e);
                     None
                 }
             }
         } else {
-            eprintln!("[DEBUG-QP] No SLM config provided to QueryPlanner");
             None
         };
 
@@ -119,22 +114,16 @@ impl QueryPlanner {
     ///
     /// Intent classification with confidence score
     fn classify_intent(&self, query_text: &str) -> Result<IntentClassification> {
-        eprintln!("[DEBUG-QP] classify_intent() called for: '{}'", query_text);
-
         // Only use SLM classification if explicitly enabled (default: false)
         // This is intentionally disabled by default for fast queries
         #[cfg(feature = "slm")]
         if self.slm_query_classification_enabled {
             if let Some(slm_classifier) = &self.slm_classifier {
-                eprintln!("[DEBUG-QP] SLM query classification ENABLED, attempting to use it");
                 // Try SLM classification
                 match slm_classifier.lock() {
                     Ok(mut classifier) => {
-                        eprintln!("[DEBUG-QP] Acquired SLM classifier lock, calling classify_intent");
                         match classifier.classify_intent(query_text) {
                             Ok(classification) => {
-                                eprintln!("[DEBUG-QP] ✓ SLM classification succeeded: {:?} (confidence: {:.2})",
-                                    classification.intent, classification.confidence);
                                 tracing::debug!(
                                     "SLM classified query as {:?} (confidence: {:.2})",
                                     classification.intent,
@@ -143,7 +132,6 @@ impl QueryPlanner {
                                 return Ok(classification);
                             }
                             Err(e) => {
-                                eprintln!("[DEBUG-QP] ✗ SLM classification failed: {}, falling back", e);
                                 tracing::warn!(
                                     "SLM classification failed: {}, falling back to patterns",
                                     e
@@ -152,18 +140,13 @@ impl QueryPlanner {
                         }
                     }
                     Err(e) => {
-                        eprintln!("[DEBUG-QP] ✗ Failed to acquire SLM classifier lock: {}", e);
                         tracing::warn!(
                             "Failed to acquire SLM classifier lock: {}, falling back to patterns",
                             e
                         );
                     }
                 }
-            } else {
-                eprintln!("[DEBUG-QP] SLM classifier is NOT available");
             }
-        } else {
-            eprintln!("[DEBUG-QP] SLM query classification DISABLED (using patterns for fast queries)");
         }
 
         #[cfg(not(feature = "slm"))]
@@ -172,7 +155,6 @@ impl QueryPlanner {
         }
 
         // Fallback to pattern-based classification
-        eprintln!("[DEBUG-QP] Using pattern-based classification");
         Ok(self.intent_classifier.classify(query_text))
     }
 
@@ -256,7 +238,6 @@ impl QueryPlanner {
                     Self::contains_whole_word_static(&query_lower, pronoun)
                 });
                 if has_first_person {
-                    eprintln!("[DEBUG-QP] First-person pronoun detected, adding user entity: {}", user_lower);
                     query_entities.push(user_lower);
                 }
             }

@@ -50,19 +50,13 @@ impl SlmClassifier {
     ///
     /// Returns a new classifier instance with running Python server.
     pub fn new(config: SlmConfig) -> Result<Self> {
-        eprintln!("[DEBUG-SLM] SlmClassifier::new() called");
-        eprintln!("[DEBUG-SLM] model_id: {}", config.model_id);
-        eprintln!("[DEBUG-SLM] model_path: {:?}", config.model_path);
-
         tracing::info!(
             "Initializing SLM classifier with model: {}",
             config.model_id
         );
 
         // Find the Python server script
-        eprintln!("[DEBUG-SLM] Looking for Python server script...");
         let script_path = Self::find_script_path()?;
-        eprintln!("[DEBUG-SLM] ✓ Found script at: {}", script_path.display());
 
         tracing::info!("Using SLM classification script: {}", script_path.display());
 
@@ -76,10 +70,8 @@ impl SlmClassifier {
         };
 
         let model_path = classifier.get_model_path()?;
-        eprintln!("[DEBUG-SLM] Model path: {}", model_path.display());
 
         // Spawn Python server process
-        eprintln!("[DEBUG-SLM] Spawning Python server...");
         let mut child = Command::new("python")
             .arg(&classifier.script_path)
             .arg(model_path.to_string_lossy().as_ref())
@@ -97,7 +89,6 @@ impl SlmClassifier {
         let mut stdout_reader = BufReader::new(stdout);
 
         // Wait for READY signal
-        eprintln!("[DEBUG-SLM] Waiting for READY signal from server...");
         let mut ready_line = String::new();
         std::io::BufRead::read_line(&mut stdout_reader, &mut ready_line)
             .map_err(|e| Error::SlmInitialization(format!("Failed to read READY signal: {}", e)))?;
@@ -109,7 +100,6 @@ impl SlmClassifier {
             )));
         }
 
-        eprintln!("[DEBUG-SLM] ✓ Server is ready");
         tracing::info!("SLM server initialized and ready");
 
         classifier.process = Some(child);
