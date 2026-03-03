@@ -627,9 +627,8 @@ impl Config {
     pub fn validate(&self) -> Result<(), crate::Error> {
         // Print warning for entity extraction (English-only feature)
         if self.entity_extraction_enabled {
-            eprintln!("Warning: Entity extraction is enabled. This feature currently supports English only.");
-            eprintln!("         For non-English content, consider disabling with .with_entity_extraction(false)");
-            eprintln!("         See documentation for multilingual usage: https://github.com/gkanellopoulos/mnemefusion");
+            tracing::warn!("Entity extraction is enabled. This feature currently supports English only. \
+                For non-English content, consider disabling with .with_entity_extraction(false)");
         }
 
         if self.embedding_dim == 0 {

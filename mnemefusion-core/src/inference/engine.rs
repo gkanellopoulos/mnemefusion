@@ -395,7 +395,7 @@ impl InferenceEngine {
         let dll_names: Vec<&str> = if load_cuda {
             vec!["ggml-cpu.dll", "ggml-cuda.dll"]
         } else {
-            eprintln!("[mnemefusion] GPU layers = 0, skipping CUDA backend (CPU-only mode)");
+            tracing::info!("GPU layers = 0, skipping CUDA backend (CPU-only mode)");
             vec!["ggml-cpu.dll"]
         };
 
@@ -441,17 +441,17 @@ impl InferenceEngine {
                             llama_cpp_sys_2::ggml_backend_load(path_str.as_ptr())
                         };
                         if !reg.is_null() {
-                            eprintln!("[mnemefusion] Loaded backend: {} from {}", dll_name, dll_path.display());
+                            tracing::info!("Loaded backend: {} from {}", dll_name, dll_path.display());
                             loaded = true;
                             break;
                         } else {
-                            eprintln!("[mnemefusion] Found but failed to load: {}", dll_path.display());
+                            tracing::warn!("Found but failed to load: {}", dll_path.display());
                         }
                     }
                 }
             }
             if !loaded {
-                eprintln!("[mnemefusion] Backend not found: {}", dll_name);
+                tracing::warn!("Backend not found: {}", dll_name);
             }
         }
     }
