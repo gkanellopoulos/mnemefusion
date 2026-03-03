@@ -216,7 +216,7 @@ impl TemporalIndex {
         Ok(())
     }
 
-    /// Search memories by temporal content matching (Sprint 18 Task 18.6)
+    /// Search memories by temporal content matching
     ///
     /// Unlike timestamp-based queries (recent, range_query), this method matches
     /// temporal expressions in the query to temporal expressions in memory content.
@@ -489,7 +489,7 @@ mod tests {
         }
     }
 
-    // Sprint 18 Task 18.6: Temporal content scoring tests
+    // Temporal content scoring tests
     #[test]
     fn test_search_temporal_content_basic() {
         let (temporal, storage, _dir) = create_test_index();

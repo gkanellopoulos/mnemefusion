@@ -1,6 +1,6 @@
 //! Multi-turn aggregation for list and collection queries
 //!
-//! Addresses the multi-turn aggregation problem identified in LoCoMo Categories 1 & 3.
+//! Addresses the multi-turn aggregation problem in conversational memory.
 //! When queries ask for lists or collections (e.g., "What activities does X do?"),
 //! the answer is often scattered across multiple conversation turns. This module
 //! implements collective relevance scoring to find the best combination of turns

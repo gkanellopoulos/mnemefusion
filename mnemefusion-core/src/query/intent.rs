@@ -32,7 +32,7 @@ pub struct IntentClassification {
     pub confidence: f32,
     /// Secondary intents (if any)
     pub secondary: Vec<(QueryIntent, f32)>,
-    /// Extracted entity name for entity-focused queries (Sprint 18 Task 18.3)
+    /// Extracted entity name for entity-focused queries
     pub entity_focus: Option<String>,
 }
 
@@ -44,7 +44,7 @@ pub struct IntentClassifier {
     temporal_patterns: Vec<Regex>,
     causal_patterns: Vec<Regex>,
     entity_patterns: Vec<Regex>,
-    /// Patterns for entity-focused list queries (Sprint 18 Task 18.3)
+    /// Patterns for entity-focused list queries
     entity_list_patterns: Vec<Regex>,
 }
 
@@ -162,7 +162,7 @@ impl IntentClassifier {
             *scores.get_mut(&QueryIntent::Entity).unwrap() = (entity_matches as f32 * 0.2).min(0.8);
         }
 
-        // Entity list patterns are strong indicators (Sprint 18 Task 18.3)
+        // Entity list patterns are strong indicators
         if entity_list_matches > 0 {
             // Boost entity score significantly for entity-focused queries
             let current_score = *scores.get(&QueryIntent::Entity).unwrap();
@@ -185,7 +185,7 @@ impl IntentClassifier {
             }
         }
 
-        // Extract entity name if this is an entity-focused query (Sprint 18 Task 18.3)
+        // Extract entity name if this is an entity-focused query
         let entity_focus = if primary_intent == QueryIntent::Entity {
             self.extract_entity_from_query(query)
         } else {
@@ -205,7 +205,7 @@ impl IntentClassifier {
         patterns.iter().filter(|p| p.is_match(query)).count()
     }
 
-    /// Extract entity name from entity-focused queries (Sprint 18 Task 18.3)
+    /// Extract entity name from entity-focused queries
     ///
     /// Detects queries like "What does Alice like?" and extracts "Alice".
     /// Used for entity-based pre-retrieval to fetch ALL memories mentioning the entity.
@@ -356,7 +356,7 @@ mod tests {
         assert!(result.confidence > 0.4);
     }
 
-    // Sprint 18 Task 18.3: Entity extraction tests
+    // Entity extraction tests
     #[test]
     fn test_entity_extraction_what_does_pattern() {
         let classifier = IntentClassifier::new();

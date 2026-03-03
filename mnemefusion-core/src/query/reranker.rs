@@ -1,7 +1,7 @@
 // Heuristic reranking for improved precision
 //
-// Hindsight uses a learned cross-encoder for reranking, but we implement
-// heuristic scoring to maintain zero external dependencies.
+// Uses lightweight heuristic scoring to maintain zero external dependencies,
+// avoiding the latency cost of learned cross-encoder reranking.
 
 use crate::error::Result;
 use crate::query::fusion::FusedResult;

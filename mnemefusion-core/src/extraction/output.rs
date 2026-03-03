@@ -59,7 +59,7 @@ pub struct ExtractedEntity {
 /// Records are tagged by type: episodic (events), semantic (stable facts),
 /// or procedural (routines/instructions).
 ///
-/// Research basis: ENGRAM (arXiv 2511.12960) achieves +31 pts on LoCoMo via
+/// Research basis: ENGRAM (arXiv 2511.12960) demonstrates significant gains from
 /// typed memory separation. TReMu (ACL 2025) uses inferred event dates for
 /// temporal QA improvement.
 #[derive(Debug, Clone, Serialize, Deserialize)]

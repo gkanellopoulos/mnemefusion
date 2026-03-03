@@ -455,7 +455,7 @@ impl LlmEntityExtractor {
 
     /// Extract entity facts AND typed records using the ENGRAM-inspired prompt.
     ///
-    /// This is the primary extraction method for Phase 1 typed architecture.
+    /// This is the primary extraction method for the typed architecture.
     /// Produces entities, entity_facts, typed records (episodic/semantic/procedural),
     /// and entity-to-entity relationships in a single LLM call.
     ///

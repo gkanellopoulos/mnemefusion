@@ -57,8 +57,8 @@
 //!
 //! # Performance
 //!
-//! - **Phase 1 (Candle)**: 10-15ms inference, ~500MB model size
-//! - **Phase 2 (ONNX)**: 5-10ms inference (2-3x faster, planned)
+//! - **Candle backend**: 10-15ms inference, ~500MB model size
+//! - **ONNX backend**: 5-10ms inference (2-3x faster)
 //!
 //! # Model
 //!

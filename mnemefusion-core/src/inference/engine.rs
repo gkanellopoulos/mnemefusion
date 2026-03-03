@@ -42,7 +42,7 @@ impl Default for GenerationParams {
 
 /// Process-global llama backend. Initialized once, lives for the entire process.
 /// This prevents `BackendAlreadyInitialized` errors when creating multiple
-/// `InferenceEngine` instances (e.g., one per question in LongMemEval).
+/// `InferenceEngine` instances within the same process.
 static LLAMA_BACKEND: OnceLock<LlamaBackend> = OnceLock::new();
 
 /// Native LLM inference engine with grammar-constrained decoding

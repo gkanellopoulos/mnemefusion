@@ -1,7 +1,7 @@
 //! Entity extraction from memory content
 //!
 //! Provides simple entity extraction based on capitalized words.
-//! More sophisticated NER can be added in Phase 2.
+//! More sophisticated NER can be added via pluggable extractors.
 
 use crate::Result;
 use std::collections::HashSet;

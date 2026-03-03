@@ -98,7 +98,7 @@ pub struct FusedResult {
     /// - 2 dimensions: 0.6 (medium confidence)
     /// - 1 dimension: 0.4 (low confidence, likely noise)
     ///
-    /// Added in Sprint 18 Task 18.2 to improve precision
+    /// Used to surface high-confidence multi-dimensional matches
     pub confidence: f32,
 }
 
@@ -108,7 +108,7 @@ pub enum FusionStrategy {
     /// Weighted fusion: score = Σ (weight_i * score_i)
     Weighted,
     /// Reciprocal Rank Fusion: score = Σ 1/(k + rank_i)
-    /// Used by Hindsight (85.7% accuracy on LoCoMo)
+    /// Rank-based fusion that doesn't require score normalization
     ReciprocalRank,
 }
 
@@ -128,13 +128,13 @@ pub struct FusionEngine {
     semantic_threshold: f32,
     /// Fusion strategy (Weighted or ReciprocalRank)
     strategy: FusionStrategy,
-    /// RRF k parameter (default: 60, from Hindsight paper)
+    /// RRF k parameter (default: 60, standard value from literature)
     rrf_k: f32,
 }
 
 impl FusionEngine {
     /// Create a new fusion engine with default settings
-    /// - Strategy: ReciprocalRank (Hindsight's approach)
+    /// - Strategy: ReciprocalRank
     /// - Semantic threshold: 0.15
     /// - RRF k: 60
     pub fn new() -> Self {
@@ -142,7 +142,7 @@ impl FusionEngine {
             config: AdaptiveWeightConfig::default(),
             semantic_threshold: 0.15, // 15% minimum semantic relevance
             strategy: FusionStrategy::default(),
-            rrf_k: 60.0, // From Hindsight paper
+            rrf_k: 60.0, // Standard RRF constant
         }
     }
 
@@ -284,9 +284,8 @@ impl FusionEngine {
         // IMPORTANT: Filter out memories with very low semantic relevance.
         // This ensures semantic relevance is mandatory — other dimensions can only boost
         // already-relevant memories, not surface irrelevant ones.
-        // NOTE: Entity exemption was tested (S25 Bug #1) and REVERTED — entity-only
-        // memories without semantic relevance flooded results with off-topic entity
-        // matches, causing -4.3 pts regression. Entity confirmation alone ≠ topical relevance.
+        // Entity confirmation alone is not sufficient: it confirms the memory is about the
+        // right entity but not that it's topically relevant to the query.
         let mut results: Vec<FusedResult> = all_ids
             .into_iter()
             .filter_map(|id| {
@@ -297,12 +296,8 @@ impl FusionEngine {
                 // FILTER: Require minimum semantic relevance OR strong BM25 match.
                 // Entity dimension alone is not sufficient — it confirms the memory
                 // is about the right entity but not that it's topically relevant.
-                // NOTE: Entity exemption was tested (S25 Bug #1) and REVERTED — entity-only
-                // memories without semantic relevance flooded results with off-topic entity
-                // matches, causing -4.3 pts regression. Entity confirmation alone ≠ topical relevance.
-                // NOTE: Dual-signal relaxation (entity>0 + semantic>=0.08 + bm25>=0.1)
-                // was tested in S29 and REVERTED — -5.0 pts regression. Even weak signals
-                // allow too much off-topic noise when entity pool is large (326 profiles).
+                // Relaxing this gate (entity-only exemption or dual-signal with lower
+                // thresholds) floods results with off-topic entity matches.
                 if semantic_score < self.semantic_threshold && bm25_score < 0.3 {
                     return None;
                 }
@@ -336,13 +331,13 @@ impl FusionEngine {
         results
     }
 
-    /// Fuse using Reciprocal Rank Fusion (Hindsight's approach)
+    /// Fuse using Reciprocal Rank Fusion (RRF)
     ///
     /// RRF formula: score(doc) = Σ 1/(k + rank_i) across all pathways
     /// where k=60 (constant), rank_i is the rank in pathway i (0-indexed)
     ///
-    /// This approach is proven to work well (Hindsight: 85.7% accuracy)
-    /// and doesn't require tuning weights per query type.
+    /// RRF is robust to score scale differences across dimensions and
+    /// doesn't require tuning weights per query type.
     fn fuse_rrf(
         &self,
         semantic_results: &HashMap<MemoryId, f32>,
@@ -391,9 +386,9 @@ impl FusionEngine {
                 1.0 / (self.rrf_k + rank as f32 + 1.0);
         }
 
-        // FILTER: Apply semantic threshold to prevent keyword flooding
+        // FILTER: Apply semantic threshold to prevent keyword flooding.
         // Memories must have minimum semantic relevance OR strong BM25 match.
-        // Entity exemption was tested (S25) and reverted — see fuse_weighted comment.
+        // Entity-only matches are not exempt — see fuse_weighted comment.
         let results: Vec<FusedResult> = rrf_scores
             .into_iter()
             .filter_map(|(id, rrf_score)| {
@@ -940,8 +935,8 @@ mod tests {
 
     #[test]
     fn test_entity_only_still_blocked() {
-        // Verify S25/S29 lesson: entity-only memories (no semantic, no BM25) are blocked.
-        // Dual-signal relaxation was tested in S29 and REVERTED (-5.0 pts).
+        // Entity-only memories (no semantic, no BM25) must be blocked by the fusion filter.
+        // Entity confirmation alone is not sufficient for topical relevance.
         let engine = FusionEngine::new();
 
         let semantic = HashMap::new(); // No semantic scores at all
@@ -964,9 +959,8 @@ mod tests {
 
     #[test]
     fn test_entity_with_weak_signals_blocked() {
-        // S29: Even entity-confirmed memories with weak semantic+BM25 should be blocked.
-        // Dual-signal relaxation (entity>0 + semantic>=0.08 + bm25>=0.1) was tested
-        // and REVERTED (-5.0 pts regression, R@20 dropped 11 pts from noise flooding).
+        // Entity-confirmed memories with weak semantic+BM25 should still be blocked.
+        // Relaxing thresholds for entity-confirmed memories causes noise flooding.
         let engine = FusionEngine::new(); // threshold = 0.15
 
         let mut semantic = HashMap::new();

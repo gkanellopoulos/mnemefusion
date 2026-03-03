@@ -613,10 +613,10 @@ impl MemoryEngine {
                 .store_relationships(memory_id, &extraction.relationships)?;
         }
 
-        // Annotate parent memory with typed record metadata (record_type, event_date)
-        // Note: We do NOT create child memories — they flood the vector index and
-        // cause recall collapse (-14.9 pts in S30 testing). Instead, typed decomposition
-        // is stored as metadata on the parent for type-aware retrieval balancing.
+        // Annotate parent memory with typed record metadata (record_type, event_date).
+        // We do NOT create child memories — they flood the vector index and degrade
+        // recall. Instead, typed decomposition is stored as metadata on the parent
+        // for type-aware retrieval balancing.
         if !extraction.records.is_empty() {
             self.pipeline
                 .annotate_parent_with_types(memory_id, &extraction.records);

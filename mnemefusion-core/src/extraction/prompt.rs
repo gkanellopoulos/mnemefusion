@@ -404,8 +404,8 @@ Extract entities and facts from: "{content}"<|im_end|>
 /// embeddable sentence.
 ///
 /// Research basis:
-/// - ENGRAM (arXiv 2511.12960): +31 pts on LoCoMo from typed separation
-/// - TReMu (ACL 2025): event date inference improves temporal QA by +47 pts
+/// - ENGRAM (arXiv 2511.12960): typed memory separation improves QA accuracy
+/// - TReMu (ACL 2025): event date inference improves temporal QA
 ///
 /// # Arguments
 ///

@@ -172,9 +172,9 @@ impl QueryPlanner {
     /// * `filters` - Optional metadata filters. All filters must match (AND logic)
     /// * `user_entity` - Optional user identity for first-person pronoun resolution.
     ///   When set, queries containing "I", "me", "my", etc. automatically include
-    ///   this entity in profile injection (Step 2.1). Standard in conversational
-    ///   memory systems (Mem0, Zep, LangMem) where the user's own memories are
-    ///   stored under their name but queries use first-person pronouns.
+    ///   this entity in profile injection. Standard in conversational memory systems
+    ///   where the user's own memories are stored under their name but queries use
+    ///   first-person pronouns.
     ///
     /// # Returns
     ///
@@ -191,7 +191,7 @@ impl QueryPlanner {
         // Step 1: Classify intent (try SLM first, fallback to patterns)
         let intent = self.classify_intent(query_text)?;
 
-        // Step 1.5: Entity-first retrieval path (Sprint 18 Task 18.4)
+        // Step 1.5: Entity-first retrieval path
         // Only fires for narrow entity_list_patterns (e.g., "What does Alice like?").
         // Broader entity queries go through the enhanced general path which preserves
         // multi-dimensional scoring while using profile sources and speaker reranking.
@@ -282,10 +282,9 @@ impl QueryPlanner {
         // the LLM extraction (with "Melanie says:" prefix) correctly attributes it.
         // Profile source_memories include these LLM-attributed memories.
         // Score 2.0 ensures they rank at the TOP of entity dimension after normalization,
-        // giving them strong signal in RRF fusion. 2.0 baseline is REQUIRED — lower
-        // values (tested 1.5) cause regression because wrong-entity graph memories
-        // (0-1.0) compete too closely. Graduated scoring (2.0 + sem_bonus) also
-        // regresses because it changes RRF normalization for all entity scores.
+        // giving them strong signal in RRF fusion. This baseline value is critical — lower
+        // values cause wrong-entity graph memories (0-1.0) to compete too closely, and
+        // graduated scoring changes RRF normalization for all entity scores.
         //
         // Injects for ALL detected entities (not just single-entity queries).
         // Multi-entity queries need profile sources from every mentioned entity.
@@ -302,7 +301,7 @@ impl QueryPlanner {
             }
         }
 
-        // Step 2.2: Profile-based search for direct fact lookup (Phase 3)
+        // Step 2.2: Profile-based search for direct fact lookup
         // Boost entity_scores with profile matches — memories that are sources of
         // matching facts get additional priority. Uses stemmed word-overlap so
         // "instruments" matches "instrument", "books" matches "book", etc.
@@ -471,7 +470,7 @@ impl QueryPlanner {
             &entity_scores,
         );
 
-        // Step 3.5: Cross-dimensional validation (Sprint 18 Task 18.2)
+        // Step 3.5: Cross-dimensional validation
         // Calculate confidence based on how many dimensions contributed to each result
         // Multi-dimensional matches are more reliable than single-dimension matches
         //
@@ -817,7 +816,7 @@ impl QueryPlanner {
         Ok((intent, final_results, matched_facts))
     }
 
-    /// Entity-first retrieval path (Sprint 18 Task 18.4)
+    /// Entity-first retrieval path
     ///
     /// For entity-focused queries (e.g., "What does Alice like?"), this method:
     /// 1. Looks up the entity by name
@@ -3088,7 +3087,7 @@ mod tests {
         );
     }
 
-    // Sprint 18 Task 18.4: Entity-first retrieval path tests
+    // Entity-first retrieval path tests
     #[test]
     fn test_entity_focused_retrieval() {
         use crate::ingest::IngestionPipeline;

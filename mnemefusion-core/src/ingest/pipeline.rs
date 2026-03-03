@@ -460,8 +460,8 @@ impl IngestionPipeline {
                 let extractor = llm_extractor.lock().unwrap();
                 let raw_results = if self.extraction_passes == 1 && session_date.is_some() {
                     // Use typed extraction prompt for richer entity facts + temporal metadata.
-                    // Research: ENGRAM (arXiv 2511.12960) +31 pts from typed separation,
-                    // TReMu (ACL 2025) +47 pts from inferred event dates.
+                    // Research: ENGRAM (arXiv 2511.12960) and TReMu (ACL 2025) show
+                    // typed separation and event date inference improve QA accuracy.
                     vec![extractor.extract_typed(
                         &memory.content,
                         speaker,
@@ -690,9 +690,9 @@ impl IngestionPipeline {
         }
 
         // Step 5: Annotate parent with typed record metadata + store relationships.
-        // Note: We do NOT create child memories — they flood the vector index and
-        // cause recall collapse (-14.9 pts in S30 testing). Instead, typed decomposition
-        // is stored as metadata on the parent for type-aware retrieval balancing.
+        // We do NOT create child memories — they flood the vector index and degrade
+        // recall. Instead, typed decomposition is stored as metadata on the parent
+        // for type-aware retrieval balancing.
         #[cfg(feature = "entity-extraction")]
         for extraction in &llm_extraction_results {
             if !extraction.records.is_empty() {
@@ -1430,7 +1430,7 @@ impl IngestionPipeline {
         // Link source_memory for entities that were detected but had no entity_facts.
         // Without this, memories mentioning an entity (e.g. "Caroline") but producing
         // no structured facts would never appear in that entity's source_memories,
-        // making them invisible to Step 2.1's entity scoring (the sacred 2.0 baseline).
+        // making them invisible to entity scoring at query time.
         for entity in &extraction.entities {
             // Skip entities whose type is not in the allowed list
             // (unless they already have a profile from before the filter was added)
@@ -1495,10 +1495,10 @@ impl IngestionPipeline {
     /// - metadata["event_date"] = earliest ISO-8601 date from episodic records
     /// - metadata["typed_summaries"] = JSON array of self-contained summaries
     ///
-    /// Research basis: ENGRAM (arXiv 2511.12960) shows +31 pts from typed separation.
-    /// However, creating child memories in the same vector index causes recall collapse
-    /// (-14.9 pts in S30 testing). Instead, we annotate parents with type metadata
-    /// for type-aware retrieval balancing (Phase 3) without inflating the index.
+    /// Research basis: ENGRAM (arXiv 2511.12960) shows significant gains from typed
+    /// separation. However, creating child memories in the same vector index degrades
+    /// recall. Instead, we annotate parents with type metadata for type-aware retrieval
+    /// balancing without inflating the index.
     #[cfg(feature = "entity-extraction")]
     pub fn annotate_parent_with_types(
         &self,

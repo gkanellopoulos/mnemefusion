@@ -59,8 +59,8 @@ pub struct SlmConfig {
 
     /// Enable GPU acceleration
     ///
-    /// Default: false (CPU only for Phase 1)
-    /// GPU support will be added in Phase 2 with ONNX Runtime.
+    /// Default: false (CPU only)
+    /// GPU support can be enabled with ONNX Runtime.
     pub use_gpu: bool,
 
     /// Minimum confidence threshold for SLM classification

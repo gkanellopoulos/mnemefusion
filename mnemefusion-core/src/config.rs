@@ -76,7 +76,7 @@ pub struct Config {
     /// Fusion strategy (Weighted or ReciprocalRank)
     ///
     /// - Weighted: Uses intent-adaptive weights (original approach)
-    /// - ReciprocalRank: Uses RRF formula (Hindsight's approach, proven to work better)
+    /// - ReciprocalRank: Uses RRF formula (robust to score scale differences)
     ///
     /// Default: ReciprocalRank
     pub fusion_strategy: FusionStrategy,
@@ -123,7 +123,7 @@ pub struct Config {
     /// query intent at query time. This adds ~3 seconds latency to every query.
     ///
     /// **IMPORTANT**: This is typically NOT recommended for production use.
-    /// With rich SLM metadata extracted at ingestion time (Phase 1-2), RRF fusion
+    /// With rich metadata extracted at ingestion time, RRF fusion
     /// can automatically balance retrieval pathways without classification.
     ///
     /// Default: false (disabled - rely on RRF fusion instead)
