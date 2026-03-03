@@ -1,56 +1,91 @@
 # MnemeFusion
 
-**Unified memory engine for AI applications—"SQLite for AI memory."**
+**Unified memory engine for AI applications — "SQLite for AI memory."**
 
-MnemeFusion provides four-dimensional memory indexing (semantic, temporal, causal, entity) in a single embedded database file with zero external dependencies.
+MnemeFusion provides multi-dimensional memory indexing (semantic, temporal, causal, entity) in a single embedded database file with zero external dependencies. One library, one `.mfdb` file replaces Qdrant + Neo4j + SQLite.
 
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
-[![Tests](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/test.yml/badge.svg)](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/test.yml)
-[![Benchmarks](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/benchmark.yml/badge.svg)](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/benchmark.yml)
-
-## Status: ✅ Sprint 17 COMPLETE | 📋 Sprint 18 PLANNING
-
-**Sprint 17 COMPLETE!** (January 28, 2026)
-
-Sprint 17 achievements:
-- ✅ **Multi-Dimensional Retrieval**: BM25, RRF, graph traversal, multi-turn aggregation
-- ✅ **65.2% LoCoMo Recall@10**: +26.7% improvement from semantic-only baseline
-- ✅ **70.1% LongMemEval Recall**: Strong session-based retrieval performance
-- ✅ **333 tests passing**: All tests green including new component tests
-- ✅ **Ablation study complete**: Component contributions measured and documented
-- 📋 **Sprint 18 planned**: Hybrid Retrieval + QA System (target: 80-85% recall)
-
-Core engine achievements:
-- ✅ **Storage Layer**: redb-based single-file database with ACID guarantees
-- ✅ **Vector Search**: usearch HNSW index for semantic similarity
-- ✅ **Temporal Indexing**: Time-based range queries and recency search
-- ✅ **Causal Graph**: Multi-hop causal relationship traversal
-- ✅ **Entity Graph**: Automatic entity extraction and entity-memory linking
-- ✅ **Ingestion Pipeline**: Atomic operations across all dimensions
-- ✅ **Query Intelligence**: Intent classification with RRF fusion
-- ✅ **Python Bindings**: Production-ready PyO3 bindings with comprehensive tests
-
-**Benchmark Results:**
-- LoCoMo Phase 2: 65.2% recall (1,986 queries)
-- LongMemEval Oracle: 70.1% recall (500 queries)
-- HotpotQA Phase 2: 94.8% recall (1,000 queries)
-- Gap to Mem0: 1.7% (65.2% vs 66.9%) with zero external dependencies
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
 
 ## Features
 
-- **Five Retrieval Pathways**: Semantic, BM25 keyword, temporal, causal, entity ✅
-- **Reciprocal Rank Fusion**: Proven RRF algorithm from Hindsight (85.7% accuracy) ✅
-- **BM25 Keyword Search**: Exact term matching (names, dates, technical terms) ✅
-- **Single File Storage**: All data in one portable `.mfdb` file
-- **ACID Transactions**: Built on redb for reliability
-- **Intent Classification**: Automatic query type detection (temporal, causal, entity, factual)
-- **Zero Dependencies**: Embedded library, no servers, no LLMs required
-- **Rust Core**: Memory-safe, high-performance implementation
-- **Python Bindings**: First-class Python API with PyO3 ✅
-- **Multilingual Core**: Vector search works with any language (see [Language Support](#language-support))
+- **Five Retrieval Pathways**: Semantic vector search, BM25 keyword matching, temporal range queries, causal graph traversal, entity profile scoring
+- **Reciprocal Rank Fusion**: Fuses all five dimensions into a single ranked result set
+- **Entity Profiles**: LLM-powered entity extraction builds structured knowledge graphs from unstructured text
+- **Single File Storage**: All data in one portable `.mfdb` file with ACID transactions (redb)
+- **Intent Classification**: Automatic query routing (temporal, causal, entity, factual)
+- **Namespace Isolation**: Multi-user memory separation
+- **Rust Core**: Memory-safe, high-performance embedded library
+- **Python Bindings**: First-class Python API via PyO3
+- **Optional GPU Acceleration**: CUDA-accelerated entity extraction via llama-cpp
 
 ## Quick Start
+
+### Python
+
+```bash
+# Build from source (requires Rust toolchain)
+cd mnemefusion-python
+pip install maturin
+maturin develop --release
+```
+
+```python
+import mnemefusion
+from sentence_transformers import SentenceTransformer
+
+model = SentenceTransformer("BAAI/bge-base-en-v1.5")
+
+# Open or create a database
+mem = mnemefusion.Memory("./brain.mfdb")
+
+# Set embedding function for automatic vectorization
+mem.set_embedding_fn(lambda text: model.encode(text).tolist())
+
+# Add memories
+mem.add("Alice loves hiking in the mountains", metadata={"speaker": "narrator"})
+mem.add("Bob started learning piano last month", metadata={"speaker": "narrator"})
+
+# Multi-dimensional query — returns (intent, results, profile_context)
+intent, results, profiles = mem.query("What are Alice's hobbies?", limit=10)
+
+print(f"Intent: {intent['intent']} (confidence: {intent['confidence']:.2f})")
+for memory_dict, scores_dict in results:
+    print(f"  [{scores_dict['fused_score']:.3f}] {memory_dict['content']}")
+
+# Profile context contains entity facts for RAG augmentation
+for fact_str in profiles:
+    print(f"  Profile: {fact_str}")
+```
+
+### With User Identity
+
+```python
+# Namespace isolation + first-person pronoun resolution
+mem = mnemefusion.Memory("./brain.mfdb", user="alice")
+
+# Memories are namespaced to "alice"
+mem.add("I love hiking in the mountains")
+
+# Map "I"/"me"/"my" → "alice" entity profile at query time
+mem.set_user_entity("alice")
+
+# "my hobbies" resolves to alice's profile
+intent, results, profiles = mem.query("What are my hobbies?")
+```
+
+### With LLM Entity Extraction
+
+```python
+mem = mnemefusion.Memory("./brain.mfdb", config={"llm_model": "path/to/model.gguf"})
+
+# Entity extraction runs automatically on add()
+mem.add("Caroline studies marine biology at Stanford")
+
+# Entity profiles are built incrementally
+profile = mem.get_entity_profile("caroline")
+# {'name': 'caroline', 'entity_type': 'person', 'facts': {...}, 'summary': '...'}
+```
 
 ### Rust
 
@@ -61,379 +96,239 @@ Add to your `Cargo.toml`:
 mnemefusion-core = "0.1"
 ```
 
-Basic usage:
-
 ```rust
 use mnemefusion_core::{MemoryEngine, Config};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Open or create a database
     let engine = MemoryEngine::open("./brain.mfdb", Config::default())?;
 
-    // Add a memory (with your embedding vector)
-    let embedding = vec![0.1; 384]; // Your embedding model output
+    // Add a memory with embedding vector
+    let embedding = vec![0.1; 384]; // From your embedding model
     let id = engine.add(
         "Project deadline moved to March 15th".to_string(),
         embedding,
-        None, // Optional metadata
-        None, // Optional timestamp
+        None, // metadata
+        None, // timestamp
     )?;
 
-    // Retrieve a memory
-    if let Some(memory) = engine.get(&id)? {
-        println!("Content: {}", memory.content);
+    // Query with multi-dimensional fusion
+    let query_embedding = vec![0.1; 384];
+    let (intent, results, profile_facts) = engine.query(
+        "When is the project deadline?",
+        &query_embedding,
+        10,    // limit
+        None,  // namespace
+        None,  // filters
+    )?;
+
+    for result in &results {
+        println!("[{:.3}] {}", result.fused_score, result.memory.content);
     }
 
-    // Close when done
     engine.close()?;
     Ok(())
 }
 ```
 
-### Python ✅
-
-```python
-import mnemefusion
-
-# Open database
-memory = mnemefusion.Memory("./brain.mfdb")
-
-# Add memory with metadata
-memory_id = memory.add(
-    content="Meeting cancelled due to storm",
-    embedding=[0.1] * 384,  # Your embedding model output
-    metadata={"type": "event", "priority": "high"}
-)
-
-# Intelligent query with intent classification
-intent, results = memory.query(
-    query_text="Why was the meeting cancelled?",
-    query_embedding=[0.1] * 384,
-    limit=10
-)
-
-print(f"Intent: {intent['intent']} (confidence: {intent['confidence']})")
-
-for mem, scores in results:
-    print(f"Fused score: {scores['fused_score']}")
-    print(f"Content: {mem['content']}")
-
-# Or use context manager (recommended)
-with mnemefusion.Memory("./brain.mfdb") as memory:
-    memory.add("Some content", embedding)
-    # Automatically closes on exit
-```
-
-**Installation (Development):**
-```bash
-cd mnemefusion-python
-python -m venv .venv
-.venv/Scripts/activate  # On Windows
-pip install maturin
-maturin develop
-```
-
-See [GETTING_STARTED.md](GETTING_STARTED.md) for a comprehensive tutorial.
-
 ## Architecture
 
 ```
-┌─────────────────────────────────────────┐
-│         MemoryEngine (Public API)        │
-├─────────────────────────────────────────┤
-│  Storage Layer (redb)                   │
-│  - ACID transactions                    │
-│  - Single file format                   │
-│  - Memory CRUD                          │
-├─────────────────────────────────────────┤
-│  Index Layer (Coming Sprint 2-3)       │
-│  - Vector Index (usearch/HNSW)          │
-│  - Temporal Index (B-tree)              │
-├─────────────────────────────────────────┤
-│  Graph Layer (Coming Sprint 4-5)        │
-│  - Causal Graph (petgraph)              │
-│  - Entity Graph (petgraph)              │
-├─────────────────────────────────────────┤
-│  Query Layer (Coming Sprint 7-8)        │
-│  - Intent Classification                │
-│  - Adaptive Fusion                      │
-└─────────────────────────────────────────┘
+┌─────────────────────────────────────────────┐
+│           MemoryEngine (Public API)          │
+├─────────────────────────────────────────────┤
+│  Query Layer                                │
+│  - Intent Classification (pattern + SLM)    │
+│  - QueryPlanner (5-dimension orchestration) │
+│  - RRF Fusion Engine                        │
+│  - MMR Diversity Reranking                  │
+│  - Entity Profile Injection                 │
+├─────────────────────────────────────────────┤
+│  Index Layer                                │
+│  - Vector Index (usearch HNSW)              │
+│  - BM25 Keyword Index (Porter stemming)     │
+│  - Temporal Index (B-tree)                  │
+├─────────────────────────────────────────────┤
+│  Graph Layer                                │
+│  - Causal Graph (petgraph)                  │
+│  - Entity Graph (petgraph)                  │
+│  - Entity Profiles (structured facts)       │
+├─────────────────────────────────────────────┤
+│  Ingestion Pipeline                         │
+│  - LLM Entity Extraction (optional)         │
+│  - Multi-pass diverse prompts               │
+│  - Profile consolidation + summarization    │
+├─────────────────────────────────────────────┤
+│  Storage Layer (redb)                       │
+│  - Single .mfdb file                        │
+│  - ACID transactions                        │
+│  - Checkpoint/resume for crash safety       │
+└─────────────────────────────────────────────┘
+```
+
+## Python API Reference
+
+### Core Operations
+
+| Method | Description |
+|--------|-------------|
+| `Memory(path, config=None, user=None)` | Open or create a database |
+| `add(content, embedding=None, metadata=None, timestamp=None, source=None, namespace=None)` | Add a memory |
+| `query(query_text, query_embedding=None, limit=10, namespace=None, filters=None)` | Multi-dimensional query returning `(intent, results, profiles)` |
+| `search(query_embedding, top_k, namespace=None, filters=None)` | Pure semantic similarity search |
+| `get(memory_id)` | Retrieve memory by ID |
+| `delete(memory_id)` | Delete memory by ID |
+| `close()` | Close database and save indexes |
+
+### Batch Operations
+
+| Method | Description |
+|--------|-------------|
+| `add_batch(memories, namespace=None)` | Bulk insert (10x+ faster) |
+| `add_with_dedup(content, embedding, ...)` | Add with duplicate detection |
+| `upsert(key, content, embedding, ...)` | Insert or update by logical key |
+| `delete_batch(memory_ids)` | Bulk delete |
+
+### Entity & Profile Management
+
+| Method | Description |
+|--------|-------------|
+| `enable_llm_entity_extraction(model_path, tier="balanced", extraction_passes=1)` | Enable LLM extraction |
+| `set_user_entity(name)` | Map first-person pronouns to user entity |
+| `list_entity_profiles()` | List all entity profiles |
+| `get_entity_profile(name)` | Get profile by name (case-insensitive) |
+| `consolidate_profiles()` | Remove noise from profiles |
+| `summarize_profiles()` | Generate profile summaries |
+
+### Metadata Filtering
+
+```python
+# Filter by metadata key-value pairs (AND logic)
+filters = [
+    {"metadata_key": "speaker", "metadata_value": "Alice"},
+    {"metadata_key": "session", "metadata_value": "2024-01-15"},
+]
+intent, results, profiles = mem.query("hiking plans", filters=filters)
+```
+
+### Namespace System
+
+```python
+# Add to specific namespace
+mem.add("secret note", namespace="alice")
+
+# Query within namespace
+intent, results, profiles = mem.query("notes", namespace="alice")
+
+# Or use the user= constructor shortcut
+mem = mnemefusion.Memory("brain.mfdb", user="alice")
+# All add/query calls default to the "alice" namespace
+```
+
+## Configuration
+
+```python
+config = {
+    "embedding_dim": 384,              # Must match your embedding model
+    "entity_extraction_enabled": True,  # Enable built-in entity extraction
+    "llm_model": "path/to/model.gguf", # Auto-enables LLM extraction
+    "extraction_passes": 3,             # Multi-pass diverse extraction
+    "async_extraction_threshold": 500,  # Defer extraction for large docs
+}
+mem = mnemefusion.Memory("brain.mfdb", config=config)
+```
+
+```rust
+use mnemefusion_core::Config;
+
+let config = Config::new()
+    .with_embedding_dim(384)
+    .with_entity_extraction(true);
+
+let engine = MemoryEngine::open("./brain.mfdb", config)?;
 ```
 
 ## Building from Source
 
 ### Prerequisites
 
-- Rust 1.75 or later
-- (Optional) Python 3.8+ for Python bindings
+- Rust 1.75+
+- Python 3.8+ (for Python bindings)
 
 ### Build
 
 ```bash
-# Clone repository
-git clone https://github.com/yourusername/mnemefusion.git
+git clone https://github.com/georgek/mnemefusion.git
 cd mnemefusion
 
 # Build core library
 cargo build --release
 
-# Run tests
-cargo test --all
+# Run tests (500+ tests)
+cargo test -p mnemefusion-core --lib
 
-# Run example
-cargo run --example basic_usage
+# Build Python bindings
+cd mnemefusion-python
+maturin develop --release
+
+# With CUDA GPU support (requires CUDA toolkit)
+maturin develop --release --features entity-extraction-cuda
 ```
-
-## Development Roadmap
-
-### Phase 1: Core Engine (4 months)
-
-| Sprint | Status | Focus |
-|--------|--------|-------|
-| Sprint 1 | ✅ Complete | Foundation, storage, CRUD |
-| Sprint 2 | 🔄 Next | Vector index (usearch), semantic search |
-| Sprint 3 | ⏳ Planned | Temporal indexing |
-| Sprint 4 | ⏳ Planned | Causal graph |
-| Sprint 5 | ⏳ Planned | Entity graph |
-| Sprint 6 | ⏳ Planned | Ingestion pipeline |
-| Sprint 7 | ⏳ Planned | Query planner, intent classification |
-| Sprint 8 | ⏳ Planned | Fusion engine, Python bindings |
-
-### Phase 2: Production Hardening (3 months)
-
-- ACID guarantees & crash recovery
-- Performance optimization (<10ms search latency)
-- Comprehensive testing (>80% coverage)
-- API stability & documentation
-- PyPI distribution
-
-### Phase 3: Ecosystem
-
-- Community building
-- Enterprise features
-- Additional language bindings
-- Advanced entity extraction
 
 ## Testing
 
-### Rust Tests
 ```bash
-# Run all Rust tests
-cargo test --all
+# All library unit tests
+cargo test -p mnemefusion-core --lib
 
-# Run core tests only
-cargo test --package mnemefusion-core
+# With output
+cargo test -p mnemefusion-core --lib -- --nocapture
 
-# Run with output
-cargo test -- --nocapture
-```
-
-### Python Tests
-```bash
-cd mnemefusion-python
-.venv/Scripts/activate
-pytest tests/ -v
-```
-
-**Current test coverage:**
-- ✅ **133 Rust unit tests** across all core modules
-- ✅ **12 integration tests** covering end-to-end workflows
-- ✅ **21 doc tests** ensuring examples compile
-- ✅ **21 Python tests** validating bindings
-- **Total: 187 tests, all passing**
-
-See [VALIDATION_RESULTS.md](VALIDATION_RESULTS.md) for detailed test results.
-
-## Configuration
-
-```rust
-use mnemefusion_core::Config;
-
-let config = Config::new()
-    .with_embedding_dim(512)          // Default: 384
-    .with_temporal_decay_hours(336.0) // Default: 168 (1 week)
-    .with_causal_max_hops(5)          // Default: 3
-    .with_entity_extraction(true);    // Default: true
-
-let engine = MemoryEngine::open("./brain.mfdb", config)?;
+# Run specific test module
+cargo test -p mnemefusion-core profile
 ```
 
 ## Language Support
 
-### Core Functionality: Language-Agnostic ✅
+MnemeFusion's core search works with any language via multilingual embeddings. Entity extraction and intent classification are currently English-optimized.
 
-MnemeFusion's **core semantic search works with any language** using multilingual embeddings:
+| Feature | Language Support |
+|---------|-----------------|
+| Vector search | All languages (use multilingual embeddings) |
+| BM25 keyword search | English-optimized (Porter stemming) |
+| Temporal indexing | All languages |
+| Causal links | All languages |
+| Entity extraction | English (optional, can be disabled) |
+| Metadata filtering | All languages |
 
-| Feature | Language Support | Notes |
-|---------|------------------|-------|
-| **Vector search** | ✅ All languages | Use multilingual embedding models |
-| **Temporal indexing** | ✅ All languages | Timestamp-based, no text processing |
-| **Causal links** | ✅ All languages | Explicit relationship tracking |
-| **Metadata filtering** | ✅ All languages | Key-value based |
-| **Namespaces** | ✅ All languages | UTF-8 string support |
-| **Deduplication** | ✅ All languages | Vector similarity based |
-| **Batch operations** | ✅ All languages | - |
-
-### Optional Features: English-Optimized ⚠️
-
-Two optional features are currently English-only:
-
-| Feature | Language | Impact if Disabled/Non-English |
-|---------|----------|-------------------------------|
-| **Entity extraction** | English only | Can be disabled. Use your own NER pipeline or rely on semantic search. |
-| **Intent classification** | English only | Falls back to semantic search (factual intent). Query still works, just with suboptimal fusion weights. |
-
-### Multilingual Usage Example
+For non-English use, disable entity extraction:
 
 ```python
-import mnemefusion
-from sentence_transformers import SentenceTransformer
-
-# Use a multilingual embedding model
-model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
-
-# Configure for multilingual use
-config = mnemefusion.Config()
-config.entity_extraction_enabled = False  # Disable English-only extraction
-
-memory = mnemefusion.Memory("brain.mfdb", config)
-
-# Add Chinese memory
-chinese_text = "我今天学习了机器学习"
-embedding = model.encode(chinese_text)
-memory.add(chinese_text, embedding.tolist())
-
-# Search in Chinese - works perfectly!
-query = "机器学习"
-query_embedding = model.encode(query)
-results = memory.search(query_embedding.tolist(), top_k=10)
+config = {"entity_extraction_enabled": False, "embedding_dim": 768}
+mem = mnemefusion.Memory("brain.mfdb", config=config)
 ```
-
-### Recommended Multilingual Embedding Models
-
-- **sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2** (50+ languages, 384-dim)
-- **intfloat/multilingual-e5-base** (100+ languages, 768-dim)
-- **intfloat/multilingual-e5-large** (100+ languages, 1024-dim)
-- **OpenAI text-embedding-3-small** (100+ languages, 1536-dim, API-based)
-- **OpenAI text-embedding-3-large** (100+ languages, 3072-dim, API-based)
-
-### What Works Across All Languages
-
-Even without entity extraction and intent classification:
-
-✅ **Semantic search** - Find similar memories by meaning
-✅ **Temporal queries** - Search by time range
-✅ **Causal relationships** - Track cause-effect (via explicit API)
-✅ **Metadata filtering** - Filter by custom fields
-✅ **Deduplication** - Detect similar memories
-✅ **Batch operations** - Efficient bulk inserts
-
-### Configuration Warning
-
-If you're using non-English content, we recommend:
-
-```rust
-let config = Config::new()
-    .with_entity_extraction(false)  // Disable for non-English
-    .with_embedding_dim(768);        // Match your multilingual model
-
-let engine = MemoryEngine::open("./brain.mfdb", config)?;
-```
-
-**Note**: The config validation will warn you if entity extraction is enabled, reminding you it's English-only.
-
-### Future Improvements
-
-Multilingual support for entity extraction and intent classification is planned for a future release. These features use a **trait-based design** to enable pluggable language-specific implementations:
-
-- Pluggable `EntityExtractor` trait (language-specific NER)
-- Pluggable `IntentClassifier` trait (language-specific patterns)
-- Language configuration option
-
-See [GitHub Issues](https://github.com/gkanellopoulos/mnemefusion/issues) for tracking and contribution opportunities.
-
-## File Format
-
-MnemeFusion uses a custom `.mfdb` (MnemeFusion Database) format:
-
-```
-┌─────────────────────────────┐
-│  Header (64 bytes)          │
-│  - Magic: "MFDB"            │
-│  - Version: 1               │
-│  - Timestamps               │
-├─────────────────────────────┤
-│  redb Tables                │
-│  - memories                 │
-│  - temporal_index           │
-│  - metadata                 │
-│  - (more in future sprints) │
-└─────────────────────────────┘
-```
-
-Version 1 guarantees:
-- Forward compatibility within major version
-- File format stability
-- Safe concurrent reads
-- ACID write transactions
-
-## Performance Targets
-
-| Operation | Target | Status |
-|-----------|--------|--------|
-| Add memory | < 10ms | ✅ Achieved (~1ms) |
-| Get by ID | < 1ms | ✅ Achieved (~0.1ms) |
-| Search (100K) | < 10ms | Sprint 2 |
-| Search (1M) | < 50ms | Sprint 10 |
 
 ## Contributing
 
-MnemeFusion is currently in active development. Contributions will be welcome after Sprint 14 (1.0 release candidate).
-
-For now, feel free to:
-- Report issues
-- Suggest features
-- Star the repository
-- Follow development progress
+Contributions are welcome! Please open an issue or pull request on GitHub.
 
 ## License
 
 Licensed under either of:
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+- [Apache License, Version 2.0](LICENSE-APACHE)
+- [MIT License](LICENSE-MIT)
 
 at your option.
 
-## Documentation
-
-- **[Getting Started Guide](GETTING_STARTED.md)** - Step-by-step tutorial for new users
-- **[Python API Reference](mnemefusion-python/README.md)** - Complete Python API documentation
-- **[Validation Results](VALIDATION_RESULTS.md)** - Phase 1 testing and validation report
-- **[Developer Guide](CLAUDE.md)** - For contributors
-- **[Project State](PROJECT_STATE.md)** - Current status and sprint history
-- **[Implementation Plan](IMPLEMENTATION_PLAN.md)** - Full roadmap (Phases 1-4)
-- **[Feature Roadmap](mnemefusion_feature_roadmap.md)** - Competitive analysis and future features
-
-## Links
-
-- **Examples**: [Rust examples](./mnemefusion-core/examples/) | [Python examples](./mnemefusion-python/examples/)
-- **Issue Tracker**: [GitHub Issues](https://github.com/yourusername/mnemefusion/issues)
-- **Project Plan**: [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md)
-
 ## Acknowledgments
 
-Built on excellent Rust libraries:
-- [redb](https://github.com/cberner/redb) - Embedded database
-- [usearch](https://github.com/unum-cloud/usearch) - Vector search (Sprint 2)
-- [petgraph](https://github.com/petgraph/petgraph) - Graph algorithms (Sprint 4-5)
-
-## Status Updates
-
-**January 21, 2026** - 🎉 **Phase 1 COMPLETE!** All 8 sprints finished. 187 tests passing. Python bindings fully functional. Ready for Phase 2 (essential features).
-
-**January 14, 2026** - Sprint 1 complete! Core foundation solid with 63 passing tests.
+Built on excellent open-source libraries:
+- [redb](https://github.com/cberner/redb) — Embedded key-value store
+- [usearch](https://github.com/unum-cloud/usearch) — HNSW vector search
+- [petgraph](https://github.com/petgraph/petgraph) — Graph algorithms
+- [llama-cpp-2](https://github.com/utilityai/llama-cpp-rs) — Rust bindings for llama.cpp
+- [PyO3](https://github.com/PyO3/pyo3) — Rust-Python interop
 
 ---
 
-**"SQLite for AI memory"** - One file. Four dimensions. Zero complexity.
+**"SQLite for AI memory"** — One file. Five dimensions. Zero complexity.
