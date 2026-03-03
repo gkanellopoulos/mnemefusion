@@ -23,8 +23,7 @@ sha2 = "0.10"
 hex = "0.4"
 dirs = "5.0"
 
-# SLM dependencies (optional feature)
-# Using Python subprocess for llama.cpp inference (simpler than native bindings)
+# Structured logging
 tracing = "0.1"
 
 # BM25 stemming for better keyword matching
@@ -52,7 +51,6 @@ criterion = "0.5"
 proptest = "1.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# Sprint 14: Performance benchmarks
 [[bench]]
 name = "core_operations"
 harness = false
