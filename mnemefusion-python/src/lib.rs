@@ -1450,6 +1450,27 @@ impl PyMemory {
         Ok(())
     }
 
+    /// Set the user entity name for first-person pronoun resolution.
+    ///
+    /// When set, queries containing "I", "me", "my" automatically include this
+    /// entity in profile injection, ensuring user's own memories get boosted.
+    /// Does NOT enable namespace filtering — only affects entity detection.
+    ///
+    /// Args:
+    ///     name: Entity profile name (e.g., "user", "alice")
+    ///
+    /// Example:
+    ///     >>> memory.set_user_entity("user")
+    ///     >>> # Now "What do I like?" maps "I" to "user" profile
+    fn set_user_entity(&self, name: &str) -> PyResult<()> {
+        let mut engine_opt = self.engine.borrow_mut();
+        let engine = engine_opt
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("Database is closed"))?;
+        engine.set_user_entity(name);
+        Ok(())
+    }
+
     /// Precompute fact embeddings for all entity profiles.
     ///
     /// Call this after set_embedding_fn() to backfill fact embeddings

@@ -3,7 +3,7 @@
 LongMemEval Stepped Evaluation for MnemeFusion
 
 Iterative development benchmark: processes questions one at a time with full
-LLM entity extraction, GPT-4o percentage-based judging.
+LLM entity extraction, GPT-5-mini RAG + judging.
 
 NOT for publication — for validating our library works on a second benchmark
 before investing in GPU rental for a full run.
@@ -76,7 +76,7 @@ except ImportError:
 # =============================================================================
 
 EMBEDDING_MODEL = "BAAI/bge-base-en-v1.5"
-RAG_MODEL = "gpt-4o-mini"
+RAG_MODEL = "gpt-5-mini"
 JUDGE_MODEL = "gpt-5-mini"  # 10x cheaper than gpt-4o, comparable reasoning quality
 TOP_K = 20
 EXTRACTION_PASSES = 1
@@ -147,6 +147,31 @@ def load_dataset(mode: str) -> List[Dict]:
         data = json.load(f)
     print(f"  Loaded {len(data)} questions")
     return data
+
+
+def get_gold_turn_contents(entry: Dict) -> List[str]:
+    """Extract content of turns marked with has_answer=True."""
+    gold_contents = []
+    for session in entry["haystack_sessions"]:
+        for turn in session:
+            if turn.get("has_answer"):
+                gold_contents.append(turn["content"].strip())
+    return gold_contents
+
+
+def compute_recall(retrieved_contents: List[str], gold_contents: List[str], k: int) -> float:
+    """Compute Recall@K: fraction of gold turns found in top-K retrieved memories."""
+    if not gold_contents:
+        return 1.0  # No gold turns = vacuously correct
+    top_k = retrieved_contents[:k]
+    found = 0
+    for gold in gold_contents:
+        for ret in top_k:
+            # Substring match: gold turn content appears in retrieved memory
+            if gold in ret or ret in gold:
+                found += 1
+                break
+    return found / len(gold_contents)
 
 
 def ingest_question(
@@ -234,6 +259,11 @@ def ingest_question(
     except Exception:
         pass
 
+    # Enable first-person pronoun → "user" entity resolution.
+    # Queries with "I", "me", "my" will resolve to the "user" profile,
+    # ensuring user's own memories get the entity score boost.
+    mem.set_user_entity("user")
+
     return mem
 
 
@@ -248,8 +278,8 @@ def query_and_answer(
     question: str,
     embedder: SentenceTransformer,
     client: OpenAI,
-) -> Tuple[str, List[str], float, float]:
-    """Query MnemeFusion and generate answer via RAG. Returns (answer, context, latency_ms, cost)."""
+) -> Tuple[str, List[str], List[str], float, float]:
+    """Query MnemeFusion and generate answer via RAG. Returns (answer, context, raw_contents, latency_ms, cost)."""
     query_embedding = embedder.encode([question], show_progress_bar=False)[0].tolist()
 
     t0 = time.time()
@@ -258,8 +288,10 @@ def query_and_answer(
 
     # Format retrieved memories as context
     context_parts = []
+    raw_contents = []  # Raw content for recall computation
     for result_dict, scores_dict in results:
         content = result_dict.get("content", "")
+        raw_contents.append(content)
         metadata = result_dict.get("metadata", {})
         session_date = metadata.get("session_date", "")
         speaker = metadata.get("speaker", "")
@@ -280,12 +312,11 @@ def query_and_answer(
     prompt = RAG_PROMPT.format(context=context_str, question=question)
     cost = 0.0
     try:
-        response = client.chat.completions.create(
-            model=RAG_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=200,
-            temperature=0,
-        )
+        rag_kwargs = {"model": RAG_MODEL, "messages": [{"role": "user", "content": prompt}]}
+        if not RAG_MODEL.startswith("gpt-5"):
+            rag_kwargs["max_tokens"] = 200
+            rag_kwargs["temperature"] = 0
+        response = client.chat.completions.create(**rag_kwargs)
         answer = response.choices[0].message.content.strip()
         if response.usage:
             cost = estimate_cost(RAG_MODEL, response.usage.prompt_tokens, response.usage.completion_tokens)
@@ -293,7 +324,7 @@ def query_and_answer(
         print(f"    [ERROR] Answer generation failed: {e}")
         answer = "Error generating answer"
 
-    return answer, context_parts, latency_ms, cost
+    return answer, context_parts, raw_contents, latency_ms, cost
 
 
 def judge_answer(
@@ -346,7 +377,7 @@ def run_evaluation(args):
 
     # Initialize embedder (loaded once, reused across all questions)
     print(f"Loading embedding model: {EMBEDDING_MODEL}")
-    embedder = SentenceTransformer(EMBEDDING_MODEL)
+    embedder = SentenceTransformer(EMBEDDING_MODEL, device="cpu")
 
     # Initialize OpenAI client
     client = OpenAI()
@@ -379,6 +410,7 @@ def run_evaluation(args):
     completed_ids = {r["question_id"] for r in all_results}
     cumulative_cost = sum(r.get("api_cost", 0.0) for r in all_results)
 
+    new_count = 0  # Track NEW questions processed (not previously loaded results)
     for q_idx in range(args.start_at, len(data)):
         entry = data[q_idx]
         qid = entry["question_id"]
@@ -389,6 +421,10 @@ def run_evaluation(args):
 
         # Skip already-evaluated questions
         if qid in completed_ids:
+            continue
+
+        # Category filter
+        if args.category and qtype != args.category:
             continue
 
         num_sessions = len(entry["haystack_sessions"])
@@ -412,9 +448,16 @@ def run_evaluation(args):
 
             # Step 2: Query + Answer
             print(f"  [QUERY]")
-            hypothesis, context_parts, latency_ms, rag_cost = query_and_answer(mem, question, embedder, client)
+            hypothesis, context_parts, raw_contents, latency_ms, rag_cost = query_and_answer(mem, question, embedder, client)
             print(f"    Latency: {latency_ms:.0f}ms, Retrieved: {len(context_parts)} memories")
             print(f"    Answer:  {hypothesis[:120]}{'...' if len(hypothesis) > 120 else ''}")
+
+            # Step 2.5: Recall@K
+            gold_contents = get_gold_turn_contents(entry)
+            r5 = compute_recall(raw_contents, gold_contents, 5)
+            r10 = compute_recall(raw_contents, gold_contents, 10)
+            r20 = compute_recall(raw_contents, gold_contents, 20)
+            print(f"    Recall:  R@5={r5:.0%}  R@10={r10:.0%}  R@20={r20:.0%}  ({len(gold_contents)} gold turns)")
 
             # Step 3: Judge
             print(f"  [JUDGE]")
@@ -439,10 +482,15 @@ def run_evaluation(args):
                 "num_turns": num_turns,
                 "is_abstention": is_abstention,
                 "api_cost": round(q_cost, 6),
+                "recall_at_5": round(r5, 4),
+                "recall_at_10": round(r10, 4),
+                "recall_at_20": round(r20, 4),
+                "num_gold_turns": len(gold_contents),
             }
             all_results.append(result)
             completed_ids.add(qid)
             category_scores[qtype].append(score)
+            new_count += 1
 
             # Save after each question (crash-safe)
             with open(results_path, "w", encoding="utf-8") as f:
@@ -451,7 +499,10 @@ def run_evaluation(args):
             # Running summary
             valid = [r for r in all_results if r["score"] >= 0]
             total_avg = sum(r["score"] for r in valid) / max(1, len(valid))
-            print(f"\n  Running: {len(all_results)} done, avg score {total_avg:.1f}/100")
+            avg_r5 = sum(r.get("recall_at_5", 0) for r in valid) / max(1, len(valid))
+            avg_r10 = sum(r.get("recall_at_10", 0) for r in valid) / max(1, len(valid))
+            avg_r20 = sum(r.get("recall_at_20", 0) for r in valid) / max(1, len(valid))
+            print(f"\n  Running: {len(all_results)} done, avg score {total_avg:.1f}/100, R@5={avg_r5:.0%} R@10={avg_r10:.0%} R@20={avg_r20:.0%}")
             for cat, scores in sorted(category_scores.items()):
                 vs = [s for s in scores if s >= 0]
                 if vs:
@@ -483,7 +534,7 @@ def run_evaluation(args):
                 pass
 
         # Max questions limit
-        if args.max_questions and len(all_results) >= args.max_questions:
+        if args.max_questions and new_count >= args.max_questions:
             print(f"\n  Reached --max-questions {args.max_questions}, stopping.")
             break
 
@@ -499,7 +550,12 @@ def run_evaluation(args):
         pass_80 = sum(1 for r in valid_results if r["score"] >= 80) / len(valid_results) * 100
         pass_50 = sum(1 for r in valid_results if r["score"] >= 50) / len(valid_results) * 100
 
+        avg_r5 = sum(r.get("recall_at_5", 0) for r in valid_results) / max(1, len(valid_results))
+        avg_r10 = sum(r.get("recall_at_10", 0) for r in valid_results) / max(1, len(valid_results))
+        avg_r20 = sum(r.get("recall_at_20", 0) for r in valid_results) / max(1, len(valid_results))
+
         print(f"  Overall avg score:     {overall_avg:.1f}/100")
+        print(f"  Recall:                R@5={avg_r5:.1%}  R@10={avg_r10:.1%}  R@20={avg_r20:.1%}")
         print(f"  Pass rate (>=80):      {pass_80:.1f}%")
         print(f"  Pass rate (>=50):      {pass_50:.1f}%")
         print(f"  Total API cost:        ${total_cost:.4f}")
@@ -543,6 +599,8 @@ if __name__ == "__main__":
                         help="Start from question N (0-indexed)")
     parser.add_argument("--max-questions", type=int, default=None,
                         help="Stop after N questions")
+    parser.add_argument("--category", type=str, default=None,
+                        help="Only process questions of this type (e.g., knowledge-update)")
     parser.add_argument("--stop-on-fail", action="store_true",
                         help="Stop when a question scores <50 for diagnosis")
     parser.add_argument("--extraction-passes", type=int, default=1,

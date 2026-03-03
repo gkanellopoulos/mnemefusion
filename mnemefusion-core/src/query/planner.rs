@@ -188,6 +188,11 @@ impl QueryPlanner {
     /// * `limit` - Maximum number of results to return
     /// * `namespace` - Optional namespace filter. If provided, only returns memories in this namespace
     /// * `filters` - Optional metadata filters. All filters must match (AND logic)
+    /// * `user_entity` - Optional user identity for first-person pronoun resolution.
+    ///   When set, queries containing "I", "me", "my", etc. automatically include
+    ///   this entity in profile injection (Step 2.1). Standard in conversational
+    ///   memory systems (Mem0, Zep, LangMem) where the user's own memories are
+    ///   stored under their name but queries use first-person pronouns.
     ///
     /// # Returns
     ///
@@ -199,6 +204,7 @@ impl QueryPlanner {
         limit: usize,
         namespace: Option<&str>,
         filters: Option<&[MetadataFilter]>,
+        user_entity: Option<&str>,
     ) -> Result<(IntentClassification, Vec<FusedResult>, Vec<crate::query::profile_search::MatchedProfileFact>)> {
         // Step 1: Classify intent (try SLM first, fallback to patterns)
         let intent = self.classify_intent(query_text)?;
@@ -232,7 +238,29 @@ impl QueryPlanner {
         //   - speaker_entity (single only): Used in Step 3.7 for speaker-aware reranking.
         //     Speaker penalty requires a single target — can't penalize speakers when the
         //     query is about multiple people.
-        let query_entities = self.profile_search.detect_entities(query_text).unwrap_or_default();
+        let mut query_entities = self.profile_search.detect_entities(query_text).unwrap_or_default();
+
+        // Step 1.7b: First-person pronoun → user entity resolution.
+        // In conversational memory, users query with "I", "me", "my" but their
+        // memories are stored under a named profile (e.g., "user", "alice").
+        // Without this mapping, the user's own memories miss the Step 2.1
+        // entity boost (2.0 score), causing them to rank below irrelevant matches.
+        // Only activates when user_entity is configured — zero impact otherwise.
+        if let Some(user_name) = user_entity {
+            let user_lower = user_name.to_lowercase();
+            if !query_entities.contains(&user_lower) {
+                let query_lower = query_text.to_lowercase();
+                // Check for first-person pronouns as whole words
+                const FIRST_PERSON: &[&str] = &["i", "me", "my", "mine", "myself", "i'm", "i've", "i'd", "i'll"];
+                let has_first_person = FIRST_PERSON.iter().any(|pronoun| {
+                    Self::contains_whole_word_static(&query_lower, pronoun)
+                });
+                if has_first_person {
+                    eprintln!("[DEBUG-QP] First-person pronoun detected, adding user entity: {}", user_lower);
+                    query_entities.push(user_lower);
+                }
+            }
+        }
         let speaker_entity = if query_entities.len() == 1 {
             Some(query_entities[0].clone())
         } else {
@@ -1510,6 +1538,21 @@ impl QueryPlanner {
         Ok(fused)
     }
 
+    /// Check if `word` appears in `text` as a complete word (not substring).
+    /// Static version for use outside of ProfileSearch (e.g., pronoun detection).
+    fn contains_whole_word_static(text: &str, word: &str) -> bool {
+        for (idx, _) in text.match_indices(word) {
+            let before_ok = idx == 0 || !text.as_bytes()[idx - 1].is_ascii_alphanumeric();
+            let after_idx = idx + word.len();
+            let after_ok = after_idx >= text.len()
+                || !text.as_bytes()[after_idx].is_ascii_alphanumeric();
+            if before_ok && after_ok {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Parse a dialog_id string of the form "D7:5" into ("D7", 5).
     ///
     /// Returns None if the string does not contain ':' or the turn portion
@@ -1981,7 +2024,7 @@ mod tests {
 
         // Execute query
         let (intent, results, _matched_facts) = planner
-            .query("test query", &vec![0.1; 384], 10, None, None)
+            .query("test query", &vec![0.1; 384], 10, None, None, None)
             .unwrap();
 
         // Should classify as factual
@@ -2063,7 +2106,7 @@ mod tests {
 
         // Query with ns1 filter
         let (_, results, _) = planner
-            .query("test", &vec![0.1; 384], 10, Some("ns1"), None)
+            .query("test", &vec![0.1; 384], 10, Some("ns1"), None, None)
             .unwrap();
 
         // Should only contain mem1
@@ -2072,7 +2115,7 @@ mod tests {
 
         // Query with ns2 filter
         let (_, results, _) = planner
-            .query("test", &vec![0.1; 384], 10, Some("ns2"), None)
+            .query("test", &vec![0.1; 384], 10, Some("ns2"), None, None)
             .unwrap();
 
         // Should only contain mem2
@@ -2081,7 +2124,7 @@ mod tests {
 
         // Query with default namespace filter
         let (_, results, _) = planner
-            .query("test", &vec![0.1; 384], 10, Some(""), None)
+            .query("test", &vec![0.1; 384], 10, Some(""), None, None)
             .unwrap();
 
         // Should only contain mem3
@@ -3125,7 +3168,7 @@ mod tests {
         // Query with entity-focused pattern (should trigger entity-first retrieval)
         let query_embedding = vec![0.15; 384];
         let (intent, results, _matched_facts) = planner
-            .query("What does Alice like?", &query_embedding, 10, None, None)
+            .query("What does Alice like?", &query_embedding, 10, None, None, None)
             .unwrap();
 
         // Should classify as Entity intent
@@ -3161,7 +3204,7 @@ mod tests {
         // Query for non-existent entity
         let query_embedding = vec![0.1; 384];
         let (_intent, results, _matched_facts) = planner
-            .query("What does NonExistentEntity like?", &query_embedding, 10, None, None)
+            .query("What does NonExistentEntity like?", &query_embedding, 10, None, None, None)
             .unwrap();
 
         // Should return empty results
@@ -3344,6 +3387,22 @@ mod tests {
     #[test]
     fn test_parse_dialog_id_high_turn() {
         assert_eq!(QueryPlanner::parse_dialog_id("D10:100"), Some(("D10", 100)));
+    }
+
+    #[test]
+    fn test_contains_whole_word_static_pronouns() {
+        // First-person pronouns should match as whole words
+        assert!(QueryPlanner::contains_whole_word_static("what do i need", "i"));
+        assert!(QueryPlanner::contains_whole_word_static("give me the answer", "me"));
+        assert!(QueryPlanner::contains_whole_word_static("my favorite color", "my"));
+        assert!(QueryPlanner::contains_whole_word_static("that is mine", "mine"));
+        assert!(QueryPlanner::contains_whole_word_static("i'm going home", "i'm"));
+        assert!(QueryPlanner::contains_whole_word_static("i've been there", "i've"));
+        // Should NOT match inside other words
+        assert!(!QueryPlanner::contains_whole_word_static("imagine this", "i"));
+        assert!(!QueryPlanner::contains_whole_word_static("time flies", "me"));
+        assert!(!QueryPlanner::contains_whole_word_static("myth or fact", "my"));
+        assert!(!QueryPlanner::contains_whole_word_static("undermine the case", "mine"));
     }
 
     #[test]

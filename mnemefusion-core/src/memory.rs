@@ -122,6 +122,12 @@ pub struct MemoryEngine {
     /// Default namespace applied to all add/query calls when `namespace` arg is None.
     /// Set via `with_user(user_name)`.
     default_namespace: Option<String>,
+    /// User entity name for first-person pronoun resolution in queries.
+    /// When set, queries containing "I", "me", "my" automatically include this
+    /// entity in profile injection. Separate from `default_namespace` so it can
+    /// be used without enabling namespace filtering.
+    /// Set via `set_user_entity(name)`.
+    user_entity: Option<String>,
 }
 
 impl MemoryEngine {
@@ -286,6 +292,7 @@ impl MemoryEngine {
             #[cfg(feature = "embedding-onnx")]
             embedding_engine,
             default_namespace: None,
+            user_entity: None,
         })
     }
 
@@ -411,6 +418,19 @@ impl MemoryEngine {
     pub fn with_user(mut self, user: impl Into<String>) -> Self {
         self.default_namespace = Some(user.into());
         self
+    }
+
+    /// Set the user entity name for first-person pronoun resolution.
+    ///
+    /// When set, queries containing "I", "me", "my", etc. automatically include
+    /// this entity in the profile injection step (Step 2.1), ensuring the user's
+    /// own memories get the entity score boost.
+    ///
+    /// Unlike `with_user()`, this does NOT enable namespace filtering — it only
+    /// affects entity detection at query time. Use this when memories are stored
+    /// without namespace but you want pronoun resolution.
+    pub fn set_user_entity(&mut self, name: impl Into<String>) {
+        self.user_entity = Some(name.into());
     }
 
     /// Attach an embedding engine for automatic text vectorization.
@@ -1704,10 +1724,14 @@ impl MemoryEngine {
         // Apply default namespace if caller didn't supply one
         let effective_ns = namespace.or(self.default_namespace.as_deref());
 
-        // Execute query using query planner
+        // Execute query using query planner.
+        // Pass user_entity for first-person pronoun resolution:
+        // when user says "I like hiking", the system maps "I" to their entity profile,
+        // ensuring their memories get the Step 2.1 entity boost.
         let (intent, fused_results, matched_facts) =
             self.query_planner
-                .query(query_text, &embedding_vec, limit, effective_ns, filters)?;
+                .query(query_text, &embedding_vec, limit, effective_ns, filters,
+                       self.user_entity.as_deref())?;
 
         // Build profile context as SEPARATE strings (not mixed into results).
         // Profile facts contain entity knowledge ("Caroline's hobby: painting") but
