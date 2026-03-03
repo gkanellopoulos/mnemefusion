@@ -19,6 +19,17 @@ MnemeFusion provides multi-dimensional memory indexing (semantic, temporal, caus
 - **Python Bindings**: First-class Python API via PyO3
 - **Optional GPU Acceleration**: CUDA-accelerated entity extraction via llama-cpp
 
+## Benchmarks
+
+MnemeFusion is evaluated on two established conversational memory benchmarks:
+
+| Benchmark | Metric | Score | Questions |
+|-----------|--------|-------|-----------|
+| [LoCoMo](evals/locomo/) | MCQ Accuracy | **70.2%** | 1,986 |
+| [LongMemEval](evals/longmemeval/) | Avg Score | **95.1/100** | 65/500 (oracle mode) |
+
+See [evals/](evals/) for full results, datasets, and instructions to reproduce.
+
 ## Quick Start
 
 ### Python
