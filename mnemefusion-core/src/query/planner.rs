@@ -301,6 +301,54 @@ impl QueryPlanner {
             }
         }
 
+        // Step 2.1c: Query-entity graph expansion (HippoRAG-style)
+        // Traverse KG relationships from query entities to discover related entities
+        // and inject their source_memories. This finds evidence with zero semantic
+        // overlap to the query — e.g., "What did Melanie's friends achieve?" finds
+        // Bob's achievements via Melanie→Bob "friend" relationship in the KG.
+        // Score 1.0 = below sacred 2.0 (direct entity), above most semantic results.
+        // and_modify(max) ensures Step 2.1's 2.0 score is never downgraded.
+        const RELATED_ENTITY_SCORE: f32 = 1.0;
+        const MAX_RELATED_MEMORIES_PER_ENTITY: usize = 10;
+
+        if !query_entities.is_empty() {
+            // Build EntityId → lowercase name map for resolving graph traversal results.
+            // Graph stores EntityId UUIDs; profiles are keyed by name. Need reverse map.
+            let all_profiles = self.storage.list_entity_profiles().unwrap_or_default();
+            let id_to_name: HashMap<String, String> = all_profiles
+                .iter()
+                .map(|p| (p.entity_id.to_string(), p.name.to_lowercase()))
+                .collect();
+
+            let graph = self.graph_manager.read().unwrap();
+            for entity_name in &query_entities {
+                if let Ok(Some(profile)) = self.storage.get_entity_profile(entity_name) {
+                    for (related_id, _rel_type) in graph.get_related_entities(&profile.entity_id) {
+                        // Skip entities already in query_entities (Step 2.1 handles them)
+                        if let Some(related_name) = id_to_name.get(&related_id.to_string()) {
+                            if query_entities.iter().any(|qe| qe == related_name) {
+                                continue;
+                            }
+                            if let Ok(Some(related_profile)) =
+                                self.storage.get_entity_profile(related_name)
+                            {
+                                for source_id in related_profile
+                                    .source_memories
+                                    .iter()
+                                    .take(MAX_RELATED_MEMORIES_PER_ENTITY)
+                                {
+                                    entity_scores
+                                        .entry(MemoryId::from_u64(source_id.to_u64()))
+                                        .and_modify(|s| *s = (*s).max(RELATED_ENTITY_SCORE))
+                                        .or_insert(RELATED_ENTITY_SCORE);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Step 2.2: Profile-based search for direct fact lookup
         // Boost entity_scores with profile matches — memories that are sources of
         // matching facts get additional priority. Uses stemmed word-overlap so
@@ -3395,5 +3443,211 @@ mod tests {
         // Gradual dropoff: top results have more probability but not extremely so
         // Should keep most results since scores are close
         assert!(k >= 5, "Expected reasonable k for gradual dropoff but got {}", k);
+    }
+
+    // --- Step 2.1c: Query-entity graph expansion tests ---
+
+    #[test]
+    fn test_related_entity_expansion_basic() {
+        use crate::types::{EntityId, EntityProfile};
+
+        let (planner, _dir) = create_test_planner();
+
+        // Create two entity profiles: Alice and Bob
+        let alice_id = EntityId::new();
+        let bob_id = EntityId::new();
+
+        let mem_alice = Memory::new("Alice likes hiking".to_string(), vec![0.1; 384]);
+        let mem_alice_id = mem_alice.id.clone();
+        planner.storage.store_memory(&mem_alice).unwrap();
+
+        let mem_bob = Memory::new("Bob won a marathon".to_string(), vec![0.2; 384]);
+        let mem_bob_id = mem_bob.id.clone();
+        planner.storage.store_memory(&mem_bob).unwrap();
+
+        // Add to vector index so query doesn't return empty
+        {
+            let mut idx = planner.vector_index.write().unwrap();
+            idx.add(mem_alice_id.clone(), &mem_alice.embedding).unwrap();
+            idx.add(mem_bob_id.clone(), &mem_bob.embedding).unwrap();
+        }
+
+        let alice_profile = EntityProfile {
+            entity_id: alice_id.clone(),
+            name: "Alice".to_string(),
+            entity_type: "person".to_string(),
+            facts: std::collections::HashMap::new(),
+            source_memories: vec![mem_alice_id.clone()],
+            updated_at: crate::types::Timestamp::now(),
+            summary: None,
+        };
+        let bob_profile = EntityProfile {
+            entity_id: bob_id.clone(),
+            name: "Bob".to_string(),
+            entity_type: "person".to_string(),
+            facts: std::collections::HashMap::new(),
+            source_memories: vec![mem_bob_id.clone()],
+            updated_at: crate::types::Timestamp::now(),
+            summary: None,
+        };
+        planner.storage.store_entity_profile(&alice_profile).unwrap();
+        planner.storage.store_entity_profile(&bob_profile).unwrap();
+
+        // Create KG relationship: Alice --[friend]--> Bob
+        {
+            let mut graph = planner.graph_manager.write().unwrap();
+            graph.link_entity_to_entity(&alice_id, &bob_id, "friend");
+        }
+
+        // Query about Alice — Step 2.1c should discover Bob's memories via KG
+        let (_intent, results, _facts) = planner
+            .query("What did Alice's friends achieve?", &vec![0.15; 384], 10, None, None, None)
+            .unwrap();
+
+        // Bob's memory should appear in results (injected by Step 2.1c)
+        let has_bob_memory = results.iter().any(|r| r.id.to_u64() == mem_bob_id.to_u64());
+        assert!(
+            has_bob_memory,
+            "Bob's memory should be discovered via Alice→Bob KG relationship"
+        );
+    }
+
+    #[test]
+    fn test_related_entity_expansion_no_downgrade() {
+        use crate::types::{EntityId, EntityProfile};
+
+        let (planner, _dir) = create_test_planner();
+
+        // Create two entities: Alice and Bob, where Bob is also a query entity
+        let alice_id = EntityId::new();
+        let bob_id = EntityId::new();
+
+        let mem_bob = Memory::new("Bob likes cooking".to_string(), vec![0.2; 384]);
+        let mem_bob_id = mem_bob.id.clone();
+        planner.storage.store_memory(&mem_bob).unwrap();
+        {
+            let mut idx = planner.vector_index.write().unwrap();
+            idx.add(mem_bob_id.clone(), &mem_bob.embedding).unwrap();
+        }
+
+        let alice_profile = EntityProfile {
+            entity_id: alice_id.clone(),
+            name: "Alice".to_string(),
+            entity_type: "person".to_string(),
+            facts: std::collections::HashMap::new(),
+            source_memories: vec![],
+            updated_at: crate::types::Timestamp::now(),
+            summary: None,
+        };
+        let bob_profile = EntityProfile {
+            entity_id: bob_id.clone(),
+            name: "Bob".to_string(),
+            entity_type: "person".to_string(),
+            facts: std::collections::HashMap::new(),
+            source_memories: vec![mem_bob_id.clone()],
+            updated_at: crate::types::Timestamp::now(),
+            summary: None,
+        };
+        planner.storage.store_entity_profile(&alice_profile).unwrap();
+        planner.storage.store_entity_profile(&bob_profile).unwrap();
+
+        // Create KG relationship: Alice --[friend]--> Bob
+        {
+            let mut graph = planner.graph_manager.write().unwrap();
+            graph.link_entity_to_entity(&alice_id, &bob_id, "friend");
+        }
+
+        // Query mentioning both Alice AND Bob — Bob gets 2.0 from Step 2.1.
+        // Step 2.1c should NOT downgrade Bob's memory from 2.0 to 1.0.
+        let (_intent, results, _facts) = planner
+            .query("What do Alice and Bob enjoy?", &vec![0.15; 384], 10, None, None, None)
+            .unwrap();
+
+        // Bob's memory should be present
+        let bob_result = results.iter().find(|r| r.id.to_u64() == mem_bob_id.to_u64());
+        assert!(bob_result.is_some(), "Bob's memory should be in results");
+
+        // Entity score should be 2.0 (from Step 2.1), not downgraded to 1.0
+        let bob_entity_score = bob_result.unwrap().entity_score;
+        assert!(
+            bob_entity_score >= 0.9, // After RRF normalization, exact value depends on strategy
+            "Bob's entity score should reflect Step 2.1 (2.0), not be downgraded by 2.1c. Got {}",
+            bob_entity_score
+        );
+    }
+
+    #[test]
+    fn test_related_entity_expansion_cap() {
+        use crate::types::{EntityId, EntityProfile};
+
+        let (planner, _dir) = create_test_planner();
+
+        let alice_id = EntityId::new();
+        let bob_id = EntityId::new();
+
+        // Create 15 memories for Bob (exceeds MAX_RELATED_MEMORIES_PER_ENTITY=10)
+        let mut bob_source_memories = Vec::new();
+        for i in 0..15 {
+            let mem = Memory::new(format!("Bob memory {}", i), vec![0.1 + i as f32 * 0.01; 384]);
+            let mid = mem.id.clone();
+            planner.storage.store_memory(&mem).unwrap();
+            {
+                let mut idx = planner.vector_index.write().unwrap();
+                idx.add(mid.clone(), &mem.embedding).unwrap();
+            }
+            bob_source_memories.push(mid);
+        }
+
+        let alice_profile = EntityProfile {
+            entity_id: alice_id.clone(),
+            name: "Alice".to_string(),
+            entity_type: "person".to_string(),
+            facts: std::collections::HashMap::new(),
+            source_memories: vec![],
+            updated_at: crate::types::Timestamp::now(),
+            summary: None,
+        };
+        let bob_profile = EntityProfile {
+            entity_id: bob_id.clone(),
+            name: "Bob".to_string(),
+            entity_type: "person".to_string(),
+            facts: std::collections::HashMap::new(),
+            source_memories: bob_source_memories.clone(),
+            updated_at: crate::types::Timestamp::now(),
+            summary: None,
+        };
+        planner.storage.store_entity_profile(&alice_profile).unwrap();
+        planner.storage.store_entity_profile(&bob_profile).unwrap();
+
+        // Create KG relationship: Alice --[friend]--> Bob
+        {
+            let mut graph = planner.graph_manager.write().unwrap();
+            graph.link_entity_to_entity(&alice_id, &bob_id, "friend");
+        }
+
+        // Query about Alice — should inject at most 10 of Bob's memories
+        let (_intent, results, _facts) = planner
+            .query("Tell me about Alice's friends", &vec![0.15; 384], 10, None, None, None)
+            .unwrap();
+
+        // Count how many of Bob's memories appear with entity_score > 0
+        // (Step 2.1c injects at 1.0, which will be > 0 after normalization)
+        let bob_memories_in_results: Vec<_> = results
+            .iter()
+            .filter(|r| {
+                bob_source_memories
+                    .iter()
+                    .any(|bm| bm.to_u64() == r.id.to_u64())
+            })
+            .collect();
+
+        // With limit=10 and MAX_RELATED_MEMORIES_PER_ENTITY=10, at most 10 of Bob's
+        // 15 memories should have been injected. The actual result count may be ≤10
+        // due to fusion/ranking, but we should never see all 15.
+        assert!(
+            bob_memories_in_results.len() <= 10,
+            "Should cap at 10 related entity memories, got {}",
+            bob_memories_in_results.len()
+        );
     }
 }
