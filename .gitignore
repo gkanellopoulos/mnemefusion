@@ -131,6 +131,18 @@ CLAUDE.md
 # LongMemEval fixtures (downloaded dataset, not committed)
 tests/benchmarks/fixtures/longmemeval/
 
+# Eval results and logs (regenerate as needed)
+evals/locomo/results_*.json
+evals/locomo/*.log
+evals/longmemeval/longmemeval_results_*.json
+evals/longmemeval/*.log
+
+# Eval fixtures — large datasets downloaded from HuggingFace
+evals/longmemeval/fixtures/longmemeval/
+
+# Eval database files (created during ingestion)
+evals/**/*.mfdb
+
 # Retrieval analysis artifacts
 tests/benchmarks/fixtures/retrieval_analysis.json
 

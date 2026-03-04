@@ -4,9 +4,16 @@ LoCoMo Evaluation for MnemeFusion
 
 Evaluates MnemeFusion on the LoCoMo (Long-term Conversation Memory) benchmark.
 
+Two evaluation modes:
+  Standard (default): Free-text generation + LLM-as-judge (Mem0-compatible protocol).
+    Categories 1-4 (single-hop, multi-hop, temporal, open-domain), 1,540 questions.
+    Binary CORRECT/WRONG judging with generous matching.
+  MCQ (--mcq): 10-choice multiple-choice (deterministic, no LLM judge variance).
+    Supplementary/internal mode using Percena/locomo-mc10. Non-standard.
+
 Metrics:
-- MCQ Accuracy: 10-choice multiple-choice (deterministic, no LLM judge variance)
-- LLM-as-Judge: Binary correctness score (free-text mode)
+- LLM-as-Judge Accuracy: Binary correctness (standard mode)
+- MCQ Accuracy: 10-choice multiple-choice (MCQ mode)
 - Recall@K: Fraction of gold evidence in top-K results
 - Latency: Query time (p50, p95, p99)
 
@@ -17,14 +24,17 @@ Dataset: LoCoMo — 10 conversations, ~2000 questions
 Usage:
     export OPENAI_API_KEY=sk-...
 
-    # MCQ evaluation (recommended — deterministic)
+    # Standard evaluation (free-text + LLM judge, categories 1-4)
+    python run_eval.py --db-path <path-to.mfdb> --skip-ingestion
+
+    # MCQ evaluation (supplementary, deterministic)
     python run_eval.py --db-path <path-to.mfdb> --skip-ingestion --mcq
 
-    # Full ingestion + evaluation
-    python run_eval.py --use-llm --llm-model <path-to-model.gguf> --mcq
+    # Multi-run for publication (3 runs, report mean ± stddev)
+    python run_eval.py --db-path <path-to.mfdb> --skip-ingestion --runs 3
 
-    # Subset for quick testing
-    python run_eval.py --db-path <path-to.mfdb> --skip-ingestion --mcq --max-questions 50
+    # Full ingestion + evaluation
+    python run_eval.py --use-llm --llm-model <path-to-model.gguf>
 
 See evals/locomo/README.md for full instructions.
 """
@@ -414,7 +424,7 @@ For example, if a memory from [8 May 2023] mentions "yesterday", the event happe
 For relative dates like "last Friday" or "the weekend before", calculate the actual date from the memory's date.
 For duration questions ("how long"), compute the difference between the relevant dates.
 If you find ANY relevant information, provide an answer. Only say "I don't have enough information" if the memories truly contain nothing related to the question.
-Keep your answer concise and factual."""
+Keep your answer very concise — ideally 5-6 words."""
 
         try:
             response = self.client.chat.completions.create(
@@ -594,49 +604,53 @@ Answer with ONLY the letter (A-J) of your choice."""
         """
         Use LLM to judge if the prediction is correct.
 
+        Adapted from Mem0's ACCURACY_PROMPT for compatibility with published results.
+        Binary CORRECT/WRONG with generous matching, temporal tolerance,
+        and JSON output format.
+
         Returns:
             1 if correct, 0 if incorrect
         """
-        # Check for obvious "don't know" answers first (fast path)
-        prediction_lower = prediction.lower()
-        dont_know_phrases = [
-            "i don't have",
-            "i do not have",
-            "cannot find",
-            "no information",
-            "unable to",
-            "don't have enough",
-            "not mentioned",
-            "not specified",
-            "no specific",
-            "cannot determine",
-            "not available"
-        ]
-        for phrase in dont_know_phrases:
-            if phrase in prediction_lower:
-                return 0
+        prompt = f"""Your task is to label an answer to a question as 'CORRECT' or 'WRONG'.
 
-        prompt = f"""Task: Determine if the AI's answer contains the correct information.
+You will be given:
+(1) A question about information from past conversations
+(2) A 'gold' (ground truth) answer
+(3) A generated answer from a memory system
+
+Be generous with your grading — as long as the generated answer touches on the same topic as the gold answer, it should be CORRECT.
+
+For time-related questions, the gold answer will be a specific date/time. The generated answer might use different formats (e.g., "May 7th" vs "7 May") — consider it CORRECT if it refers to the same date or time period.
 
 Question: {question}
-Correct Answer: {ground_truth}
-AI's Answer: {prediction}
+Gold answer: {ground_truth}
+Generated answer: {prediction}
 
-Does the AI's answer contain the key information from the correct answer?
-Answer only "YES" or "NO"."""
+First, provide a short (one sentence) explanation of your reasoning, then return your label as JSON: {{"label": "CORRECT"}} or {{"label": "WRONG"}}"""
 
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=5,
-                temperature=0
+                max_tokens=100,
+                temperature=0,
+                response_format={"type": "json_object"}
             )
 
-            verdict = response.choices[0].message.content.strip().upper()
+            raw = response.choices[0].message.content.strip()
             self.total_tokens += response.usage.total_tokens
 
-            return 1 if verdict.startswith("YES") else 0
+            # Parse JSON label
+            try:
+                result = json.loads(raw)
+                label = result.get("label", "").upper()
+                return 1 if label == "CORRECT" else 0
+            except json.JSONDecodeError:
+                # Fallback: look for CORRECT/WRONG in raw text
+                raw_upper = raw.upper()
+                if "CORRECT" in raw_upper and "WRONG" not in raw_upper:
+                    return 1
+                return 0
 
         except Exception as e:
             print(f"  [ERROR] Judge failed: {e}")
@@ -1466,6 +1480,7 @@ def run_evaluation(
     mcq: bool = False,
     mcq_path: str = None,
     adaptive_k_threshold: float = 0.0,
+    runs: int = 1,
 ) -> EvaluationResults:
     """
     Run full industry-standard evaluation.
@@ -1491,32 +1506,40 @@ def run_evaluation(
         EvaluationResults with all metrics
     """
     print("=" * 70)
-    print("MnemeFusion Industry-Standard Evaluation")
+    print("MnemeFusion LoCoMo Evaluation")
     print("=" * 70)
-    print(f"Methodology: LLM-Judge, F1, BLEU")
-    print(f"Dataset: LoCoMo")
-    print(f"Judge LLM: GPT-4o-mini")
-    print(f"Embedding Model: {embedding_model}")
-    if nscale_extract:
-        print(f"Entity Extraction: NScale Cloud ({nscale_model})")
-    elif use_llm:
-        print(f"Entity Extraction: Qwen3 Native LLM ({llm_tier} tier, {extraction_passes} pass{'es' if extraction_passes > 1 else ''})")
-    elif use_slm:
-        print(f"Entity Extraction: Python SLM (0.6B)")
-    else:
-        print(f"Entity Extraction: Disabled (baseline)")
-    if session_expand:
-        print(f"Session Expansion: ENABLED (expand sessions with >= 2 hits)")
-    if neighbor_expand:
-        print(f"Neighbor Expansion: ENABLED (±2 turns around each retrieved result)")
-    if two_step_rag:
-        print(f"Two-Step RAG: ENABLED (extract facts, then answer)")
+    print(f"\nMethodology:")
     if mcq:
-        print(f"Evaluation Mode: MCQ (10-choice, deterministic, no LLM judge)")
+        print(f"  Mode:             MCQ (10-choice, deterministic, non-standard)")
     else:
-        print(f"Evaluation Mode: Free-text + LLM Judge")
+        print(f"  Mode:             Free-text + LLM-as-judge (standard protocol)")
+    print(f"  Answer model:     GPT-4o-mini, temperature=0")
+    print(f"  Judge model:      GPT-4o-mini, temperature=0")
+    if mcq:
+        print(f"  Scoring:          MCQ — correct if selected choice matches ground truth")
+    else:
+        print(f"  Scoring:          Binary CORRECT/WRONG (Mem0-compatible judge prompt)")
+    cat_list = categories if categories else [1, 2, 3, 4]
+    print(f"  Categories:       {cat_list}")
+    print(f"  Embedding model:  {embedding_model}")
+    if nscale_extract:
+        print(f"  Extraction:       NScale Cloud ({nscale_model})")
+    elif use_llm:
+        print(f"  Extraction:       Native LLM ({llm_tier} tier, {extraction_passes} pass{'es' if extraction_passes > 1 else ''})")
+    elif use_slm:
+        print(f"  Extraction:       Python SLM (0.6B)")
+    else:
+        print(f"  Extraction:       Disabled (baseline)")
+    if session_expand:
+        print(f"  Session expand:   ENABLED")
+    if neighbor_expand:
+        print(f"  Neighbor expand:  ENABLED")
+    if two_step_rag:
+        print(f"  Two-step RAG:     ENABLED")
     if adaptive_k_threshold > 0.0:
-        print(f"Adaptive-K: ENABLED (Top-p threshold={adaptive_k_threshold})")
+        print(f"  Adaptive-K:       threshold={adaptive_k_threshold}")
+    if runs > 1:
+        print(f"  Runs:             {runs} (will report mean ± stddev)")
     print("=" * 70)
 
     # Load MCQ choices if MCQ mode enabled
@@ -1544,17 +1567,11 @@ def run_evaluation(
     conversations, all_questions = load_locomo_dataset(dataset_path, num_conversations, include_empty_answers=mcq)
 
     # Filter questions by category if specified
-    if mcq:
-        # MCQ mode: include ALL categories (1-5) including adversarial
-        # This is the full 1,986-question evaluation
-        if categories:
-            questions = [(q, a, c, cid, e) for q, a, c, cid, e in all_questions if c in categories]
-        else:
-            questions = list(all_questions)  # All categories including adversarial
-    elif categories:
+    if categories:
         questions = [(q, a, c, cid, e) for q, a, c, cid, e in all_questions if c in categories]
     else:
-        # Default: use categories 1-4 (standard LoCoMo evaluation)
+        # Default: categories 1-4 (standard LoCoMo protocol, 1,540 questions)
+        # Category 5 (adversarial) excluded by default — pass --categories 5 to include
         questions = [(q, a, c, cid, e) for q, a, c, cid, e in all_questions if c in [1, 2, 3, 4]]
 
     if max_questions:
@@ -1708,171 +1725,200 @@ def run_evaluation(
             print(f"  [SKIP] Using existing DB at {db_path} — skipping ingestion")
             ingestion_time = 0.0
 
-        # Evaluate each question
-        print(f"\nEvaluating {len(questions)} questions...")
-        print("-" * 70)
+        # Multi-run support: wrap evaluation in outer loop
+        run_accuracies = []
 
-        results = []
-        latencies = []
-        eval_start = time.time()
+        for run_idx in range(runs):
+            if runs > 1:
+                print(f"\n{'#' * 70}")
+                print(f"# RUN {run_idx + 1}/{runs}")
+                print(f"{'#' * 70}")
 
-        for i, (question, ground_truth, category, conv_id, evidence) in enumerate(questions):
-            if verbose or (i + 1) % 50 == 0:
-                print(f"  [{i+1}/{len(questions)}] Category {category}: {question[:50]}...")
+            # Evaluate each question
+            print(f"\nEvaluating {len(questions)} questions...")
+            print("-" * 70)
 
-            # Retrieve with dialog IDs for Recall@K (Solution 6)
-            # Use top_k=20 for recall measurement, but only pass top_k to answer generation
-            recall_k = max(top_k, 20)
-            retrieved_content, retrieved_ids, retrieval_latency, profile_ctx = evaluator.retrieve_with_ids(question, top_k=recall_k)
-            latencies.append(retrieval_latency)
+            results = []
+            latencies = []
+            eval_start = time.time()
 
-            # Calculate Recall@K (Solution 6)
-            # Check if evidence dialog IDs appear in retrieved results at various K
-            evidence_set = set(evidence) if evidence else set()
-            r_at_5 = 0.0
-            r_at_10 = 0.0
-            r_at_20 = 0.0
-            if evidence_set:
-                # All retrieved_ids are now real memory IDs (no synthetic profile facts)
-                # With neighbor expansion, retrieved_ids may include additive neighbors
-                # beyond position 20. R@K uses the first K from the original ranking,
-                # but R@20 extends to include all IDs (original + neighbors).
-                found_at_5 = len(evidence_set & set(retrieved_ids[:5]))
-                found_at_10 = len(evidence_set & set(retrieved_ids[:10]))
-                found_at_20 = len(evidence_set & set(retrieved_ids[:min(20, len(retrieved_ids))]))
-                r_at_5 = found_at_5 / len(evidence_set)
-                r_at_10 = found_at_10 / len(evidence_set)
-                r_at_20 = found_at_20 / len(evidence_set)
+            for i, (question, ground_truth, category, conv_id, evidence) in enumerate(questions):
+                if verbose or (i + 1) % 50 == 0:
+                    print(f"  [{i+1}/{len(questions)}] Category {category}: {question[:50]}...")
 
-            # Build context: profile context (entity knowledge) + real memories
-            # Profile context helps entity-dependent queries (single-hop, temporal)
-            # but hurts open-domain by displacing real memories. Intent-conditional
-            # inclusion would be ideal but requires more research.
-            # With neighbor expansion, retrieved_content may have up to top_k + 5
-            # items (original + additive neighbors). Include all to avoid cutting
-            # off neighbors that were specifically selected for near-miss evidence.
-            n_profile = min(len(profile_ctx), 5)
-            content_budget = top_k - n_profile
-            if neighbor_expand:
-                content_budget = len(retrieved_content)  # Include all (original + neighbors)
-            context_with_facts = profile_ctx[:n_profile] + retrieved_content[:content_budget]
+                # Retrieve with dialog IDs for Recall@K (Solution 6)
+                # Use top_k=20 for recall measurement, but only pass top_k to answer generation
+                recall_k = max(top_k, 20)
+                retrieved_content, retrieved_ids, retrieval_latency, profile_ctx = evaluator.retrieve_with_ids(question, top_k=recall_k)
+                latencies.append(retrieval_latency)
 
-            # Generate answer (or select MCQ choice)
-            gen_start = time.time()
-            if mcq and question in mcq_map:
-                # MCQ mode: single LLM call to select from 10 choices
-                mcq_data = mcq_map[question]
-                selected_idx, tokens = llm.select_mcq_answer(
-                    question, context_with_facts, mcq_data['choices']
-                )
-                judge_score = 1 if selected_idx == mcq_data['correct_choice_index'] else 0
-                answer = mcq_data['choices'][selected_idx] if 0 <= selected_idx < len(mcq_data['choices']) else "INVALID"
-                f1 = calculate_f1_score(answer, ground_truth)
-                bleu = calculate_bleu_score(answer, ground_truth)
-            elif two_step_rag:
-                # Two-step RAG: (1) extract relevant facts, (2) answer from facts
-                facts, extract_tokens = llm.extract_facts(question, context_with_facts)
-                answer, answer_tokens = llm.generate_answer_from_facts(question, facts)
-                tokens = extract_tokens + answer_tokens
-                judge_score = llm.judge_answer(question, ground_truth, answer)
-                f1 = calculate_f1_score(answer, ground_truth)
-                bleu = calculate_bleu_score(answer, ground_truth)
-            else:
-                answer, tokens = llm.generate_answer(question, context_with_facts)
-                judge_score = llm.judge_answer(question, ground_truth, answer)
-                f1 = calculate_f1_score(answer, ground_truth)
-                bleu = calculate_bleu_score(answer, ground_truth)
-            gen_latency = (time.time() - gen_start) * 1000
+                # Calculate Recall@K (Solution 6)
+                # Check if evidence dialog IDs appear in retrieved results at various K
+                evidence_set = set(evidence) if evidence else set()
+                r_at_5 = 0.0
+                r_at_10 = 0.0
+                r_at_20 = 0.0
+                if evidence_set:
+                    # All retrieved_ids are now real memory IDs (no synthetic profile facts)
+                    # With neighbor expansion, retrieved_ids may include additive neighbors
+                    # beyond position 20. R@K uses the first K from the original ranking,
+                    # but R@20 extends to include all IDs (original + neighbors).
+                    found_at_5 = len(evidence_set & set(retrieved_ids[:5]))
+                    found_at_10 = len(evidence_set & set(retrieved_ids[:10]))
+                    found_at_20 = len(evidence_set & set(retrieved_ids[:min(20, len(retrieved_ids))]))
+                    r_at_5 = found_at_5 / len(evidence_set)
+                    r_at_10 = found_at_10 / len(evidence_set)
+                    r_at_20 = found_at_20 / len(evidence_set)
 
-            # Store result
-            result = QuestionResult(
-                question_id=f"{conv_id}_{i}",
-                question=question,
-                ground_truth=ground_truth,
-                generated_answer=answer,
-                category=category,
-                llm_judge_score=judge_score,
-                f1_score=f1,
-                bleu_score=bleu,
-                retrieval_latency_ms=retrieval_latency,
-                generation_latency_ms=gen_latency,
-                tokens_used=tokens,
-                memories_retrieved=len(retrieved_content[:top_k]),
-                recall_at_5=r_at_5,
-                recall_at_10=r_at_10,
-                recall_at_20=r_at_20,
-                evidence_ids=evidence if evidence else [],
-                retrieved_dialog_ids=retrieved_ids[:20],
-                retrieved_content=retrieved_content[:3] if verbose else []
-            )
-            results.append(result)
+                # Build context: profile context (entity knowledge) + real memories
+                # Profile context helps entity-dependent queries (single-hop, temporal)
+                # but hurts open-domain by displacing real memories. Intent-conditional
+                # inclusion would be ideal but requires more research.
+                # With neighbor expansion, retrieved_content may have up to top_k + 5
+                # items (original + additive neighbors). Include all to avoid cutting
+                # off neighbors that were specifically selected for near-miss evidence.
+                n_profile = min(len(profile_ctx), 5)
+                content_budget = top_k - n_profile
+                if neighbor_expand:
+                    content_budget = len(retrieved_content)  # Include all (original + neighbors)
+                context_with_facts = profile_ctx[:n_profile] + retrieved_content[:content_budget]
 
-            if verbose:
-                recall_str = f"R@10: {r_at_10:.0%}" if evidence_set else "R@10: N/A"
+                # Generate answer (or select MCQ choice)
+                gen_start = time.time()
                 if mcq and question in mcq_map:
-                    print(f"    MCQ: {'CORRECT' if judge_score else 'WRONG'} (selected: {answer[:50]}) | {recall_str}")
+                    # MCQ mode: single LLM call to select from 10 choices
+                    mcq_data = mcq_map[question]
+                    selected_idx, tokens = llm.select_mcq_answer(
+                        question, context_with_facts, mcq_data['choices']
+                    )
+                    judge_score = 1 if selected_idx == mcq_data['correct_choice_index'] else 0
+                    answer = mcq_data['choices'][selected_idx] if 0 <= selected_idx < len(mcq_data['choices']) else "INVALID"
+                    f1 = calculate_f1_score(answer, ground_truth)
+                    bleu = calculate_bleu_score(answer, ground_truth)
+                elif two_step_rag:
+                    # Two-step RAG: (1) extract relevant facts, (2) answer from facts
+                    facts, extract_tokens = llm.extract_facts(question, context_with_facts)
+                    answer, answer_tokens = llm.generate_answer_from_facts(question, facts)
+                    tokens = extract_tokens + answer_tokens
+                    judge_score = llm.judge_answer(question, ground_truth, answer)
+                    f1 = calculate_f1_score(answer, ground_truth)
+                    bleu = calculate_bleu_score(answer, ground_truth)
                 else:
-                    print(f"    Judge: {'Y' if judge_score else 'N'} | F1: {f1:.2f} | BLEU: {bleu:.2f} | {recall_str}")
+                    answer, tokens = llm.generate_answer(question, context_with_facts)
+                    judge_score = llm.judge_answer(question, ground_truth, answer)
+                    f1 = calculate_f1_score(answer, ground_truth)
+                    bleu = calculate_bleu_score(answer, ground_truth)
+                gen_latency = (time.time() - gen_start) * 1000
 
-        eval_time = time.time() - eval_start
-        print("-" * 70)
+                # Store result
+                result = QuestionResult(
+                    question_id=f"{conv_id}_{i}",
+                    question=question,
+                    ground_truth=ground_truth,
+                    generated_answer=answer,
+                    category=category,
+                    llm_judge_score=judge_score,
+                    f1_score=f1,
+                    bleu_score=bleu,
+                    retrieval_latency_ms=retrieval_latency,
+                    generation_latency_ms=gen_latency,
+                    tokens_used=tokens,
+                    memories_retrieved=len(retrieved_content[:top_k]),
+                    recall_at_5=r_at_5,
+                    recall_at_10=r_at_10,
+                    recall_at_20=r_at_20,
+                    evidence_ids=evidence if evidence else [],
+                    retrieved_dialog_ids=retrieved_ids[:20],
+                    retrieved_content=retrieved_content[:3] if verbose else []
+                )
+                results.append(result)
 
-        # Aggregate results
-        final_results = EvaluationResults(
-            total_questions=len(results),
-            num_documents=len(documents),
-            num_conversations=len(conversations),
-            total_ingestion_time_s=ingestion_time,
-            total_evaluation_time_s=eval_time,
-            total_tokens_used=llm.total_tokens
-        )
+                if verbose:
+                    recall_str = f"R@10: {r_at_10:.0%}" if evidence_set else "R@10: N/A"
+                    if mcq and question in mcq_map:
+                        print(f"    MCQ: {'CORRECT' if judge_score else 'WRONG'} (selected: {answer[:50]}) | {recall_str}")
+                    else:
+                        print(f"    Judge: {'CORRECT' if judge_score else 'WRONG'} | F1: {f1:.2f} | BLEU: {bleu:.2f} | {recall_str}")
 
-        # Overall metrics
-        if results:
-            final_results.llm_judge_accuracy = sum(r.llm_judge_score for r in results) / len(results) * 100
-            final_results.avg_f1_score = sum(r.f1_score for r in results) / len(results) * 100
-            final_results.avg_bleu_score = sum(r.bleu_score for r in results) / len(results) * 100
-            final_results.avg_tokens_per_question = sum(r.tokens_used for r in results) / len(results)
+            eval_time = time.time() - eval_start
+            print("-" * 70)
 
-            # Recall@K (Solution 6) — only for questions with evidence
-            results_with_evidence = [r for r in results if r.evidence_ids]
-            if results_with_evidence:
-                final_results.recall_at_5 = sum(r.recall_at_5 for r in results_with_evidence) / len(results_with_evidence) * 100
-                final_results.recall_at_10 = sum(r.recall_at_10 for r in results_with_evidence) / len(results_with_evidence) * 100
-                final_results.recall_at_20 = sum(r.recall_at_20 for r in results_with_evidence) / len(results_with_evidence) * 100
+            # Aggregate results
+            final_results = EvaluationResults(
+                total_questions=len(results),
+                num_documents=len(documents),
+                num_conversations=len(conversations),
+                total_ingestion_time_s=ingestion_time,
+                total_evaluation_time_s=eval_time,
+                total_tokens_used=llm.total_tokens
+            )
 
-            # Latency percentiles
-            sorted_latencies = sorted(latencies)
-            final_results.avg_retrieval_latency_ms = np.mean(latencies)
-            final_results.p50_retrieval_latency_ms = np.percentile(latencies, 50)
-            final_results.p95_retrieval_latency_ms = np.percentile(latencies, 95)
-            final_results.p99_retrieval_latency_ms = np.percentile(latencies, 99)
+            # Overall metrics
+            if results:
+                final_results.llm_judge_accuracy = sum(r.llm_judge_score for r in results) / len(results) * 100
+                final_results.avg_f1_score = sum(r.f1_score for r in results) / len(results) * 100
+                final_results.avg_bleu_score = sum(r.bleu_score for r in results) / len(results) * 100
+                final_results.avg_tokens_per_question = sum(r.tokens_used for r in results) / len(results)
 
-        # Per-category metrics
-        for cat in set(r.category for r in results):
-            cat_results = [r for r in results if r.category == cat]
-            if cat_results:
-                cat_with_evidence = [r for r in cat_results if r.evidence_ids]
-                cat_recall_5 = sum(r.recall_at_5 for r in cat_with_evidence) / len(cat_with_evidence) * 100 if cat_with_evidence else 0.0
-                cat_recall_10 = sum(r.recall_at_10 for r in cat_with_evidence) / len(cat_with_evidence) * 100 if cat_with_evidence else 0.0
-                cat_recall_20 = sum(r.recall_at_20 for r in cat_with_evidence) / len(cat_with_evidence) * 100 if cat_with_evidence else 0.0
-                final_results.category_results[cat] = {
-                    "count": len(cat_results),
-                    "llm_judge_accuracy": sum(r.llm_judge_score for r in cat_results) / len(cat_results) * 100,
-                    "avg_f1_score": sum(r.f1_score for r in cat_results) / len(cat_results) * 100,
-                    "avg_bleu_score": sum(r.bleu_score for r in cat_results) / len(cat_results) * 100,
-                    "recall_at_5": cat_recall_5,
-                    "recall_at_10": cat_recall_10,
-                    "recall_at_20": cat_recall_20,
-                    "questions_with_evidence": len(cat_with_evidence),
-                }
+                # Recall@K (Solution 6) — only for questions with evidence
+                results_with_evidence = [r for r in results if r.evidence_ids]
+                if results_with_evidence:
+                    final_results.recall_at_5 = sum(r.recall_at_5 for r in results_with_evidence) / len(results_with_evidence) * 100
+                    final_results.recall_at_10 = sum(r.recall_at_10 for r in results_with_evidence) / len(results_with_evidence) * 100
+                    final_results.recall_at_20 = sum(r.recall_at_20 for r in results_with_evidence) / len(results_with_evidence) * 100
 
-        # Print results
-        print_results(final_results)
+                # Latency percentiles
+                sorted_latencies = sorted(latencies)
+                final_results.avg_retrieval_latency_ms = np.mean(latencies)
+                final_results.p50_retrieval_latency_ms = np.percentile(latencies, 50)
+                final_results.p95_retrieval_latency_ms = np.percentile(latencies, 95)
+                final_results.p99_retrieval_latency_ms = np.percentile(latencies, 99)
 
-        # Save detailed results if requested
-        if output_path:
-            save_results(final_results, results, output_path)
+            # Per-category metrics
+            for cat in set(r.category for r in results):
+                cat_results = [r for r in results if r.category == cat]
+                if cat_results:
+                    cat_with_evidence = [r for r in cat_results if r.evidence_ids]
+                    cat_recall_5 = sum(r.recall_at_5 for r in cat_with_evidence) / len(cat_with_evidence) * 100 if cat_with_evidence else 0.0
+                    cat_recall_10 = sum(r.recall_at_10 for r in cat_with_evidence) / len(cat_with_evidence) * 100 if cat_with_evidence else 0.0
+                    cat_recall_20 = sum(r.recall_at_20 for r in cat_with_evidence) / len(cat_with_evidence) * 100 if cat_with_evidence else 0.0
+                    final_results.category_results[cat] = {
+                        "count": len(cat_results),
+                        "llm_judge_accuracy": sum(r.llm_judge_score for r in cat_results) / len(cat_results) * 100,
+                        "avg_f1_score": sum(r.f1_score for r in cat_results) / len(cat_results) * 100,
+                        "avg_bleu_score": sum(r.bleu_score for r in cat_results) / len(cat_results) * 100,
+                        "recall_at_5": cat_recall_5,
+                        "recall_at_10": cat_recall_10,
+                        "recall_at_20": cat_recall_20,
+                        "questions_with_evidence": len(cat_with_evidence),
+                    }
+
+            # Print results for this run
+            if runs > 1:
+                print(f"\n  Run {run_idx + 1} accuracy: {final_results.llm_judge_accuracy:.1f}%")
+            else:
+                print_results(final_results)
+
+            run_accuracies.append(final_results.llm_judge_accuracy)
+
+            # Save detailed results if requested (last run's results)
+            if output_path and run_idx == runs - 1:
+                save_results(final_results, results, output_path)
+
+        # Multi-run summary
+        if runs > 1:
+            import statistics
+            mean_acc = statistics.mean(run_accuracies)
+            stddev_acc = statistics.stdev(run_accuracies) if len(run_accuracies) > 1 else 0.0
+
+            print_results(final_results)  # Print last run's detailed results
+
+            print(f"\n{'=' * 70}")
+            print(f"MULTI-RUN SUMMARY ({runs} runs)")
+            print(f"{'=' * 70}")
+            print(f"  Per-run accuracies: {', '.join(f'{a:.1f}%' for a in run_accuracies)}")
+            print(f"  Mean accuracy:      {mean_acc:.1f}% ± {stddev_acc:.1f}%")
+            print(f"{'=' * 70}")
 
         return final_results
 
@@ -2134,6 +2180,13 @@ Examples:
              "0.0=disabled (default), 0.7=recommended. Reduces context when "
              "low-quality results would dilute it. Based on Percena/locomo-mc10."
     )
+    parser.add_argument(
+        "--runs",
+        type=int,
+        default=1,
+        help="Number of evaluation runs. For publication, use 3-5 runs to report "
+             "mean ± stddev. Default: 1."
+    )
 
     args = parser.parse_args()
     print(f"[DEBUG] Parsed args: use_slm={args.use_slm}, slm_model={args.slm_model}, use_llm={args.use_llm}, llm_model={args.llm_model}")
@@ -2177,6 +2230,7 @@ Examples:
         mcq=args.mcq,
         mcq_path=args.mcq_path,
         adaptive_k_threshold=args.adaptive_k,
+        runs=args.runs,
     )
 
 

@@ -2,27 +2,25 @@
 
 Evaluates MnemeFusion on [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned) (ICLR 2025) — a benchmark for long-term conversational memory systems.
 
-## Current Results (Oracle Mode)
+## Evaluation Protocol
 
-| Category | n | Avg Score | Pass Rate (>=80) |
-|----------|---|-----------|-------------------|
-| temporal-reasoning | 10 | 100.0 | 100% |
-| single-session-assistant | 15 | 99.9 | 100% |
-| knowledge-update | 10 | 96.5 | 100% |
-| single-session-preference | 10 | 96.3 | 100% |
-| single-session-user | 10 | 89.3 | 90% |
-| multi-session | 10 | 86.5 | 80% |
-| **Overall** | **65** | **95.1** | **95.4%** |
+| Aspect | Configuration |
+|--------|---------------|
+| Answer model | GPT-5-mini (our choice, clearly reported) |
+| Judge model | gpt-4o-2024-08-06 (official paper requirement) |
+| Scoring | Binary yes/no (official protocol) |
+| Judge prompts | 5 task-specific + 1 abstention (matching official code) |
+| Metrics | Task-averaged accuracy (primary), Overall accuracy (secondary) |
+| Temporal | Off-by-one forgiveness for temporal-reasoning |
+| Knowledge update | Accepts old+updated or just updated answer |
+| Preference | Lenient matching for preference questions |
 
-**Retrieval metrics:**
+This protocol matches the official LongMemEval evaluation code, which asserts `model == 'gpt-4o-2024-08-06'` for the judge. Using any other model makes results non-comparable.
 
-| Metric | Score |
-|--------|-------|
-| Recall@5 | 68.6% |
-| Recall@10 | 88.2% |
-| Recall@20 | 96.5% |
+## Evaluation Modes
 
-*Oracle mode evaluates 65/500 questions (10+ per category) with evidence-only sessions. Full evaluation pending.*
+- **Oracle**: Each question gets only the sessions containing evidence (~36 turns). Tests extraction + RAG quality without retrieval noise. Good for development.
+- **Full haystack (s)**: Each question gets all ~490 turns. Tests end-to-end retrieval. Required for publication.
 
 ## Dataset
 
@@ -35,13 +33,13 @@ python -c "
 from datasets import load_dataset
 ds = load_dataset('xiaowu0162/longmemeval-cleaned')
 
-# Save oracle split (evidence-only, ~15MB)
 import json
-with open('evals/longmemeval/longmemeval_oracle.json', 'w') as f:
+# Oracle split (evidence-only, ~15MB)
+with open('evals/longmemeval/fixtures/longmemeval/longmemeval_oracle.json', 'w') as f:
     json.dump([dict(row) for row in ds['oracle']], f)
 
-# Save full split (full haystack, ~265MB)
-with open('evals/longmemeval/longmemeval_s.json', 'w') as f:
+# Full split (full haystack, ~265MB)
+with open('evals/longmemeval/fixtures/longmemeval/longmemeval_s_cleaned.json', 'w') as f:
     json.dump([dict(row) for row in ds['s_cleaned']], f)
 "
 ```
@@ -56,64 +54,72 @@ maturin develop --release --features entity-extraction  # or entity-extraction-c
 # Install Python dependencies
 pip install sentence-transformers openai datasets
 
-# Set OpenAI API key (for RAG answer generation + judging)
+# Set OpenAI API key
 export OPENAI_API_KEY=sk-...
 ```
 
 ## Running the Evaluation
 
-### Oracle Mode (recommended first)
+### Standard Protocol (binary scoring)
 
-Oracle mode uses evidence-only sessions (~36 turns per question). This validates that extraction and RAG work correctly without retrieval noise.
+```bash
+# Oracle mode (recommended first — validates extraction + RAG)
+python run_eval.py \
+    --mode oracle \
+    --llm-model <path-to-model.gguf>
+
+# Full haystack mode (for publication)
+python run_eval.py \
+    --mode s \
+    --llm-model <path-to-model.gguf>
+```
+
+### Detailed Scoring (internal development)
+
+For granular 0-100 scoring with GPT-5-mini (non-standard, for diagnosis):
 
 ```bash
 python run_eval.py \
     --mode oracle \
-    --llm-model <path-to-model.gguf>
-```
-
-### Full Haystack Mode
-
-Full haystack uses all conversation turns (~490 per question), testing end-to-end retrieval:
-
-```bash
-python run_eval.py \
-    --mode s \
-    --llm-model <path-to-model.gguf>
+    --llm-model <path-to-model.gguf> \
+    --detailed-scoring
 ```
 
 ### Key Arguments
 
 | Argument | Description |
 |----------|-------------|
-| `--mode {oracle,s}` | Evaluation mode (oracle = evidence-only, s = full haystack) |
+| `--mode {oracle,s}` | Dataset mode: oracle (evidence-only) or s (full haystack) |
 | `--llm-model PATH` | Path to GGUF model for entity extraction |
+| `--detailed-scoring` | Use 0-100 scoring with GPT-5-mini (non-standard, internal) |
 | `--start-at N` | Resume from question N (0-indexed) |
 | `--max-questions N` | Stop after N new questions |
 | `--category NAME` | Only evaluate a specific category |
 | `--extraction-passes N` | Number of extraction passes (default: 1) |
-| `--stop-on-fail` | Stop on first question scoring <50 |
+| `--stop-on-fail` | Stop on first low-scoring question for diagnosis |
 
 ## How It Works
 
 Each question is evaluated independently:
 
-1. **Ingest**: All conversation sessions for the question are ingested into a fresh `.mfdb` with LLM entity extraction
+1. **Ingest**: All conversation sessions are ingested into a fresh `.mfdb` with LLM entity extraction
 2. **Query**: The question is embedded and queried against the database (top-20 retrieval)
-3. **Answer**: GPT-5-mini generates an answer from retrieved context
-4. **Judge**: GPT-5-mini scores the answer on a 0-100 scale against the gold answer
+3. **Answer**: GPT-5-mini generates an answer from retrieved context (includes `question_date` for temporal reasoning)
+4. **Judge**: gpt-4o-2024-08-06 scores the answer with category-specific binary prompts
 5. **Recall**: Gold evidence turns are matched against retrieved memories
 
 Results are saved incrementally to JSON — the script is crash-safe and resumable.
 
+## Metrics
+
+- **Task-averaged accuracy**: Mean of the 6 per-category accuracies (each category weighted equally). This is the headline metric.
+- **Overall accuracy**: Mean across all individual binary labels (instance-weighted).
+- **Abstention accuracy**: Accuracy on questions where the correct answer is "no information available".
+- **Recall@K**: Fraction of gold evidence turns found in top-K retrieved memories.
+
 ## Output
 
-Results are saved to `longmemeval_{mode}_results.json` with per-question scores, retrieval recall, and category breakdowns.
-
-## Evaluation Modes Explained
-
-- **Oracle**: Each question gets only the sessions containing evidence. Eliminates retrieval difficulty — if the system fails here, the problem is in extraction or RAG, not retrieval. Fast (~5 min/question).
-- **Full haystack (s)**: Each question gets all ~490 turns. Tests the full retrieval pipeline including vector search, entity scoring, and RRF fusion. Slow (~75 min/question with LLM extraction).
+Results are saved to `longmemeval_results_{mode}_{binary|detailed}.json` with per-question scores, retrieval recall, and category breakdowns.
 
 ## References
 

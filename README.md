@@ -21,14 +21,14 @@ MnemeFusion provides multi-dimensional memory indexing (semantic, temporal, caus
 
 ## Benchmarks
 
-MnemeFusion is evaluated on two established conversational memory benchmarks:
+MnemeFusion is evaluated on two established conversational memory benchmarks using standard protocols:
 
-| Benchmark | Metric | Score | Questions |
-|-----------|--------|-------|-----------|
-| [LoCoMo](evals/locomo/) | MCQ Accuracy | **70.2%** | 1,986 |
-| [LongMemEval](evals/longmemeval/) | Avg Score | **95.1/100** | 65/500 (oracle mode) |
+| Benchmark | Protocol | Metric | Questions |
+|-----------|----------|--------|-----------|
+| [LoCoMo](evals/locomo/) | Free-text + LLM-as-judge | Accuracy | 1,540 (cat 1-4) |
+| [LongMemEval](evals/longmemeval/) | Binary yes/no (official paper) | Task-avg accuracy | 500 |
 
-See [evals/](evals/) for full results, datasets, and instructions to reproduce.
+LoCoMo uses the Mem0-compatible evaluation protocol (GPT-4o-mini judge, binary CORRECT/WRONG). LongMemEval uses the official paper protocol (gpt-4o-2024-08-06 judge, category-specific prompts). See [evals/](evals/) for methodology details, datasets, and instructions to reproduce.
 
 ## Quick Start
 

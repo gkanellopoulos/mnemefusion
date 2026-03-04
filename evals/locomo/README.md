@@ -1,35 +1,26 @@
 # LoCoMo Evaluation
 
-Evaluates MnemeFusion on the [LoCoMo](https://github.com/snap-research/locomo) (Long-term Conversation Memory) benchmark.
+Evaluates MnemeFusion on the [LoCoMo](https://github.com/snap-research/locomo) (Long-term Conversation Memory) benchmark using the standard free-text + LLM-as-judge protocol.
 
-## Current Results
+## Evaluation Protocol
 
-| Metric | Score | Details |
-|--------|-------|---------|
-| **MCQ Accuracy** | **70.2%** | 1,986 questions, 10-choice multiple-choice |
-| Recall@5 | 22.6% | Fraction of gold evidence in top-5 |
-| Recall@10 | 29.6% | Fraction of gold evidence in top-10 |
-| Recall@20 | 44.1% | Fraction of gold evidence in top-20 |
-| Latency P50 | 48ms | Median query time |
-| Latency P95 | 64ms | 95th percentile query time |
+| Aspect | Configuration |
+|--------|---------------|
+| Answer model | GPT-4o-mini, temperature=0 |
+| Answer constraint | "5-6 words" (matching Mem0 protocol) |
+| Judge model | GPT-4o-mini, temperature=0 |
+| Judge format | Binary CORRECT/WRONG with generous matching |
+| Categories | 1-4 (single-hop, multi-hop, temporal, open-domain) |
+| Questions | 1,540 |
+| Multi-run | `--runs N` for mean ± stddev |
 
-**By category:**
-
-| Category | Accuracy | Questions |
-|----------|----------|-----------|
-| Single-hop | 59.1% | 662 |
-| Multi-hop | 72.3% | 567 |
-| Temporal | 65.5% | 87 |
-| Open-domain | 83.1% | 453 |
-| Adversarial | 61.3% | 217 |
-
-*Evaluated on 10 fully-ingested conversations with Phi-4-mini extraction (3-pass).*
+This protocol matches the evaluation methodology used by Mem0, Zep, MemMachine, and other published systems, making results directly comparable.
 
 ## Dataset
 
 The LoCoMo dataset is included in this directory (`locomo10.json`, 2.8MB). It contains 10 multi-session conversations with ~2000 questions across 5 categories.
 
-For MCQ evaluation, you also need the [Percena/locomo-mc10](https://huggingface.co/datasets/Percena/locomo-mc10) dataset:
+For MCQ evaluation (supplementary), you also need the [Percena/locomo-mc10](https://huggingface.co/datasets/Percena/locomo-mc10) dataset:
 
 ```bash
 pip install datasets
@@ -46,15 +37,32 @@ maturin develop --release --features entity-extraction  # or entity-extraction-c
 # Install Python dependencies
 pip install sentence-transformers openai datasets
 
-# Set OpenAI API key (for MCQ answer selection)
+# Set OpenAI API key
 export OPENAI_API_KEY=sk-...
 ```
 
 ## Running the Evaluation
 
-### Option 1: MCQ with Pre-Ingested Database (fastest)
+### Standard Protocol (recommended)
 
-If you have a pre-ingested `.mfdb` database:
+Free-text generation + LLM-as-judge, categories 1-4:
+
+```bash
+# With pre-ingested database
+python run_eval.py \
+    --db-path <path-to.mfdb> \
+    --skip-ingestion
+
+# Multi-run for publication
+python run_eval.py \
+    --db-path <path-to.mfdb> \
+    --skip-ingestion \
+    --runs 3
+```
+
+### MCQ Mode (supplementary)
+
+Deterministic 10-choice MCQ — useful for internal development, not directly comparable to published numbers:
 
 ```bash
 python run_eval.py \
@@ -63,7 +71,7 @@ python run_eval.py \
     --mcq
 ```
 
-### Option 2: Full Ingestion + MCQ Evaluation
+### Full Ingestion + Evaluation
 
 Ingests all conversations with LLM entity extraction, then evaluates:
 
@@ -71,20 +79,18 @@ Ingests all conversations with LLM entity extraction, then evaluates:
 python run_eval.py \
     --use-llm \
     --llm-model <path-to-model.gguf> \
-    --extraction-passes 3 \
-    --mcq
+    --extraction-passes 3
 ```
 
-**Note:** Full ingestion takes ~15-30 hours on a GTX 1650 Ti (GPU) or longer on CPU. The script supports checkpoint/resume — if interrupted, re-running with `--db-path` will resume from where it left off.
+**Note:** Full ingestion takes ~15-30 hours on a GTX 1650 Ti (GPU). The script supports checkpoint/resume.
 
-### Option 3: Quick Test (subset)
+### Quick Test (subset)
 
 ```bash
 python run_eval.py \
     --db-path <path-to.mfdb> \
     --skip-ingestion \
-    --mcq \
-    --max-questions 100
+    --max-questions 50
 ```
 
 ### Key Arguments
@@ -93,23 +99,35 @@ python run_eval.py \
 |----------|-------------|
 | `--db-path PATH` | Path to .mfdb database file |
 | `--skip-ingestion` | Skip ingestion, use existing database |
-| `--mcq` | MCQ mode (deterministic, recommended) |
+| `--mcq` | MCQ mode (deterministic, non-standard) |
+| `--runs N` | Number of runs (default: 1, recommend 3 for publication) |
 | `--use-llm` | Enable LLM entity extraction during ingestion |
 | `--llm-model PATH` | Path to GGUF model for extraction |
 | `--extraction-passes N` | Number of extraction passes (1-3) |
 | `--max-questions N` | Limit number of questions |
 | `--categories 1 2 3` | Evaluate specific categories only |
-| `--num-conversations N` | Ingest only first N conversations |
+| `--verbose` | Print per-question results |
+
+## Evaluation Modes
+
+- **Standard mode** (default): Free-text generation + LLM-as-judge. Binary CORRECT/WRONG scoring with generous matching and temporal tolerance. Comparable to Mem0 and other published systems.
+- **MCQ mode** (`--mcq`): 10-choice multiple-choice from Percena/locomo-mc10. Deterministic — no LLM judge variance. Non-standard; results not comparable to published numbers.
 
 ## Output
 
-Results are saved to a JSON file in `evals/locomo/` with per-question scores, retrieval metrics, and category breakdowns.
+The script prints a methodology header, per-category breakdown, recall@K metrics, and latency percentiles. Results can be saved to JSON with `--output path.json`.
 
-## Evaluation Methodology
+## Comparison Context
 
-- **MCQ mode** (recommended): Each question has 10 answer choices. GPT-4o-mini selects the best answer given retrieved context. Deterministic — no LLM judge variance.
-- **Free-text mode**: GPT-4o-mini generates an answer, then a separate LLM judge scores correctness. Subject to ±1-2% judge noise.
-- **Recall@K**: Measures what fraction of gold evidence turns appear in the top-K retrieved memories (substring matching).
+| System | Reported Accuracy | Protocol | Notes |
+|--------|-------------------|----------|-------|
+| Mem0 | 66.9% | Free-text + LLM judge | Reported on their GitHub |
+| OpenAI Memory | 52.9% | Free-text + LLM judge | Reported |
+| Hindsight | 89.6% | Free-text + LLM judge | Research system |
+| MnemeFusion | TBD | Free-text + LLM judge | Standard protocol |
+| MnemeFusion (MCQ) | 70.2% | MCQ (non-standard) | Internal metric |
+
+*Note: Competitor numbers are unverified reference points. Direct comparison requires running on the same dataset scope with the same protocol.*
 
 ## References
 

@@ -71,16 +71,18 @@ except ImportError:
 
 EMBEDDING_MODEL = "BAAI/bge-base-en-v1.5"
 RAG_MODEL = "gpt-5-mini"
-JUDGE_MODEL = "gpt-5-mini"  # 10x cheaper than gpt-4o, comparable reasoning quality
+JUDGE_MODEL = "gpt-5-mini"  # Used for --detailed-scoring mode (0-100 scale)
+JUDGE_MODEL_STANDARD = "gpt-4o-2024-08-06"  # Official LongMemEval protocol
 TOP_K = 20
 EXTRACTION_PASSES = 1
 
 # Pricing per 1M tokens (for cost tracking)
 MODEL_PRICING = {
-    "gpt-4o-mini":  {"input": 0.15, "output": 0.60},
-    "gpt-4o":       {"input": 2.50, "output": 10.00},
-    "gpt-5-mini":   {"input": 0.25, "output": 2.00},
-    "gpt-5-nano":   {"input": 0.05, "output": 0.40},
+    "gpt-4o-mini":       {"input": 0.15, "output": 0.60},
+    "gpt-4o":            {"input": 2.50, "output": 10.00},
+    "gpt-4o-2024-08-06": {"input": 2.50, "output": 10.00},
+    "gpt-5-mini":        {"input": 0.25, "output": 2.00},
+    "gpt-5-nano":        {"input": 0.05, "output": 0.40},
 }
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "longmemeval"
@@ -89,15 +91,58 @@ RAG_PROMPT = """You are a helpful assistant answering questions based on convers
 
 Retrieved memories (dates in brackets show when each conversation occurred):
 {context}
-
+{date_line}
 Question: {question}
 
 Answer the question based on the information in the retrieved memories. Look carefully through ALL the memories for relevant details.
 For temporal questions, use the dates in brackets to calculate the answer.
 If you find ANY relevant information, provide an answer. Only say "I don't have enough information" if the memories truly contain nothing related to the question.
-Keep your answer concise and factual."""
+Keep your answer very concise — ideally a few words or one sentence."""
 
-JUDGE_PROMPT = """You are evaluating a conversational memory system's ability to recall information.
+# Official LongMemEval category-specific judge prompts (binary yes/no)
+JUDGE_PROMPTS = {
+    "general": """I will give you a question, a correct answer, and a response from a model. Please answer yes if the response contains the correct answer. Otherwise, answer no. If the response is equivalent to the correct answer or contains all the intermediate steps to get the correct answer, you should also answer yes. If the response only contains a subset of the information required by the answer, answer no.
+
+Question: {question}
+Correct Answer: {gold_answer}
+Model Response: {hypothesis}
+
+Is the model response correct? Answer yes or no only.""",
+
+    "temporal-reasoning": """I will give you a question, a correct answer, and a response from a model. Please answer yes if the response contains the correct answer. Otherwise, answer no. If the response is equivalent to the correct answer or contains all the intermediate steps to get the correct answer, you should also answer yes. If the response only contains a subset of the information required by the answer, answer no. The answer may involve specific time information. If the model response gives a time that is off by one (e.g., has the wrong day of the week but the correct date), answer yes.
+
+Question: {question}
+Correct Answer: {gold_answer}
+Model Response: {hypothesis}
+
+Is the model response correct? Answer yes or no only.""",
+
+    "knowledge-update": """I will give you a question, a correct answer, and a response from a model. Please answer yes if the response contains the correct answer. Otherwise, answer no. If the response is equivalent to the correct answer or contains all the intermediate steps to get the correct answer, you should also answer yes. If the response only contains a subset of the information required by the answer, answer no. The correct answer may contain the most up-to-date information, but the model response may give both the outdated and updated information, or just the most updated information. If the model response gives the updated answer, answer yes.
+
+Question: {question}
+Correct Answer: {gold_answer}
+Model Response: {hypothesis}
+
+Is the model response correct? Answer yes or no only.""",
+
+    "single-session-preference": """I will give you a question, a correct answer, and a response from a model. Please answer yes if the response contains the correct answer. Otherwise, answer no. If the response is equivalent to the correct answer or contains all the intermediate steps to get the correct answer, you should also answer yes. If the response only contains a subset of the information required by the answer, answer no. The answer may involve preference of the user. Please be lenient and answer yes if the model response conveys the same preference as the correct answer even if the specific entities mentioned are not exactly the same.
+
+Question: {question}
+Correct Answer: {gold_answer}
+Model Response: {hypothesis}
+
+Is the model response correct? Answer yes or no only.""",
+
+    "abstention": """I will give you a question, and a response from a model. The question DOES NOT have an answer (there is no relevant information in the conversation). Please answer yes if the model response correctly identifies that the question cannot be answered with the available information. Answer no if the model fabricates an answer.
+
+Question: {question}
+Model Response: {hypothesis}
+
+Does the model correctly identify that the question cannot be answered? Answer yes or no only.""",
+}
+
+# Detailed 0-100 scoring prompt (used with --detailed-scoring flag)
+JUDGE_PROMPT_DETAILED = """You are evaluating a conversational memory system's ability to recall information.
 
 Question: {question}
 Ground truth answer: {gold_answer}
@@ -272,6 +317,7 @@ def query_and_answer(
     question: str,
     embedder: SentenceTransformer,
     client: OpenAI,
+    question_date: str = "",
 ) -> Tuple[str, List[str], List[str], float, float]:
     """Query MnemeFusion and generate answer via RAG. Returns (answer, context, raw_contents, latency_ms, cost)."""
     query_embedding = embedder.encode([question], show_progress_bar=False)[0].tolist()
@@ -302,8 +348,11 @@ def query_and_answer(
 
     context_str = "\n".join([f"- {c}" for c in context_parts])
 
+    # Build date line for temporal context
+    date_line = f"\nCurrent date: {question_date}" if question_date else ""
+
     # Generate answer
-    prompt = RAG_PROMPT.format(context=context_str, question=question)
+    prompt = RAG_PROMPT.format(context=context_str, date_line=date_line, question=question)
     cost = 0.0
     try:
         rag_kwargs = {"model": RAG_MODEL, "messages": [{"role": "user", "content": prompt}]}
@@ -326,38 +375,89 @@ def judge_answer(
     gold_answer: str,
     hypothesis: str,
     client: OpenAI,
+    question_type: str = "",
+    question_id: str = "",
+    detailed_scoring: bool = False,
 ) -> Tuple[int, str, float]:
-    """Judge correctness with GPT-5 mini, returning percentage score + reasoning + cost."""
-    prompt = JUDGE_PROMPT.format(
-        question=question,
-        gold_answer=gold_answer,
-        hypothesis=hypothesis,
-    )
+    """Judge correctness, returning score + reasoning + cost.
 
-    try:
-        # GPT-5 models use reasoning mode which doesn't support temperature=0
-        # or max_tokens. Omit both — defaults work fine for short JSON output.
-        judge_kwargs = {"model": JUDGE_MODEL, "messages": [{"role": "user", "content": prompt}]}
-        if not JUDGE_MODEL.startswith("gpt-5"):
-            judge_kwargs["max_tokens"] = 200
-            judge_kwargs["temperature"] = 0
-        response = client.chat.completions.create(**judge_kwargs)
-        raw = response.choices[0].message.content.strip()
-        cost = 0.0
-        if response.usage:
-            cost = estimate_cost(JUDGE_MODEL, response.usage.prompt_tokens, response.usage.completion_tokens)
+    If detailed_scoring=True: uses JUDGE_PROMPT_DETAILED with gpt-5-mini, returns 0-100 score.
+    If detailed_scoring=False (default): uses official LongMemEval binary prompts with
+    gpt-4o-2024-08-06, returns 1 (yes) or 0 (no).
+    """
+    if detailed_scoring:
+        # Detailed 0-100 scoring mode (legacy behavior)
+        prompt = JUDGE_PROMPT_DETAILED.format(
+            question=question,
+            gold_answer=gold_answer,
+            hypothesis=hypothesis,
+        )
+        model = JUDGE_MODEL
+        try:
+            judge_kwargs = {"model": model, "messages": [{"role": "user", "content": prompt}]}
+            if not model.startswith("gpt-5"):
+                judge_kwargs["max_tokens"] = 200
+                judge_kwargs["temperature"] = 0
+            response = client.chat.completions.create(**judge_kwargs)
+            raw = response.choices[0].message.content.strip()
+            cost = 0.0
+            if response.usage:
+                cost = estimate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens)
 
-        # Handle markdown-wrapped JSON
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-        result = json.loads(raw)
-        score = int(result.get("score", 0))
-        reasoning = result.get("reasoning", "")
-        return score, reasoning, cost
+            # Handle markdown-wrapped JSON
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+            result = json.loads(raw)
+            score = int(result.get("score", 0))
+            reasoning = result.get("reasoning", "")
+            return score, reasoning, cost
 
-    except Exception as e:
-        print(f"    [ERROR] Judge failed: {e}")
-        return -1, f"Judge error: {e}", 0.0
+        except Exception as e:
+            print(f"    [ERROR] Judge failed: {e}")
+            return -1, f"Judge error: {e}", 0.0
+    else:
+        # Official LongMemEval binary yes/no scoring
+        # Select the appropriate prompt
+        if question_id.endswith("_abs"):
+            prompt_key = "abstention"
+        elif question_type in ("temporal-reasoning", "knowledge-update", "single-session-preference"):
+            prompt_key = question_type
+        else:
+            prompt_key = "general"
+
+        prompt_template = JUDGE_PROMPTS[prompt_key]
+
+        # Abstention prompt doesn't include gold_answer
+        if prompt_key == "abstention":
+            prompt = prompt_template.format(question=question, hypothesis=hypothesis)
+        else:
+            prompt = prompt_template.format(
+                question=question,
+                gold_answer=gold_answer,
+                hypothesis=hypothesis,
+            )
+
+        model = JUDGE_MODEL_STANDARD
+        try:
+            judge_kwargs = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0,
+                "max_tokens": 10,
+            }
+            response = client.chat.completions.create(**judge_kwargs)
+            raw = response.choices[0].message.content.strip()
+            cost = 0.0
+            if response.usage:
+                cost = estimate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens)
+
+            label = "yes" in raw.lower()
+            score = 1 if label else 0
+            return score, raw, cost
+
+        except Exception as e:
+            print(f"    [ERROR] Judge failed: {e}")
+            return -1, f"Judge error: {e}", 0.0
 
 
 # =============================================================================
@@ -369,6 +469,11 @@ def run_evaluation(args):
     # Load dataset
     data = load_dataset(args.mode)
 
+    # Determine scoring mode
+    detailed_scoring = args.detailed_scoring
+    scoring_mode = "detailed" if detailed_scoring else "binary"
+    judge_model = JUDGE_MODEL if detailed_scoring else JUDGE_MODEL_STANDARD
+
     # Initialize embedder (loaded once, reused across all questions)
     print(f"Loading embedding model: {EMBEDDING_MODEL}")
     embedder = SentenceTransformer(EMBEDDING_MODEL, device="cpu")
@@ -376,8 +481,9 @@ def run_evaluation(args):
     # Initialize OpenAI client
     client = OpenAI()
 
-    # Results file for persistence
-    results_path = FIXTURES_DIR / f"longmemeval_results_{args.mode}.json"
+    # Results file for persistence (separate files for binary vs detailed)
+    scoring_suffix = "detailed" if detailed_scoring else "binary"
+    results_path = FIXTURES_DIR / f"longmemeval_results_{args.mode}_{scoring_suffix}.json"
     if results_path.exists():
         with open(results_path, encoding="utf-8") as f:
             all_results = json.load(f)
@@ -390,13 +496,18 @@ def run_evaluation(args):
     for r in all_results:
         category_scores[r["question_type"]].append(r["score"])
 
-    # Print header
+    # Print methodology header
     print(f"\n{'=' * 70}")
     print(f"LongMemEval Stepped Evaluation")
     print(f"  Mode:       {args.mode} ({'evidence-only' if args.mode == 'oracle' else 'full haystack'})")
+    if detailed_scoring:
+        print(f"  Scoring:    Continuous 0-100 (internal)")
+    else:
+        print(f"  Scoring:    Binary yes/no (official protocol)")
     print(f"  LLM:        {args.llm_model or 'DISABLED (no entity extraction)'}")
     print(f"  RAG model:  {RAG_MODEL}")
-    print(f"  Judge:      {JUDGE_MODEL} (percentage-based, ${MODEL_PRICING.get(JUDGE_MODEL, {}).get('input', '?')}/{MODEL_PRICING.get(JUDGE_MODEL, {}).get('output', '?')} per 1M tok)")
+    judge_pricing = MODEL_PRICING.get(judge_model, {})
+    print(f"  Judge:      {judge_model} (${judge_pricing.get('input', '?')}/{judge_pricing.get('output', '?')} per 1M tok)")
     print(f"  Questions:  {len(data)} total, starting at #{args.start_at}")
     print(f"  Results:    {results_path.name}")
     print(f"{'=' * 70}\n")
@@ -412,6 +523,7 @@ def run_evaluation(args):
         question = entry["question"]
         gold_answer = str(entry["answer"])
         is_abstention = qid.endswith("_abs")
+        question_date = entry.get("question_date", "")
 
         # Skip already-evaluated questions
         if qid in completed_ids:
@@ -430,6 +542,8 @@ def run_evaluation(args):
         print(f"  Haystack: {num_sessions} sessions, {num_turns} turns")
         print(f"  Q:        {question[:100]}{'...' if len(question) > 100 else ''}")
         print(f"  Gold:     {gold_answer[:100]}{'...' if len(gold_answer) > 100 else ''}")
+        if question_date:
+            print(f"  Date:     {question_date}")
 
         # Create temp directory for this question's DB
         tmp_dir = tempfile.mkdtemp(prefix=f"lme_{q_idx}_")
@@ -442,7 +556,9 @@ def run_evaluation(args):
 
             # Step 2: Query + Answer
             print(f"  [QUERY]")
-            hypothesis, context_parts, raw_contents, latency_ms, rag_cost = query_and_answer(mem, question, embedder, client)
+            hypothesis, context_parts, raw_contents, latency_ms, rag_cost = query_and_answer(
+                mem, question, embedder, client, question_date=question_date
+            )
             print(f"    Latency: {latency_ms:.0f}ms, Retrieved: {len(context_parts)} memories")
             print(f"    Answer:  {hypothesis[:120]}{'...' if len(hypothesis) > 120 else ''}")
 
@@ -455,10 +571,17 @@ def run_evaluation(args):
 
             # Step 3: Judge
             print(f"  [JUDGE]")
-            score, reasoning, judge_cost = judge_answer(question, gold_answer, hypothesis, client)
+            score, reasoning, judge_cost = judge_answer(
+                question, gold_answer, hypothesis, client,
+                question_type=qtype, question_id=qid,
+                detailed_scoring=detailed_scoring,
+            )
             q_cost = rag_cost + judge_cost
             cumulative_cost += q_cost
-            print(f"    Score:   {score}/100")
+            if detailed_scoring:
+                print(f"    Score:   {score}/100")
+            else:
+                print(f"    Score:   {'YES (1)' if score == 1 else 'NO (0)' if score == 0 else f'ERROR ({score})'}")
             print(f"    Reason:  {reasoning[:120]}{'...' if len(reasoning) > 120 else ''}")
             print(f"    Cost:    ${q_cost:.4f} (cumulative: ${cumulative_cost:.4f})")
 
@@ -471,6 +594,7 @@ def run_evaluation(args):
                 "hypothesis": hypothesis,
                 "score": score,
                 "reasoning": reasoning,
+                "scoring_mode": scoring_mode,
                 "latency_ms": latency_ms,
                 "ingest_time_s": round(ingest_time, 1),
                 "num_turns": num_turns,
@@ -481,6 +605,8 @@ def run_evaluation(args):
                 "recall_at_20": round(r20, 4),
                 "num_gold_turns": len(gold_contents),
             }
+            if question_date:
+                result["question_date"] = question_date
             all_results.append(result)
             completed_ids.add(qid)
             category_scores[qtype].append(score)
@@ -492,21 +618,33 @@ def run_evaluation(args):
 
             # Running summary
             valid = [r for r in all_results if r["score"] >= 0]
-            total_avg = sum(r["score"] for r in valid) / max(1, len(valid))
             avg_r5 = sum(r.get("recall_at_5", 0) for r in valid) / max(1, len(valid))
             avg_r10 = sum(r.get("recall_at_10", 0) for r in valid) / max(1, len(valid))
             avg_r20 = sum(r.get("recall_at_20", 0) for r in valid) / max(1, len(valid))
-            print(f"\n  Running: {len(all_results)} done, avg score {total_avg:.1f}/100, R@5={avg_r5:.0%} R@10={avg_r10:.0%} R@20={avg_r20:.0%}")
-            for cat, scores in sorted(category_scores.items()):
-                vs = [s for s in scores if s >= 0]
-                if vs:
-                    avg = sum(vs) / len(vs)
-                    pass_rate = sum(1 for s in vs if s >= 80) / len(vs) * 100
-                    print(f"    {cat:<30} n={len(vs):>3}  avg={avg:>5.1f}  pass(>=80)={pass_rate:>5.1f}%")
+
+            if detailed_scoring:
+                total_avg = sum(r["score"] for r in valid) / max(1, len(valid))
+                print(f"\n  Running: {len(all_results)} done, avg score {total_avg:.1f}/100, R@5={avg_r5:.0%} R@10={avg_r10:.0%} R@20={avg_r20:.0%}")
+                for cat, scores in sorted(category_scores.items()):
+                    vs = [s for s in scores if s >= 0]
+                    if vs:
+                        avg = sum(vs) / len(vs)
+                        pass_rate = sum(1 for s in vs if s >= 80) / len(vs) * 100
+                        print(f"    {cat:<30} n={len(vs):>3}  avg={avg:>5.1f}  pass(>=80)={pass_rate:>5.1f}%")
+            else:
+                overall_acc = sum(r["score"] for r in valid) / max(1, len(valid)) * 100
+                print(f"\n  Running: {len(all_results)} done, accuracy {overall_acc:.1f}%, R@5={avg_r5:.0%} R@10={avg_r10:.0%} R@20={avg_r20:.0%}")
+                for cat, scores in sorted(category_scores.items()):
+                    vs = [s for s in scores if s >= 0]
+                    if vs:
+                        acc = sum(vs) / len(vs) * 100
+                        print(f"    {cat:<30} n={len(vs):>3}  acc={acc:>5.1f}%")
 
             # Stop on failure if requested
-            if args.stop_on_fail and score < 50:
-                print(f"\n  *** LOW SCORE ({score}/100) --- stopping for diagnosis ***")
+            fail_threshold = 50 if detailed_scoring else 1
+            if args.stop_on_fail and score < fail_threshold:
+                label = f"{score}/100" if detailed_scoring else f"{'NO' if score == 0 else score}"
+                print(f"\n  *** LOW SCORE ({label}) --- stopping for diagnosis ***")
                 print(f"  Top retrieved context:")
                 for i, ctx in enumerate(context_parts[:5]):
                     print(f"    [{i+1}] {ctx[:150]}{'...' if len(ctx) > 150 else ''}")
@@ -534,47 +672,87 @@ def run_evaluation(args):
 
     # Final summary
     print(f"\n{'=' * 70}")
-    print(f"FINAL SUMMARY ({len(all_results)} questions)")
+    print(f"FINAL SUMMARY ({len(all_results)} questions, {scoring_mode} scoring)")
     print(f"{'=' * 70}")
 
     valid_results = [r for r in all_results if r["score"] >= 0]
     total_cost = sum(r.get("api_cost", 0.0) for r in all_results)
-    if valid_results:
-        overall_avg = sum(r["score"] for r in valid_results) / len(valid_results)
-        pass_80 = sum(1 for r in valid_results if r["score"] >= 80) / len(valid_results) * 100
-        pass_50 = sum(1 for r in valid_results if r["score"] >= 50) / len(valid_results) * 100
 
+    if valid_results:
         avg_r5 = sum(r.get("recall_at_5", 0) for r in valid_results) / max(1, len(valid_results))
         avg_r10 = sum(r.get("recall_at_10", 0) for r in valid_results) / max(1, len(valid_results))
         avg_r20 = sum(r.get("recall_at_20", 0) for r in valid_results) / max(1, len(valid_results))
 
-        print(f"  Overall avg score:     {overall_avg:.1f}/100")
-        print(f"  Recall:                R@5={avg_r5:.1%}  R@10={avg_r10:.1%}  R@20={avg_r20:.1%}")
-        print(f"  Pass rate (>=80):      {pass_80:.1f}%")
-        print(f"  Pass rate (>=50):      {pass_50:.1f}%")
-        print(f"  Total API cost:        ${total_cost:.4f}")
-        print(f"  RAG model:             {RAG_MODEL}")
-        print(f"  Judge model:           {JUDGE_MODEL}")
-        print()
+        if detailed_scoring:
+            # Detailed 0-100 mode: show average scores and pass rates
+            overall_avg = sum(r["score"] for r in valid_results) / len(valid_results)
+            pass_80 = sum(1 for r in valid_results if r["score"] >= 80) / len(valid_results) * 100
+            pass_50 = sum(1 for r in valid_results if r["score"] >= 50) / len(valid_results) * 100
 
-        print(f"  {'Category':<30} {'Count':>5} {'Avg':>6} {'>=80':>6} {'>=50':>6}")
-        print(f"  {'-' * 53}")
-        for cat in sorted(category_scores.keys()):
-            scores = [s for s in category_scores[cat] if s >= 0]
-            if scores:
-                avg = sum(scores) / len(scores)
-                p80 = sum(1 for s in scores if s >= 80) / len(scores) * 100
-                p50 = sum(1 for s in scores if s >= 50) / len(scores) * 100
-                print(f"  {cat:<30} {len(scores):>5} {avg:>5.1f}% {p80:>5.1f}% {p50:>5.1f}%")
+            print(f"  Overall avg score:     {overall_avg:.1f}/100")
+            print(f"  Recall:                R@5={avg_r5:.1%}  R@10={avg_r10:.1%}  R@20={avg_r20:.1%}")
+            print(f"  Pass rate (>=80):      {pass_80:.1f}%")
+            print(f"  Pass rate (>=50):      {pass_50:.1f}%")
+            print(f"  Total API cost:        ${total_cost:.4f}")
+            print(f"  RAG model:             {RAG_MODEL}")
+            print(f"  Judge model:           {JUDGE_MODEL}")
+            print()
 
-        # Abstention breakdown
-        abs_results = [r for r in valid_results if r["is_abstention"]]
-        non_abs = [r for r in valid_results if not r["is_abstention"]]
-        if abs_results:
-            abs_avg = sum(r["score"] for r in abs_results) / len(abs_results)
-            print(f"\n  Abstention questions:   n={len(abs_results)}, avg={abs_avg:.1f}")
-            non_avg = sum(r["score"] for r in non_abs) / len(non_abs) if non_abs else 0
-            print(f"  Non-abstention:         n={len(non_abs)}, avg={non_avg:.1f}")
+            print(f"  {'Category':<30} {'Count':>5} {'Avg':>6} {'>=80':>6} {'>=50':>6}")
+            print(f"  {'-' * 53}")
+            for cat in sorted(category_scores.keys()):
+                scores = [s for s in category_scores[cat] if s >= 0]
+                if scores:
+                    avg = sum(scores) / len(scores)
+                    p80 = sum(1 for s in scores if s >= 80) / len(scores) * 100
+                    p50 = sum(1 for s in scores if s >= 50) / len(scores) * 100
+                    print(f"  {cat:<30} {len(scores):>5} {avg:>5.1f}% {p80:>5.1f}% {p50:>5.1f}%")
+
+            # Abstention breakdown
+            abs_results = [r for r in valid_results if r["is_abstention"]]
+            non_abs = [r for r in valid_results if not r["is_abstention"]]
+            if abs_results:
+                abs_avg = sum(r["score"] for r in abs_results) / len(abs_results)
+                print(f"\n  Abstention questions:   n={len(abs_results)}, avg={abs_avg:.1f}")
+                non_avg = sum(r["score"] for r in non_abs) / len(non_abs) if non_abs else 0
+                print(f"  Non-abstention:         n={len(non_abs)}, avg={non_avg:.1f}")
+
+        else:
+            # Binary yes/no mode: show accuracy percentages
+            overall_acc = sum(r["score"] for r in valid_results) / len(valid_results) * 100
+
+            # Task-averaged accuracy: mean of per-category accuracies (each category weighted equally)
+            cat_accuracies = {}
+            for cat in sorted(category_scores.keys()):
+                scores = [s for s in category_scores[cat] if s >= 0]
+                if scores:
+                    cat_accuracies[cat] = sum(scores) / len(scores) * 100
+            task_avg_acc = sum(cat_accuracies.values()) / max(1, len(cat_accuracies))
+
+            # Abstention accuracy
+            abs_results = [r for r in valid_results if r["is_abstention"]]
+            non_abs = [r for r in valid_results if not r["is_abstention"]]
+
+            print(f"  Overall accuracy:      {overall_acc:.1f}%  (mean across all {len(valid_results)} labels)")
+            print(f"  Task-averaged acc:     {task_avg_acc:.1f}%  (mean of {len(cat_accuracies)} category accuracies)")
+            print(f"  Recall:                R@5={avg_r5:.1%}  R@10={avg_r10:.1%}  R@20={avg_r20:.1%}")
+            print(f"  Total API cost:        ${total_cost:.4f}")
+            print(f"  RAG model:             {RAG_MODEL}")
+            print(f"  Judge model:           {judge_model}")
+            print()
+
+            print(f"  {'Category':<30} {'Count':>5} {'Acc':>7}")
+            print(f"  {'-' * 44}")
+            for cat in sorted(cat_accuracies.keys()):
+                scores = [s for s in category_scores[cat] if s >= 0]
+                print(f"  {cat:<30} {len(scores):>5} {cat_accuracies[cat]:>6.1f}%")
+
+            # Abstention breakdown
+            if abs_results:
+                abs_acc = sum(r["score"] for r in abs_results) / len(abs_results) * 100
+                non_abs_acc = sum(r["score"] for r in non_abs) / len(non_abs) * 100 if non_abs else 0
+                print(f"\n  Abstention accuracy:   {abs_acc:.1f}%  (n={len(abs_results)})")
+                print(f"  Non-abstention acc:    {non_abs_acc:.1f}%  (n={len(non_abs)})")
 
     print(f"\n  Results saved to: {results_path}")
 
@@ -599,6 +777,8 @@ if __name__ == "__main__":
                         help="Stop when a question scores <50 for diagnosis")
     parser.add_argument("--extraction-passes", type=int, default=1,
                         help="Number of LLM extraction passes (default: 1)")
+    parser.add_argument("--detailed-scoring", action="store_true",
+                        help="Use 0-100 continuous scoring with gpt-5-mini instead of official binary yes/no")
     args = parser.parse_args()
 
     EXTRACTION_PASSES = args.extraction_passes
