@@ -89,7 +89,7 @@ pub use inference::{InferenceEngine, JsonGrammar};
 
 // Entity extraction exports (only available with entity-extraction feature)
 #[cfg(feature = "entity-extraction")]
-pub use extraction::{ExtractedEntity, ExtractedFact, ExtractionResult, LlmEntityExtractor, ModelTier};
+pub use extraction::{ExtractedEntity, ExtractedFact, ExtractionResult, LlmEntityExtractor, ModelTier, TriplexExtractor};
 
 // Embedding engine export (only available with embedding-onnx feature)
 #[cfg(feature = "embedding-onnx")]

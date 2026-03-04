@@ -29,7 +29,7 @@ use std::sync::{Arc, RwLock};
 use crate::ingest::{SlmMetadata, SlmMetadataExtractor};
 
 #[cfg(feature = "entity-extraction")]
-use crate::extraction::{ExtractionResult, LlmEntityExtractor};
+use crate::extraction::{ExtractionResult, LlmEntityExtractor, TriplexExtractor};
 
 #[cfg(any(feature = "entity-extraction", feature = "slm"))]
 use crate::{
@@ -84,6 +84,14 @@ pub struct IngestionPipeline {
     /// and lazily recreated to prevent CUDA memory fragmentation.
     #[cfg(feature = "entity-extraction")]
     llm_extraction_count: std::sync::atomic::AtomicUsize,
+    /// Triplex KG triple extractor (optional, requires `entity-extraction` feature).
+    /// When set, runs Triplex after Phi-4 extraction to produce clean KG triples.
+    /// This is the "Full" ingestion tier — requires 8GB+ VRAM for both models.
+    #[cfg(feature = "entity-extraction")]
+    triplex_extractor: Option<Arc<Mutex<TriplexExtractor>>>,
+    /// Tracks Triplex extraction count for automatic GPU context reset.
+    #[cfg(feature = "entity-extraction")]
+    triplex_extraction_count: std::sync::atomic::AtomicUsize,
     /// Embedding function for computing fact embeddings at ingestion time.
     /// When set, each extracted fact gets an embedding for semantic matching.
     embedding_fn: Option<EmbeddingFn>,
@@ -143,6 +151,10 @@ impl IngestionPipeline {
             llm_extractor: None,
             #[cfg(feature = "entity-extraction")]
             llm_extraction_count: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(feature = "entity-extraction")]
+            triplex_extractor: None,
+            #[cfg(feature = "entity-extraction")]
+            triplex_extraction_count: std::sync::atomic::AtomicUsize::new(0),
             embedding_fn: None,
             #[cfg(feature = "entity-extraction")]
             extraction_passes: 1,
@@ -206,6 +218,17 @@ impl IngestionPipeline {
     #[cfg(feature = "entity-extraction")]
     pub fn with_llm_extractor(mut self, extractor: Arc<Mutex<LlmEntityExtractor>>) -> Self {
         self.llm_extractor = Some(extractor);
+        self
+    }
+
+    /// Set the Triplex KG triple extractor for clean relationship extraction.
+    ///
+    /// When set, the pipeline runs Triplex after Phi-4 extraction to produce
+    /// clean (subject, predicate, object) triples for the entity graph.
+    /// This is the "Full" ingestion tier — requires 8GB+ VRAM.
+    #[cfg(feature = "entity-extraction")]
+    pub fn with_triplex_extractor(mut self, extractor: Arc<Mutex<TriplexExtractor>>) -> Self {
+        self.triplex_extractor = Some(extractor);
         self
     }
 
@@ -701,6 +724,48 @@ impl IngestionPipeline {
             if !extraction.relationships.is_empty() {
                 if let Err(e) = self.store_relationships(&id, &extraction.relationships) {
                     tracing::warn!("Failed to store relationships: {}", e);
+                }
+            }
+        }
+
+        // Step 5b: Triplex KG triple extraction (Full tier only).
+        // Runs a dedicated relationship extraction model for clean KG triples.
+        // This produces higher-quality entity-to-entity edges than Phi-4's
+        // general-purpose extraction, because Triplex is purpose-built for
+        // (subject, predicate, object) extraction with constrained entity types.
+        #[cfg(feature = "entity-extraction")]
+        if let Some(ref triplex) = self.triplex_extractor {
+            let triplex_count = self
+                .triplex_extraction_count
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            // Periodic GPU context reset (same pattern as LLM extractor)
+            if triplex_count > 0 && triplex_count % Self::GPU_CONTEXT_RESET_INTERVAL == 0 {
+                tracing::info!(
+                    "Triplex GPU context reset after {} extractions",
+                    triplex_count
+                );
+                triplex.lock().unwrap().reset_context();
+            }
+
+            let speaker = memory
+                .metadata
+                .get("speaker")
+                .map(|s| s.as_str());
+            match triplex.lock().unwrap().extract(&memory.content, speaker) {
+                Ok(triples) => {
+                    if !triples.is_empty() {
+                        tracing::debug!(
+                            "Triplex extracted {} triples for memory {}",
+                            triples.len(),
+                            id
+                        );
+                        if let Err(e) = self.store_relationships(&id, &triples) {
+                            tracing::warn!("Failed to store Triplex relationships: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Triplex extraction failed for memory {}: {}", id, e);
                 }
             }
         }

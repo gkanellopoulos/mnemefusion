@@ -370,6 +370,38 @@ impl MemoryEngine {
         Ok(self)
     }
 
+    /// Enable Triplex KG extraction for clean entity-to-entity relationships.
+    ///
+    /// Loads the SciPhi Triplex model (Phi-3 3.8B fine-tune) as a second
+    /// extraction model. During ingestion, Triplex runs after Phi-4 to produce
+    /// clean (subject, predicate, object) triples with constrained entity types.
+    ///
+    /// This is the "Full" ingestion tier — requires 8GB+ GPU VRAM for both models.
+    ///
+    /// # Arguments
+    ///
+    /// * `model_path` - Path to the Triplex GGUF model file
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let engine = MemoryEngine::open("./brain.mfdb", Config::default())?
+    ///     .with_llm_entity_extraction(ModelTier::Balanced)?
+    ///     .with_kg_extraction("models/triplex/Triplex-Q4_K_M.gguf")?;
+    /// ```
+    #[cfg(feature = "entity-extraction")]
+    pub fn with_kg_extraction(mut self, model_path: impl AsRef<std::path::Path>) -> Result<Self> {
+        tracing::info!("Initializing Triplex KG extractor...");
+
+        let extractor = crate::extraction::TriplexExtractor::load(model_path)?;
+        self.pipeline = self
+            .pipeline
+            .with_triplex_extractor(Arc::new(Mutex::new(extractor)));
+
+        tracing::info!("Triplex KG extractor attached to pipeline (Full tier)");
+        Ok(self)
+    }
+
     /// Set the number of LLM extraction passes per document.
     ///
     /// This must be called after `with_llm_entity_extraction*()` to take effect.

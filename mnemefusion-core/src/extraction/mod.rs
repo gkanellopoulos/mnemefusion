@@ -24,6 +24,8 @@ mod extractor;
 mod output;
 #[cfg(feature = "entity-extraction")]
 mod prompt;
+#[cfg(feature = "entity-extraction")]
+mod triplex;
 
 #[cfg(feature = "entity-extraction")]
 pub use extractor::{ExtractionPerspective, LlmEntityExtractor, ModelTier};
@@ -33,3 +35,5 @@ pub use output::{
 };
 #[cfg(feature = "entity-extraction")]
 pub use prompt::{apply_chat_template, ModelFamily};
+#[cfg(feature = "entity-extraction")]
+pub use triplex::{parse_triplex_output, TriplexExtractor};

@@ -25,7 +25,7 @@ impl ModelFamily {
             .and_then(|f| f.to_str())
             .unwrap_or("")
             .to_lowercase();
-        if filename.contains("phi") {
+        if filename.contains("phi") || filename.contains("triplex") {
             ModelFamily::Phi4
         } else {
             ModelFamily::Qwen
@@ -396,6 +396,66 @@ Extract entities and facts from: "{content}"<|im_end|>
     )
 }
 
+/// Build a Triplex KG triple extraction prompt.
+///
+/// SciPhi Triplex is a Phi-3 fine-tune for (subject, predicate, object) triple extraction.
+/// It requires predefined entity types and predicates, and outputs structured triples
+/// in `TYPE:Name > PREDICATE > TYPE:Name` format.
+///
+/// Entity types and predicates are chosen for conversational memory:
+/// - Entity types: PERSON, ORGANIZATION, LOCATION, ACTIVITY, CONCEPT
+/// - Predicates: interpersonal relationships + affiliations
+///
+/// Research basis: HippoRAG (NeurIPS 2024) demonstrates +20% R@5 from KG-based retrieval.
+/// Triplex claims GPT-4-comparable extraction at 1/60th cost (SciPhi, July 2024).
+///
+/// # Arguments
+///
+/// * `content` - The text to extract triples from
+/// * `speaker` - Optional speaker name (prepended for attribution)
+pub fn build_triplex_extraction_prompt(content: &str, speaker: Option<&str>) -> String {
+    let max_content_len = 1500;
+    let truncated_content = if content.len() > max_content_len {
+        format!("{}...", &content[..max_content_len])
+    } else {
+        content.to_string()
+    };
+
+    // Prepend speaker for attribution (same pattern as entity extraction)
+    let attributed_content = if let Some(name) = speaker {
+        format!("{} says: {}", name, truncated_content)
+    } else {
+        truncated_content
+    };
+
+    // Entity types for conversational memory
+    let entity_types =
+        r#"{"entity_types": ["PERSON", "ORGANIZATION", "LOCATION", "ACTIVITY", "CONCEPT"]}"#;
+
+    // Predicates for interpersonal relationships and affiliations
+    let predicates = r#"{"predicates": ["FRIEND_OF", "SPOUSE_OF", "PARENT_OF", "CHILD_OF", "SIBLING_OF", "COLLEAGUE_OF", "NEIGHBOR_OF", "MENTOR_OF", "WORKS_AT", "STUDIES_AT", "LIVES_IN", "MEMBER_OF", "PARTICIPATES_IN", "INTERESTED_IN", "OWNS", "KNOWS"]}"#;
+
+    // Triplex uses a single user message (no system prompt, no few-shot)
+    format!(
+        r#"<|im_start|>user
+Perform Named Entity Recognition (NER) and extract knowledge graph triplets from the text. NER identifies named entities of given entity types, and triple extraction identifies relationships between entities using specified predicates.
+
+**Entity Types:**
+{entity_types}
+
+**Predicates:**
+{predicates}
+
+**Text:**
+{content}<|im_end|>
+<|im_start|>assistant
+"#,
+        entity_types = entity_types,
+        predicates = predicates,
+        content = attributed_content,
+    )
+}
+
 /// Build a typed decomposition extraction prompt (ENGRAM-inspired).
 ///
 /// This is a SINGLE prompt that produces both entity facts AND typed records
@@ -534,6 +594,12 @@ mod tests {
     fn test_model_family_from_path_phi4() {
         let path =
             std::path::Path::new("models/phi-4-mini/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf");
+        assert_eq!(ModelFamily::from_path(path), ModelFamily::Phi4);
+    }
+
+    #[test]
+    fn test_model_family_from_path_triplex() {
+        let path = std::path::Path::new("models/triplex/Triplex-Q4_K_M.gguf");
         assert_eq!(ModelFamily::from_path(path), ModelFamily::Phi4);
     }
 
@@ -744,6 +810,46 @@ mod tests {
     fn test_typed_prompt_without_session_date() {
         let prompt = build_typed_extraction_prompt("I work at Google", None, None);
         assert!(!prompt.contains("SESSION DATE"));
+    }
+
+    #[test]
+    fn test_triplex_prompt_basic() {
+        let prompt =
+            build_triplex_extraction_prompt("Alice and Bob have been friends since college", None);
+        assert!(prompt.contains("Alice and Bob have been friends since college"));
+        assert!(prompt.contains("Entity Types"));
+        assert!(prompt.contains("Predicates"));
+        assert!(prompt.contains("PERSON"));
+        assert!(prompt.contains("FRIEND_OF"));
+        assert!(prompt.contains("SPOUSE_OF"));
+        assert!(prompt.contains("<|im_start|>user"));
+        assert!(prompt.contains("<|im_start|>assistant"));
+        // No system message — Triplex uses single user message
+        assert!(!prompt.contains("<|im_start|>system"));
+    }
+
+    #[test]
+    fn test_triplex_prompt_with_speaker() {
+        let prompt = build_triplex_extraction_prompt("My friend Bob works at Google", Some("Alice"));
+        assert!(prompt.contains("Alice says: My friend Bob works at Google"));
+        assert!(prompt.contains("WORKS_AT"));
+    }
+
+    #[test]
+    fn test_triplex_prompt_truncates_long_content() {
+        let long = "x".repeat(2000);
+        let prompt = build_triplex_extraction_prompt(&long, None);
+        assert!(prompt.contains("..."));
+    }
+
+    #[test]
+    fn test_triplex_prompt_phi4_template_conversion() {
+        let chatml = build_triplex_extraction_prompt("Alice knows Bob", None);
+        let phi4 = apply_chat_template(&chatml, ModelFamily::Phi4);
+        assert!(phi4.contains("<|user|>"));
+        assert!(phi4.contains("<|end|>"));
+        assert!(phi4.contains("<|assistant|>"));
+        assert!(!phi4.contains("<|im_start|>"));
     }
 
     #[test]

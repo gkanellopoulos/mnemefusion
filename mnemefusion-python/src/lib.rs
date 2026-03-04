@@ -1301,6 +1301,41 @@ impl PyMemory {
         Ok(true)
     }
 
+    /// Enable Triplex KG extraction for clean entity-to-entity relationships.
+    ///
+    /// Loads the SciPhi Triplex model as a second extraction model for
+    /// producing clean (subject, predicate, object) triples. During ingestion,
+    /// Triplex runs after Phi-4 to build a high-quality knowledge graph.
+    ///
+    /// This is the "Full" ingestion tier — requires 8GB+ GPU VRAM.
+    ///
+    /// Args:
+    ///     model_path: Path to the Triplex GGUF model file
+    ///
+    /// Returns:
+    ///     True if successfully enabled
+    ///
+    /// Example:
+    ///     >>> memory.enable_kg_extraction("models/triplex/Triplex-Q4_K_M.gguf")
+    #[cfg(feature = "entity-extraction")]
+    #[pyo3(signature = (model_path))]
+    fn enable_kg_extraction(&self, model_path: &str) -> PyResult<bool> {
+        let mut engine_opt = self.engine.borrow_mut();
+        if engine_opt.is_none() {
+            return Err(PyRuntimeError::new_err("Database is closed"));
+        }
+
+        let engine = engine_opt.take().unwrap();
+        let new_engine = engine
+            .with_kg_extraction(model_path)
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to enable Triplex KG extraction: {}", e))
+            })?;
+
+        *engine_opt = Some(new_engine);
+        Ok(true)
+    }
+
     /// Process all deferred LLM extractions queued by add() in async mode.
     ///
     /// When `async_extraction_threshold` is set in config, add() stores large
