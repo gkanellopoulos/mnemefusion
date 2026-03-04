@@ -736,7 +736,8 @@ class MnemeFusionEvaluator:
 
     def create_memory_store(self, db_path: str, use_slm: bool = False, slm_model_path: str = None,
                             use_llm: bool = False, llm_model_path: str = None, llm_tier: str = "balanced",
-                            extraction_passes: int = 1, adaptive_k_threshold: float = 0.0):
+                            extraction_passes: int = 1, adaptive_k_threshold: float = 0.0,
+                            kg_model_path: str = None):
         """Create a new MnemeFusion memory store"""
         self.db_path = db_path
 
@@ -771,6 +772,16 @@ class MnemeFusionEvaluator:
             except Exception as e:
                 print(f"  [LLM] Warning: Failed to enable LLM extraction: {e}")
                 print(f"  [LLM] Make sure the wheel was built with --features entity-extraction")
+
+        # Enable Triplex KG extraction if requested (Full tier)
+        if kg_model_path:
+            try:
+                print(f"  [KG] Loading Triplex model: {kg_model_path}")
+                self.memory.enable_kg_extraction(kg_model_path)
+                print(f"  [KG] Enabled Triplex KG extraction (Full tier)")
+            except Exception as e:
+                print(f"  [KG] Warning: Failed to enable KG extraction: {e}")
+                print(f"  [KG] Make sure the wheel was built with --features entity-extraction")
 
         # Set embedding function for fact embeddings (enables semantic ProfileSearch)
         # Skip in Rust mode — fastembed handles all embedding internally
@@ -1466,6 +1477,7 @@ def run_evaluation(
     use_llm: bool = False,
     llm_model_path: str = None,
     llm_tier: str = "balanced",
+    kg_model_path: str = None,
     output_path: str = None,
     verbose: bool = False,
     db_path: str = None,
@@ -1526,7 +1538,10 @@ def run_evaluation(
     if nscale_extract:
         print(f"  Extraction:       NScale Cloud ({nscale_model})")
     elif use_llm:
-        print(f"  Extraction:       Native LLM ({llm_tier} tier, {extraction_passes} pass{'es' if extraction_passes > 1 else ''})")
+        tier_label = "Full (Phi-4 + Triplex)" if kg_model_path else f"{llm_tier}"
+        print(f"  Extraction:       Native LLM ({tier_label} tier, {extraction_passes} pass{'es' if extraction_passes > 1 else ''})")
+        if kg_model_path:
+            print(f"  KG Extraction:    Triplex ({kg_model_path})")
     elif use_slm:
         print(f"  Extraction:       Python SLM (0.6B)")
     else:
@@ -1614,7 +1629,8 @@ def run_evaluation(
             llm_model_path=llm_model_path,
             llm_tier=llm_tier,
             extraction_passes=extraction_passes,
-            adaptive_k_threshold=adaptive_k_threshold
+            adaptive_k_threshold=adaptive_k_threshold,
+            kg_model_path=kg_model_path if _ingest_now else None
         )
 
         if _ingest_now:
@@ -2091,6 +2107,11 @@ Examples:
         help="LLM model tier: balanced (4B) or quality (8B)"
     )
     parser.add_argument(
+        "--kg-model",
+        default=None,
+        help="Path to Triplex GGUF model for KG extraction (Full tier, requires --use-llm)"
+    )
+    parser.add_argument(
         "--output",
         default=None,
         help="Path to save detailed results JSON"
@@ -2216,6 +2237,7 @@ Examples:
         use_llm=args.use_llm,
         llm_model_path=args.llm_model,
         llm_tier=args.llm_tier,
+        kg_model_path=args.kg_model,
         output_path=args.output,
         verbose=args.verbose,
         db_path=args.db_path,
