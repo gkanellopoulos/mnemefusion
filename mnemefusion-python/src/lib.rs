@@ -1272,6 +1272,14 @@ impl PyMemory {
             return Err(PyRuntimeError::new_err("Database is closed"));
         }
 
+        // Validate model file exists before taking engine (take() is irrecoverable on failure)
+        let path = std::path::Path::new(model_path);
+        if !path.exists() {
+            return Err(PyIOError::new_err(format!(
+                "Model file not found: {}", model_path
+            )));
+        }
+
         let engine = engine_opt.take().unwrap();
         let new_engine = engine
             .with_llm_entity_extraction_from_path(model_path, model_tier)
@@ -1323,6 +1331,14 @@ impl PyMemory {
         let mut engine_opt = self.engine.borrow_mut();
         if engine_opt.is_none() {
             return Err(PyRuntimeError::new_err("Database is closed"));
+        }
+
+        // Validate model file exists before taking engine (take() is irrecoverable on failure)
+        let path = std::path::Path::new(model_path);
+        if !path.exists() {
+            return Err(PyIOError::new_err(format!(
+                "KG model file not found: {}", model_path
+            )));
         }
 
         let engine = engine_opt.take().unwrap();
