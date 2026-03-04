@@ -67,6 +67,7 @@ except ImportError:
 
 # Check dependencies — sentence-transformers is optional when using Rust embedding
 try:
+    import torch  # Must import before sentence_transformers on Windows (DLL search order)
     from sentence_transformers import SentenceTransformer
     import numpy as np
     _SENTENCE_TRANSFORMERS_AVAILABLE = True
