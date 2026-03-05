@@ -3,6 +3,20 @@
 //! All prompt builders produce ChatML format (Qwen) by default.
 //! Use `apply_chat_template()` to convert to other model formats (e.g. Phi-4).
 
+/// Truncate a string to at most `max_bytes` bytes, snapping to a valid UTF-8
+/// char boundary so we never panic on multi-byte characters (e.g. `café`).
+fn truncate_utf8(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    // floor_char_boundary equivalent for stable Rust
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 /// Model family — determines which chat template wrapping to use.
 ///
 /// Detected automatically from the model filename in `LlmEntityExtractor`.
@@ -57,7 +71,7 @@ pub fn build_extraction_prompt(content: &str, speaker: Option<&str>) -> String {
     // Truncate content if too long to fit in context
     let max_content_len = 1500;
     let truncated_content = if content.len() > max_content_len {
-        format!("{}...", &content[..max_content_len])
+        format!("{}...", truncate_utf8(content, max_content_len))
     } else {
         content.to_string()
     };
@@ -107,7 +121,7 @@ pub fn build_fewshot_extraction_prompt(content: &str, speaker: Option<&str>) -> 
     // Truncate content if too long
     let max_content_len = 800; // Shorter to leave room for two examples
     let truncated_content = if content.len() > max_content_len {
-        format!("{}...", &content[..max_content_len])
+        format!("{}...", truncate_utf8(content, max_content_len))
     } else {
         content.to_string()
     };
@@ -218,7 +232,7 @@ Extract entities and facts from: "{content}"<|im_end|>
 pub fn build_relationship_extraction_prompt(content: &str, speaker: Option<&str>) -> String {
     let max_content_len = 800;
     let truncated_content = if content.len() > max_content_len {
-        format!("{}...", &content[..max_content_len])
+        format!("{}...", truncate_utf8(content, max_content_len))
     } else {
         content.to_string()
     };
@@ -310,7 +324,7 @@ Extract entities and facts from: "{content}"<|im_end|>
 pub fn build_event_temporal_extraction_prompt(content: &str, speaker: Option<&str>) -> String {
     let max_content_len = 800;
     let truncated_content = if content.len() > max_content_len {
-        format!("{}...", &content[..max_content_len])
+        format!("{}...", truncate_utf8(content, max_content_len))
     } else {
         content.to_string()
     };
@@ -416,7 +430,7 @@ Extract entities and facts from: "{content}"<|im_end|>
 pub fn build_triplex_extraction_prompt(content: &str, speaker: Option<&str>) -> String {
     let max_content_len = 1500;
     let truncated_content = if content.len() > max_content_len {
-        format!("{}...", &content[..max_content_len])
+        format!("{}...", truncate_utf8(content, max_content_len))
     } else {
         content.to_string()
     };
@@ -480,7 +494,7 @@ pub fn build_typed_extraction_prompt(
 ) -> String {
     let max_content_len = 800;
     let truncated_content = if content.len() > max_content_len {
-        format!("{}...", &content[..max_content_len])
+        format!("{}...", truncate_utf8(content, max_content_len))
     } else {
         content.to_string()
     };

@@ -101,7 +101,11 @@ pub fn resolve_entity_alias(name: &str, known_profile_names: &[String]) -> Optio
     // → "mari" → "maria's little one" (starts with "mari" + 'a'). These are
     // compound relational names, not canonical forms of "john" or "maria".
     if name_lower.len() >= 4 && name_lower.len() <= 5 {
-        let truncated = &name_lower[..name_lower.len() - 1];
+        let mut trunc_end = name_lower.len() - 1;
+        while trunc_end > 0 && !name_lower.is_char_boundary(trunc_end) {
+            trunc_end -= 1;
+        }
+        let truncated = &name_lower[..trunc_end];
         for candidate in known_profile_names {
             // Skip compound relational names (e.g., "john's cousin", "maria's mom")
             if candidate.contains('\'') || candidate.contains('\u{2019}') {
