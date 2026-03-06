@@ -1352,6 +1352,26 @@ impl PyMemory {
         Ok(true)
     }
 
+    /// Backfill KG triples for all existing memories using Triplex.
+    ///
+    /// Runs Triplex extraction on every memory in the database and stores
+    /// the resulting entity-to-entity relationship triples. Requires
+    /// enable_kg_extraction() to have been called first.
+    ///
+    /// Returns the number of memories that produced triples.
+    ///
+    /// Example:
+    ///     >>> memory.enable_kg_extraction("models/triplex/Triplex-Q4_K_M.gguf")
+    ///     >>> processed = memory.backfill_kg()
+    ///     >>> print(f"Processed {processed} memories")
+    #[cfg(feature = "entity-extraction")]
+    fn backfill_kg(&self) -> PyResult<usize> {
+        let engine = self.get_engine()?;
+        engine.backfill_kg().map_err(|e| {
+            PyRuntimeError::new_err(format!("KG backfill failed: {}", e))
+        })
+    }
+
     /// Process all deferred LLM extractions queued by add() in async mode.
     ///
     /// When `async_extraction_threshold` is set in config, add() stores large

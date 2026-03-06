@@ -232,6 +232,89 @@ impl IngestionPipeline {
         self
     }
 
+    /// Backfill KG triples for all existing memories using Triplex.
+    ///
+    /// Iterates all memories in storage, runs Triplex extraction on each,
+    /// and stores the resulting relationship triples. Skips memories that
+    /// already have KG edges. Useful for adding KG data to a DB that was
+    /// ingested without Triplex.
+    ///
+    /// Returns the number of memories processed (triples extracted).
+    #[cfg(feature = "entity-extraction")]
+    pub fn backfill_kg(&self) -> Result<usize> {
+        let triplex = match self.triplex_extractor {
+            Some(ref t) => t,
+            None => {
+                return Err(Error::Config(
+                    "Triplex extractor not configured. Call with_kg_extraction() first.".into(),
+                ));
+            }
+        };
+
+        let memory_ids = self.storage.list_memory_ids()?;
+        let total = memory_ids.len();
+        let mut processed = 0;
+        let mut total_triples = 0;
+
+        tracing::info!("Backfilling KG triples for {} memories...", total);
+
+        for (i, id) in memory_ids.iter().enumerate() {
+            // Periodic GPU context reset
+            let triplex_count = self
+                .triplex_extraction_count
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if triplex_count > 0 && triplex_count % Self::GPU_CONTEXT_RESET_INTERVAL == 0 {
+                tracing::info!(
+                    "Triplex GPU context reset after {} extractions",
+                    triplex_count
+                );
+                triplex.lock().unwrap().reset_context();
+            }
+
+            let memory = match self.storage.get_memory(id)? {
+                Some(m) => m,
+                None => continue,
+            };
+
+            let speaker = memory.metadata.get("speaker").map(|s| s.as_str());
+
+            match triplex.lock().unwrap().extract(&memory.content, speaker) {
+                Ok(triples) => {
+                    if !triples.is_empty() {
+                        let count = triples.len();
+                        if let Err(e) = self.store_relationships(id, &triples) {
+                            tracing::warn!("Failed to store triples for {}: {}", id, e);
+                        } else {
+                            total_triples += count;
+                            processed += 1;
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Triplex extraction failed for {}: {}", id, e);
+                }
+            }
+
+            if (i + 1) % 100 == 0 || i + 1 == total {
+                tracing::info!(
+                    "KG backfill progress: {}/{} memories, {} triples extracted",
+                    i + 1,
+                    total,
+                    total_triples
+                );
+            }
+        }
+
+        tracing::info!(
+            "KG backfill complete: {}/{} memories produced {} triples",
+            processed,
+            total,
+            total_triples
+        );
+
+        Ok(processed)
+    }
+
     /// Run entity extraction on text without adding to the database.
     ///
     /// Returns the extraction result directly for inspection/testing.

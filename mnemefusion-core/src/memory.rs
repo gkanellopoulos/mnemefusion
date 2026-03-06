@@ -411,6 +411,19 @@ impl MemoryEngine {
         self.pipeline.set_extraction_passes(passes);
     }
 
+    /// Backfill KG triples for all existing memories using Triplex.
+    ///
+    /// Runs Triplex extraction on every memory in the database and stores
+    /// the resulting entity-to-entity relationship triples. This adds KG
+    /// edges to a DB that was originally ingested without Triplex.
+    ///
+    /// Requires `with_kg_extraction()` to have been called first.
+    /// Returns the number of memories that produced triples.
+    #[cfg(feature = "entity-extraction")]
+    pub fn backfill_kg(&self) -> Result<usize> {
+        self.pipeline.backfill_kg()
+    }
+
     /// Process all deferred LLM extractions queued by `add()` in async mode.
     ///
     /// When `async_extraction_threshold > 0` (set via config or
