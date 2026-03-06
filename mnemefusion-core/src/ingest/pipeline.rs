@@ -11,7 +11,7 @@
 //! without query-time SLM inference.
 
 use crate::{
-    error::Result,
+    error::{Error, Result},
     graph::GraphManager,
     index::{BM25Index, TemporalIndex, VectorIndex},
     ingest::{get_causal_extractor, get_temporal_extractor, EntityExtractor, SimpleEntityExtractor},
@@ -245,7 +245,7 @@ impl IngestionPipeline {
         let triplex = match self.triplex_extractor {
             Some(ref t) => t,
             None => {
-                return Err(Error::Config(
+                return Err(Error::Database(
                     "Triplex extractor not configured. Call with_kg_extraction() first.".into(),
                 ));
             }
