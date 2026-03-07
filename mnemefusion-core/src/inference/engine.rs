@@ -389,14 +389,17 @@ impl InferenceEngine {
     fn load_ggml_backends(load_cuda: bool) {
         use std::ffi::CString;
 
-        // Backend DLLs to load. CPU is always required.
+        // Backend shared libraries to load. CPU is always required.
         // CUDA is skipped when gpu_layers=0 to avoid allocating VRAM compute buffers
         // (~600MB) that aren't needed for pure CPU inference.
-        let dll_names: Vec<&str> = if load_cuda {
-            vec!["ggml-cpu.dll", "ggml-cuda.dll"]
+        let ext = if cfg!(target_os = "windows") { "dll" } else { "so" };
+        let cpu_name = format!("ggml-cpu.{}", ext);
+        let cuda_name = format!("ggml-cuda.{}", ext);
+        let dll_names: Vec<String> = if load_cuda {
+            vec![cpu_name, cuda_name]
         } else {
             tracing::info!("GPU layers = 0, skipping CUDA backend (CPU-only mode)");
-            vec!["ggml-cpu.dll"]
+            vec![cpu_name]
         };
 
         // Search locations for ggml backend DLLs
@@ -433,25 +436,32 @@ impl InferenceEngine {
 
         for dll_name in &dll_names {
             let mut loaded = false;
+            // On Linux, cmake produces "libggml-cpu.so" (with lib prefix).
+            // Try both the bare name and the lib-prefixed name.
+            let lib_prefixed = format!("lib{}", dll_name);
+            let candidates = [dll_name.as_str(), lib_prefixed.as_str()];
             for dir in &search_paths {
-                let dll_path = dir.join(dll_name);
-                if dll_path.exists() {
-                    if let Ok(path_str) = CString::new(dll_path.to_string_lossy().as_bytes()) {
-                        let reg = unsafe {
-                            llama_cpp_sys_2::ggml_backend_load(path_str.as_ptr())
-                        };
-                        if !reg.is_null() {
-                            tracing::info!("Loaded backend: {} from {}", dll_name, dll_path.display());
-                            loaded = true;
-                            break;
-                        } else {
-                            tracing::warn!("Found but failed to load: {}", dll_path.display());
+                for candidate in &candidates {
+                    let dll_path = dir.join(candidate);
+                    if dll_path.exists() {
+                        if let Ok(path_str) = CString::new(dll_path.to_string_lossy().as_bytes()) {
+                            let reg = unsafe {
+                                llama_cpp_sys_2::ggml_backend_load(path_str.as_ptr())
+                            };
+                            if !reg.is_null() {
+                                tracing::info!("Loaded backend: {} from {}", dll_name, dll_path.display());
+                                loaded = true;
+                                break;
+                            } else {
+                                tracing::warn!("Found but failed to load: {}", dll_path.display());
+                            }
                         }
                     }
                 }
+                if loaded { break; }
             }
             if !loaded {
-                tracing::warn!("Backend not found: {}", dll_name);
+                tracing::warn!("Backend not found: {} (searched {} dirs)", dll_name, search_paths.len());
             }
         }
     }
