@@ -11,23 +11,40 @@ fn main() {
     if cuda_enabled {
         println!("cargo:warning=Building with CUDA support enabled");
 
-        // Set CUDA-related environment variables for CMake (used by llama-cpp-2)
-        let cuda_path = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.1";
+        // Detect CUDA path: env var > platform defaults
+        let cuda_path = env::var("CUDA_PATH").unwrap_or_else(|_| {
+            if cfg!(target_os = "windows") {
+                r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.1".to_string()
+            } else {
+                "/usr/local/cuda".to_string()
+            }
+        });
+
+        let cuda_arch = env::var("CMAKE_CUDA_ARCHITECTURES").unwrap_or_else(|_| "75".to_string());
 
         println!("cargo:rustc-env=CUDA_PATH={}", cuda_path);
         println!("cargo:rustc-env=CUDA_TOOLKIT_ROOT_DIR={}", cuda_path);
-        println!("cargo:rustc-env=CMAKE_CUDA_COMPILER={}\\bin\\nvcc.exe", cuda_path);
-        println!("cargo:rustc-env=CMAKE_CUDA_ARCHITECTURES=75");
+        println!("cargo:rustc-env=CMAKE_CUDA_ARCHITECTURES={}", cuda_arch);
 
-        // Add CUDA library path to linker
-        println!("cargo:rustc-link-search=native={}\\lib\\x64", cuda_path);
+        if cfg!(target_os = "windows") {
+            println!("cargo:rustc-env=CMAKE_CUDA_COMPILER={}\\bin\\nvcc.exe", cuda_path);
+            println!("cargo:rustc-link-search=native={}\\lib\\x64", cuda_path);
+        } else {
+            println!("cargo:rustc-env=CMAKE_CUDA_COMPILER={}/bin/nvcc", cuda_path);
+            println!("cargo:rustc-link-search=native={}/lib64", cuda_path);
+            println!("cargo:rustc-link-search=native={}/lib", cuda_path);
+        }
 
         // Link CUDA libraries
-        println!("cargo:rustc-link-lib=dylib=cudart_static");
         println!("cargo:rustc-link-lib=dylib=cublas");
         println!("cargo:rustc-link-lib=dylib=cublasLt");
+        if cfg!(target_os = "windows") {
+            println!("cargo:rustc-link-lib=dylib=cudart_static");
+        } else {
+            println!("cargo:rustc-link-lib=static=cudart_static");
+        }
 
-        println!("cargo:warning=CUDA environment configured for architecture sm_75 (GTX 1650 Ti)");
+        println!("cargo:warning=CUDA environment configured for architecture sm_{}", cuda_arch);
     } else {
         println!("cargo:warning=Building without CUDA support (CPU only)");
     }
