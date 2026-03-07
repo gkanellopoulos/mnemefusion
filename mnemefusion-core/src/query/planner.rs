@@ -312,20 +312,28 @@ impl QueryPlanner {
         const MAX_RELATED_MEMORIES_PER_ENTITY: usize = 10;
 
         if !query_entities.is_empty() {
-            // Build EntityId → lowercase name map for resolving graph traversal results.
-            // Graph stores EntityId UUIDs; profiles are keyed by name. Need reverse map.
-            let all_profiles = self.storage.list_entity_profiles().unwrap_or_default();
-            let id_to_name: HashMap<String, String> = all_profiles
-                .iter()
-                .map(|p| (p.entity_id.to_string(), p.name.to_lowercase()))
-                .collect();
-
             let graph = self.graph_manager.read().unwrap();
+            // Lazy: only build ID→name map if any entity actually has KG relationships.
+            let mut id_to_name: Option<HashMap<String, String>> = None;
+
             for entity_name in &query_entities {
                 if let Ok(Some(profile)) = self.storage.get_entity_profile(entity_name) {
-                    for (related_id, _rel_type) in graph.get_related_entities(&profile.entity_id) {
-                        // Skip entities already in query_entities (Step 2.1 handles them)
-                        if let Some(related_name) = id_to_name.get(&related_id.to_string()) {
+                    let related = graph.get_related_entities(&profile.entity_id);
+                    if related.is_empty() {
+                        continue;
+                    }
+                    // Build map on first use — avoids list_entity_profiles() when graph is empty.
+                    let map = id_to_name.get_or_insert_with(|| {
+                        self.storage
+                            .list_entity_profiles()
+                            .unwrap_or_default()
+                            .iter()
+                            .map(|p| (p.entity_id.to_string(), p.name.to_lowercase()))
+                            .collect()
+                    });
+                    for (related_id, _rel_type) in related {
+                        if let Some(related_name) = map.get(&related_id.to_string()) {
+                            // Skip entities already in query_entities (Step 2.1 handles them)
                             if query_entities.iter().any(|qe| qe == related_name) {
                                 continue;
                             }
