@@ -22,15 +22,10 @@ fn main() {
 
         let cuda_arch = env::var("CMAKE_CUDA_ARCHITECTURES").unwrap_or_else(|_| "75".to_string());
 
-        println!("cargo:rustc-env=CUDA_PATH={}", cuda_path);
-        println!("cargo:rustc-env=CUDA_TOOLKIT_ROOT_DIR={}", cuda_path);
-        println!("cargo:rustc-env=CMAKE_CUDA_ARCHITECTURES={}", cuda_arch);
-
+        // Set link search paths (these affect the linker, not cmake)
         if cfg!(target_os = "windows") {
-            println!("cargo:rustc-env=CMAKE_CUDA_COMPILER={}\\bin\\nvcc.exe", cuda_path);
             println!("cargo:rustc-link-search=native={}\\lib\\x64", cuda_path);
         } else {
-            println!("cargo:rustc-env=CMAKE_CUDA_COMPILER={}/bin/nvcc", cuda_path);
             println!("cargo:rustc-link-search=native={}/lib64", cuda_path);
             println!("cargo:rustc-link-search=native={}/lib", cuda_path);
         }
