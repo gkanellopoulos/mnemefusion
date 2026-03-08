@@ -2037,13 +2037,13 @@ def main():
         epilog="""
 Examples:
     # Full evaluation
-    python industry_eval.py
+    python run_eval.py
 
     # Quick test (50 questions)
-    python industry_eval.py --max-questions 50
+    python run_eval.py --max-questions 50
 
     # With SLM metadata extraction
-    python industry_eval.py --use-slm --slm-model opt/models/qwen3-0.6b.gguf
+    python run_eval.py --use-slm --slm-model opt/models/qwen3-0.6b.gguf
 
     # Specific categories only
     python industry_eval.py --categories 1 2
@@ -2211,8 +2211,6 @@ Examples:
     )
 
     args = parser.parse_args()
-    print(f"[DEBUG] Parsed args: use_slm={args.use_slm}, slm_model={args.slm_model}, use_llm={args.use_llm}, llm_model={args.llm_model}")
-
     # Check API key
     if not os.environ.get("OPENAI_API_KEY"):
         print("ERROR: OPENAI_API_KEY environment variable not set")
