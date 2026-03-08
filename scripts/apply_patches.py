@@ -95,16 +95,19 @@ def patch_hard_link(llama_dir):
     with open(build_rs, "r") as f:
         content = f.read()
 
-    count = content.count("hard_link(") - content.count("hard_link(").count("ok()")
-    # More precise: count .unwrap() after hard_link
-    unwrap_count = len(re.findall(r'hard_link\([^)]*\)\.unwrap\(\)', content))
+    # Replace .unwrap() with .ok() on lines containing hard_link
+    lines = content.split('\n')
+    unwrap_count = 0
+    new_lines = []
+    for line in lines:
+        if 'hard_link(' in line and '.unwrap()' in line:
+            new_lines.append(line.replace('.unwrap()', '.ok()'))
+            unwrap_count += 1
+        else:
+            new_lines.append(line)
+    new_content = '\n'.join(new_lines)
 
     if unwrap_count > 0:
-        new_content = re.sub(
-            r'hard_link\(([^)]*)\)\.unwrap\(\)',
-            r'hard_link(\1).ok()',
-            content
-        )
         with open(build_rs, "w") as f:
             f.write(new_content)
         print(f"  APPLIED: {unwrap_count} hard_link().unwrap() -> .ok()")

@@ -36,6 +36,12 @@ info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 
+# Use sudo if available and not already root
+SUDO=""
+if [ "$(id -u)" -ne 0 ] && command -v sudo &>/dev/null; then
+    SUDO="sudo"
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORKSPACE="$(dirname "$SCRIPT_DIR")"
 REBUILD_ONLY=false
@@ -58,8 +64,8 @@ info "Workspace: $WORKSPACE"
 if [ "$REBUILD_ONLY" = false ]; then
     info "Installing system dependencies..."
     if command -v apt-get &>/dev/null; then
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq pkg-config libclang-dev build-essential python3-venv python3-dev
+        $SUDO apt-get update -qq
+        $SUDO apt-get install -y -qq pkg-config libclang-dev build-essential python3-venv python3-dev
     else
         warn "Not a Debian/Ubuntu system — install pkg-config, libclang-dev, python3-venv manually"
     fi
@@ -72,7 +78,7 @@ if [ "$REBUILD_ONLY" = false ]; then
         info "cmake $CMAKE_VERSION is too old, installing 3.31.6..."
         CMAKE_URL="https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-linux-x86_64.tar.gz"
         wget -q "$CMAKE_URL" -O /tmp/cmake.tar.gz
-        sudo tar -xzf /tmp/cmake.tar.gz -C /usr/local --strip-components=1
+        $SUDO tar -xzf /tmp/cmake.tar.gz -C /usr/local --strip-components=1
         rm /tmp/cmake.tar.gz
         info "cmake $(cmake --version | head -1)"
     else
@@ -90,7 +96,7 @@ if [ "$REBUILD_ONLY" = false ]; then
     # Ensure cc symlink exists (cmake 3.31+ requires it)
     if ! command -v cc &>/dev/null; then
         if command -v gcc &>/dev/null; then
-            sudo ln -sf "$(which gcc)" /usr/bin/cc
+            $SUDO ln -sf "$(which gcc)" /usr/bin/cc
             info "Created cc -> gcc symlink"
         fi
     fi
@@ -176,16 +182,8 @@ info "Applying dependency patches..."
 python3 "$SCRIPT_DIR/apply_patches.py" --clean
 
 # ─────────────────────────────────────────────────────────────
-# Step 5: Clean stale build cache and build
+# Step 5: Build
 # ─────────────────────────────────────────────────────────────
-info "Cleaning stale build caches..."
-rm -rf target/release/build/llama-cpp-sys-2-*
-rm -rf target/release/.fingerprint/llama-cpp-sys-2-*
-if [ -n "$USEARCH_DIR" ]; then
-    rm -rf target/release/build/usearch-*
-    rm -rf target/release/.fingerprint/usearch-*
-fi
-
 info "Building mnemefusion-python with CUDA support (this takes ~8-10 minutes)..."
 cd "$WORKSPACE/mnemefusion-python"
 
