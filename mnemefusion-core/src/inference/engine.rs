@@ -303,19 +303,7 @@ impl InferenceEngine {
                 .map_err(|e| Error::InferenceError(format!("Token decode: {e}")))?;
         }
 
-        eprintln!(
-            "[mnemefusion-debug] generate: {} output tokens from {} prompt tokens",
-            output_tokens.len(),
-            tokens.len()
-        );
-
         let output = self.detokenize_lossy(&output_tokens)?;
-
-        eprintln!(
-            "[mnemefusion-debug] generate: raw output ({} chars): {}",
-            output.len(),
-            output.chars().take(500).collect::<String>()
-        );
 
         Ok(output)
     }
