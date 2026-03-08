@@ -233,10 +233,7 @@ impl InferenceEngine {
         }
 
         // Convert tokens to string
-        let output = self
-            .model
-            .tokens_to_str(&output_tokens, llama_cpp_2::model::Special::Tokenize)
-            .map_err(|e| Error::InferenceError(format!("Detokenization: {e}")))?;
+        let output = self.detokenize_lossy(&output_tokens)?;
 
         Ok(output)
     }
@@ -301,10 +298,7 @@ impl InferenceEngine {
                 .map_err(|e| Error::InferenceError(format!("Token decode: {e}")))?;
         }
 
-        let output = self
-            .model
-            .tokens_to_str(&output_tokens, llama_cpp_2::model::Special::Tokenize)
-            .map_err(|e| Error::InferenceError(format!("Detokenization: {e}")))?;
+        let output = self.detokenize_lossy(&output_tokens)?;
 
         Ok(output)
     }
@@ -377,12 +371,31 @@ impl InferenceEngine {
                 .map_err(|e| Error::InferenceError(format!("Token decode: {e}")))?;
         }
 
-        let output = self
-            .model
-            .tokens_to_str(&output_tokens, llama_cpp_2::model::Special::Tokenize)
-            .map_err(|e| Error::InferenceError(format!("Detokenization: {e}")))?;
+        let output = self.detokenize_lossy(&output_tokens)?;
 
         Ok(output)
+    }
+
+    /// Convert tokens to string with lossy UTF-8 handling.
+    ///
+    /// Some models (notably Phi-4-mini) produce token sequences where individual
+    /// token bytes form valid UTF-8 only when concatenated. The bulk `tokens_to_str()`
+    /// method fails with `FromUtf8Error` in these cases. This method converts each
+    /// token to raw bytes, concatenates them, then uses lossy UTF-8 conversion.
+    fn detokenize_lossy(&self, tokens: &[LlamaToken]) -> Result<String> {
+        let mut bytes = Vec::with_capacity(tokens.len() * 4);
+        for &token in tokens {
+            match self
+                .model
+                .token_to_bytes(token, llama_cpp_2::model::Special::Tokenize)
+            {
+                Ok(token_bytes) => bytes.extend_from_slice(&token_bytes),
+                Err(e) => {
+                    tracing::warn!("Failed to decode token {}: {}", token.0, e);
+                }
+            }
+        }
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
     /// Load ggml backend DLLs (CPU + CUDA) from known locations
