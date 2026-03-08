@@ -148,6 +148,13 @@ def patch_usearch_simsimd(usearch_dir):
         changed = True
         print("  APPLIED: Replaced flags_to_try with empty Vec")
 
+    # Disable USEARCH_USE_SIMSIMD even when feature is enabled
+    # The simsimd source was removed above, so we must not define USE_SIMSIMD=1
+    if '"USEARCH_USE_SIMSIMD", "1"' in content:
+        content = content.replace('"USEARCH_USE_SIMSIMD", "1"', '"USEARCH_USE_SIMSIMD", "0"')
+        changed = True
+        print("  APPLIED: Set USEARCH_USE_SIMSIMD to 0")
+
     if changed:
         with open(build_rs, "w") as f:
             f.write(content)
