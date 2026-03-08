@@ -41,19 +41,21 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "mnemefusion-python"))
 sys.path.insert(0, str(project_root))
 
-try:
-    import mnemefusion
-except ImportError:
-    print("ERROR: mnemefusion not installed.")
-    print("Install with: cd mnemefusion-python && maturin develop --release")
-    sys.exit(1)
-
+# IMPORTANT: Import torch BEFORE mnemefusion on Linux — mnemefusion loads libggml-cuda.so
+# which can poison CUDA symbols and break torch's libc10_cuda.so loading.
 try:
     import torch  # Must import before sentence_transformers on Windows (DLL search order)
     from sentence_transformers import SentenceTransformer
     import numpy as np
 except ImportError:
     print("ERROR: sentence-transformers not installed.")
+    sys.exit(1)
+
+try:
+    import mnemefusion
+except ImportError:
+    print("ERROR: mnemefusion not installed.")
+    print("Install with: cd mnemefusion-python && maturin develop --release")
     sys.exit(1)
 
 try:
