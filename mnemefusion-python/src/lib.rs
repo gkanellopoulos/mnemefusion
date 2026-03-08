@@ -479,8 +479,12 @@ impl PyMemory {
     ///     >>> ]
     ///     >>> result = memory.add_batch(memories, namespace="user_123")
     ///     >>> print(f"Created {result['created_count']} memories")
-    #[pyo3(signature = (memories, namespace=None))]
-    fn add_batch(&self, memories: Vec<&PyDict>, namespace: Option<&str>) -> PyResult<PyObject> {
+    ///     >>> # With progress callback:
+    ///     >>> def on_progress(current, total):
+    ///     ...     print(f"Progress: {current}/{total}")
+    ///     >>> result = memory.add_batch(memories, on_progress=on_progress)
+    #[pyo3(signature = (memories, namespace=None, on_progress=None))]
+    fn add_batch(&self, memories: Vec<&PyDict>, namespace: Option<&str>, on_progress: Option<&PyAny>) -> PyResult<PyObject> {
         let engine = self.get_engine()?;
 
         // Convert Python dicts to MemoryInput
@@ -526,9 +530,19 @@ impl PyMemory {
             inputs.push(input);
         }
 
-        // Call batch add with namespace parameter
+        // Build progress callback if provided
+        let progress_cb: Option<Box<dyn Fn(usize, usize)>> = on_progress.map(|cb| {
+            let cb_obj: PyObject = cb.into();
+            Box::new(move |current: usize, total: usize| {
+                Python::with_gil(|py| {
+                    let _ = cb_obj.call1(py, (current, total));
+                });
+            }) as Box<dyn Fn(usize, usize)>
+        });
+
+        // Call batch add with namespace and progress callback
         let result: BatchResult = engine
-            .add_batch(inputs, namespace)
+            .add_batch_with_progress(inputs, namespace, progress_cb)
             .map_err(|e| PyIOError::new_err(format!("Batch add failed: {}", e)))?;
 
         // Convert result to Python dict
@@ -1364,10 +1378,23 @@ impl PyMemory {
     ///     >>> memory.enable_kg_extraction("models/triplex/Triplex-Q4_K_M.gguf")
     ///     >>> processed = memory.backfill_kg()
     ///     >>> print(f"Processed {processed} memories")
+    ///     >>> # With progress callback:
+    ///     >>> memory.backfill_kg(on_progress=lambda cur, total: print(f"{cur}/{total}"))
     #[cfg(feature = "entity-extraction")]
-    fn backfill_kg(&self) -> PyResult<usize> {
+    #[pyo3(signature = (on_progress=None))]
+    fn backfill_kg(&self, on_progress: Option<&PyAny>) -> PyResult<usize> {
         let engine = self.get_engine()?;
-        engine.backfill_kg().map_err(|e| {
+
+        let progress_cb: Option<Box<dyn Fn(usize, usize)>> = on_progress.map(|cb| {
+            let cb_obj: PyObject = cb.into();
+            Box::new(move |current: usize, total: usize| {
+                Python::with_gil(|py| {
+                    let _ = cb_obj.call1(py, (current, total));
+                });
+            }) as Box<dyn Fn(usize, usize)>
+        });
+
+        engine.backfill_kg_with_progress(progress_cb).map_err(|e| {
             PyRuntimeError::new_err(format!("KG backfill failed: {}", e))
         })
     }
@@ -2141,7 +2168,35 @@ fn first_person_to_third(content: &str, speaker: &str) -> String {
 
 /// MnemeFusion Python module
 #[pymodule]
-fn mnemefusion(_py: Python, m: &PyModule) -> PyResult<()> {
+fn mnemefusion(py: Python, m: &PyModule) -> PyResult<()> {
+    // Auto-detect backend .so/.dll location from the Python module's directory.
+    // When pip-installed, maturin places backends next to the .pyd/.so or in
+    // a sibling mnemefusion.libs/ directory. Set MNEMEFUSION_DLL_DIR so the
+    // Rust engine finds them without user configuration.
+    if std::env::var("MNEMEFUSION_DLL_DIR").is_err() {
+        if let Ok(module_file) = m.filename() {
+            let module_path = std::path::Path::new(module_file);
+            if let Some(module_dir) = module_path.parent() {
+                // Check the module's own directory first
+                let ext = if cfg!(target_os = "windows") { "dll" } else { "so" };
+                let has_backends = module_dir.join(format!("ggml-cpu.{}", ext)).exists()
+                    || module_dir.join(format!("libggml-cpu.{}", ext)).exists();
+
+                if has_backends {
+                    std::env::set_var("MNEMEFUSION_DLL_DIR", module_dir);
+                } else {
+                    // Check mnemefusion.libs/ sibling (maturin Linux bundling)
+                    if let Some(parent) = module_dir.parent() {
+                        let libs_dir = parent.join("mnemefusion.libs");
+                        if libs_dir.exists() {
+                            std::env::set_var("MNEMEFUSION_DLL_DIR", &libs_dir);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     m.add_class::<PyMemory>()?;
     m.add_function(wrap_pyfunction!(contextualize_for_embedding, m)?)?;
     m.add_function(wrap_pyfunction!(first_person_to_third, m)?)?;

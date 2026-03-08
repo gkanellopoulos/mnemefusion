@@ -161,3 +161,7 @@ apps/chat_data/
 # Environment files with secrets
 .env
 apps/.env
+
+# Machine-specific Cargo config (contains hardcoded CUDA paths)
+# Each machine needs its own config — DO NOT commit
+.cargo/config.toml

@@ -159,6 +159,7 @@ impl MemoryEngine {
     pub fn open<P: AsRef<Path>>(path: P, config: Config) -> Result<Self> {
         // Validate configuration
         config.validate()?;
+        let mut config = config;
 
         // Open storage
         let storage = Arc::new(StorageEngine::open(path)?);
@@ -174,6 +175,17 @@ impl MemoryEngine {
         // Create and load vector index
         let mut vector_index = VectorIndex::new(vector_config, Arc::clone(&storage))?;
         vector_index.load()?;
+
+        // Auto-detect embedding dimension from existing DB.
+        // After load(), the vector index knows the true dimension from the serialized data.
+        // Override config to match, so all subsequent add()/query() validations use the
+        // correct dimension. This eliminates the need for users to manually specify
+        // embedding_dim when opening an existing DB.
+        let detected_dim = vector_index.config().dimension;
+        if detected_dim != config.embedding_dim {
+            config.embedding_dim = detected_dim;
+        }
+
         let vector_index = Arc::new(RwLock::new(vector_index));
 
         // Create and load BM25 index
@@ -421,7 +433,18 @@ impl MemoryEngine {
     /// Returns the number of memories that produced triples.
     #[cfg(feature = "entity-extraction")]
     pub fn backfill_kg(&self) -> Result<usize> {
-        self.pipeline.backfill_kg()
+        self.pipeline.backfill_kg(None)
+    }
+
+    /// Like `backfill_kg()` but with a progress callback.
+    ///
+    /// Calls `progress_callback(current, total)` after each memory is processed.
+    #[cfg(feature = "entity-extraction")]
+    pub fn backfill_kg_with_progress(
+        &self,
+        progress_callback: Option<Box<dyn Fn(usize, usize)>>,
+    ) -> Result<usize> {
+        self.pipeline.backfill_kg(progress_callback)
     }
 
     /// Process all deferred LLM extractions queued by `add()` in async mode.
@@ -1272,6 +1295,34 @@ impl MemoryEngine {
         inputs: Vec<MemoryInput>,
         namespace: Option<&str>,
     ) -> Result<BatchResult> {
+        self.add_batch_with_progress(inputs, namespace, None)
+    }
+
+    /// Add multiple memories in a single batch operation with progress reporting.
+    ///
+    /// Like `add_batch()`, but calls `progress_callback(current, total)` after each
+    /// memory is processed. Useful for long ingestion runs.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mnemefusion_core::{MemoryEngine, Config, MemoryInput};
+    /// # let engine = MemoryEngine::open("./test.mfdb", Config::default()).unwrap();
+    /// let inputs: Vec<MemoryInput> = vec![]; // ...
+    /// let result = engine.add_batch_with_progress(
+    ///     inputs,
+    ///     None,
+    ///     Some(Box::new(|current, total| {
+    ///         println!("Progress: {}/{}", current, total);
+    ///     })),
+    /// ).unwrap();
+    /// ```
+    pub fn add_batch_with_progress(
+        &self,
+        inputs: Vec<MemoryInput>,
+        namespace: Option<&str>,
+        progress_callback: Option<Box<dyn Fn(usize, usize)>>,
+    ) -> Result<BatchResult> {
         // Validate all embeddings upfront
         for (index, input) in inputs.iter().enumerate() {
             if input.embedding.len() != self.config.embedding_dim {
@@ -1297,7 +1348,7 @@ impl MemoryEngine {
         }
 
         // Delegate to ingestion pipeline
-        self.pipeline.add_batch(inputs_with_ns, None)
+        self.pipeline.add_batch(inputs_with_ns, progress_callback)
     }
 
     /// Delete multiple memories in a batch operation
@@ -3669,5 +3720,66 @@ mod tests {
         // "me" inside "intermediate" should not match \bme\b
         let content = "The intermediate step";
         assert_eq!(first_person_to_third(content, "Alice"), content);
+    }
+
+    #[test]
+    fn test_auto_detect_embedding_dim_from_existing_db() {
+        // Create a DB with 768-dim embeddings
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+
+        let mut config = Config::default();
+        config.embedding_dim = 768;
+        let engine = MemoryEngine::open(&path, config).unwrap();
+
+        // Add a vector so the index has data to persist
+        let embedding = vec![0.1; 768];
+        engine
+            .add("test content".to_string(), embedding, None, None, None, None)
+            .unwrap();
+        drop(engine);
+
+        // Re-open with default config (384) — should auto-detect 768
+        let engine2 = MemoryEngine::open(&path, Config::default()).unwrap();
+        assert_eq!(
+            engine2.config().embedding_dim, 768,
+            "Should auto-detect embedding dim from existing DB"
+        );
+
+        // Verify we can add more vectors with the detected dimension
+        let embedding2 = vec![0.2; 768];
+        engine2
+            .add("another memory".to_string(), embedding2, None, None, None, None)
+            .unwrap();
+    }
+
+    #[test]
+    fn test_add_batch_with_progress_callback() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.mfdb");
+        let engine = MemoryEngine::open(&path, Config::default()).unwrap();
+
+        let inputs: Vec<MemoryInput> = (0..5)
+            .map(|i| MemoryInput::new(format!("memory {}", i), vec![0.1 * (i as f32 + 1.0); 384]))
+            .collect();
+
+        let progress = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let progress_clone = progress.clone();
+
+        let result = engine
+            .add_batch_with_progress(
+                inputs,
+                None,
+                Some(Box::new(move |current, total| {
+                    progress_clone.lock().unwrap().push((current, total));
+                })),
+            )
+            .unwrap();
+
+        assert_eq!(result.created_count, 5);
+        let recorded = progress.lock().unwrap();
+        assert_eq!(recorded.len(), 5);
+        assert_eq!(recorded[0], (1, 5));
+        assert_eq!(recorded[4], (5, 5));
     }
 }

@@ -326,6 +326,18 @@ impl VectorIndex {
                     .load_from_buffer(&buffer)
                     .map_err(|e| Error::VectorIndex(format!("Failed to load index: {}", e)))?;
 
+                // Auto-detect embedding dimension from loaded index.
+                // This allows opening existing DBs without specifying embedding_dim in config.
+                let loaded_dim = self.index.dimensions();
+                if loaded_dim != self.config.dimension && loaded_dim > 0 {
+                    tracing::info!(
+                        "Auto-detected embedding dimension {} from existing DB (config had {})",
+                        loaded_dim,
+                        self.config.dimension
+                    );
+                    self.config.dimension = loaded_dim;
+                }
+
                 // Update count
                 self.count = self.index.size();
 

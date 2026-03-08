@@ -420,28 +420,28 @@ impl InferenceEngine {
             vec![cpu_name]
         };
 
-        // Search locations for ggml backend DLLs
+        // Search locations for ggml backend shared libraries.
+        // Order: explicit env var → near the compiled library → build output → system paths.
         let mut search_paths: Vec<std::path::PathBuf> = Vec::new();
 
-        // MNEMEFUSION_DLL_DIR env var (highest priority, user override)
+        // 1. MNEMEFUSION_DLL_DIR env var (highest priority, user override)
         if let Ok(dir) = std::env::var("MNEMEFUSION_DLL_DIR") {
             search_paths.push(std::path::PathBuf::from(dir));
         }
 
-        // Current working directory
+        // 2. Current working directory
         if let Ok(cwd) = std::env::current_dir() {
             search_paths.push(cwd);
         }
 
-        // Directory of the current executable
+        // 3. Directory of the current executable
         if let Ok(exe) = std::env::current_exe() {
             if let Some(dir) = exe.parent() {
                 search_paths.push(dir.to_path_buf());
             }
         }
 
-        // Workspace root (compile-time: CARGO_MANIFEST_DIR parent)
-        // DLLs are typically placed in the workspace root during development
+        // 4. Workspace root (compile-time: CARGO_MANIFEST_DIR parent)
         let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         if let Some(workspace) = manifest_dir.parent() {
             search_paths.push(workspace.to_path_buf());
@@ -449,6 +449,60 @@ impl InferenceEngine {
             let release_dir = workspace.join("target").join("release");
             if release_dir.exists() {
                 search_paths.push(release_dir);
+            }
+        }
+
+        // 5. Auto-detect from llama-cpp-sys-2 build output directory.
+        // cmake places built backends in target/{profile}/build/llama-cpp-sys-2-*/out/build/bin/
+        // On Windows they're in a Release/ subdirectory.
+        if let Some(workspace) = manifest_dir.parent() {
+            for profile in &["release", "debug"] {
+                let build_dir = workspace.join("target").join(profile).join("build");
+                if build_dir.exists() {
+                    if let Ok(entries) = std::fs::read_dir(&build_dir) {
+                        for entry in entries.flatten() {
+                            let name = entry.file_name();
+                            let name_str = name.to_string_lossy();
+                            if name_str.starts_with("llama-cpp-sys-2-") {
+                                let bin_dir = entry.path().join("out").join("build").join("bin");
+                                if bin_dir.exists() {
+                                    // Windows: cmake puts DLLs in bin/Release/
+                                    let release_sub = bin_dir.join("Release");
+                                    if release_sub.exists() {
+                                        search_paths.push(release_sub);
+                                    }
+                                    search_paths.push(bin_dir);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 6. mnemefusion.libs/ directory (maturin Linux wheel bundling).
+        // maturin uses patchelf to bundle shared libs here on Linux pip install.
+        if let Some(workspace) = manifest_dir.parent() {
+            let libs_dir = workspace.join("mnemefusion.libs");
+            if libs_dir.exists() {
+                search_paths.push(libs_dir);
+            }
+        }
+        // Also check relative to CWD (for pip-installed packages run from site-packages)
+        if let Ok(cwd) = std::env::current_dir() {
+            let libs_dir = cwd.join("mnemefusion.libs");
+            if libs_dir.exists() {
+                search_paths.push(libs_dir);
+            }
+        }
+
+        // 7. LD_LIBRARY_PATH / PATH directories (system library search paths)
+        let path_var = if cfg!(target_os = "windows") { "PATH" } else { "LD_LIBRARY_PATH" };
+        if let Ok(paths) = std::env::var(path_var) {
+            for p in std::env::split_paths(&paths) {
+                if p.exists() {
+                    search_paths.push(p);
+                }
             }
         }
 
@@ -479,7 +533,13 @@ impl InferenceEngine {
                 if loaded { break; }
             }
             if !loaded {
-                tracing::warn!("Backend not found: {} (searched {} dirs)", dll_name, search_paths.len());
+                let dirs: Vec<String> = search_paths.iter().map(|p| p.display().to_string()).collect();
+                tracing::warn!(
+                    "Backend not found: {} (searched {} dirs: {})",
+                    dll_name,
+                    search_paths.len(),
+                    dirs.join(", ")
+                );
             }
         }
     }

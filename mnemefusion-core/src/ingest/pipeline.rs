@@ -241,7 +241,7 @@ impl IngestionPipeline {
     ///
     /// Returns the number of memories processed (triples extracted).
     #[cfg(feature = "entity-extraction")]
-    pub fn backfill_kg(&self) -> Result<usize> {
+    pub fn backfill_kg(&self, progress_callback: Option<Box<dyn Fn(usize, usize)>>) -> Result<usize> {
         let triplex = match self.triplex_extractor {
             Some(ref t) => t,
             None => {
@@ -293,6 +293,10 @@ impl IngestionPipeline {
                 Err(e) => {
                     tracing::warn!("Triplex extraction failed for {}: {}", id, e);
                 }
+            }
+
+            if let Some(ref callback) = progress_callback {
+                callback(i + 1, total);
             }
 
             if (i + 1) % 100 == 0 || i + 1 == total {
