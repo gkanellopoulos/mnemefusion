@@ -114,9 +114,11 @@ tests/benchmarks/fixtures/eval_llm_*.json
 tests/benchmarks/results_session*.txt
 tests/benchmarks/session*_log.txt
 
-# One-off debug/analysis scripts (not part of core)
+# One-off debug/analysis/operational scripts (not part of core)
 debug_*.py
 mnemefusion_cuda_wrapper.py
+scripts/download_s_dataset.py
+scripts/remote_rebuild.py
 tests/benchmarks/analyze_*.py
 tests/benchmarks/backfill_*.py
 tests/benchmarks/build_test_*.py
