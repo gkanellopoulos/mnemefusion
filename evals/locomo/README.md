@@ -160,6 +160,23 @@ Evaluated on the full LoCoMo dataset (10 conversations, 1,540 questions, categor
 | Latency P95 | 239ms |
 | Ingestion time | ~1h47m (5,882 docs on A40) |
 
+## Atomized Results (Per-Entity DB Architecture)
+
+MnemeFusion is designed for one `.mfdb` file per entity — matching how memory works in production (one DB per user/customer/project). The atomized benchmark creates one DB per conversation, eliminating cross-entity retrieval noise.
+
+**Setup:** Same as standard, but 10 separate DBs instead of 1 shared DB.
+
+| Metric | Standard (shared DB) | Atomized (per-entity DB) | Delta |
+|--------|---------------------|-------------------------|-------|
+| **Overall accuracy** | **70.7% ± 0.8%** | **72.3% ± 0.1%** | **+1.6** |
+| Single-hop (factual) | 64.5% | 72.0% | +7.5 |
+| Multi-hop (reasoning) | 59.2% | 57.3% | -1.9 |
+| Temporal (time-based) | 63.5% | 71.9% | +8.4 |
+| Open-domain (knowledge) | 76.3% | 78.2% | +1.9 |
+| Recall@20 | 54.0% | 56.2% | +2.2 |
+
+**Key takeaway:** Entity isolation lifts single-hop (+7.5) and temporal (+8.4) significantly — the categories most affected by cross-entity confusion in a shared DB. The standard benchmark is adversarial (10 people in one DB); real-world per-entity accuracy is higher.
+
 ## References
 
 - LoCoMo dataset: [snap-research/locomo](https://github.com/snap-research/locomo)

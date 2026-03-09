@@ -6,7 +6,8 @@ MnemeFusion is evaluated on two established conversational memory benchmarks usi
 
 | Benchmark | Protocol | Questions | MnemeFusion | Status |
 |-----------|----------|-----------|-------------|--------|
-| [LoCoMo](locomo/) | Free-text + LLM-as-judge (Mem0-compatible) | 1,540 (cat 1-4) | **70.7% ± 0.8%** | Verified |
+| [LoCoMo](locomo/) (standard) | Free-text + LLM-as-judge (Mem0-compatible) | 1,540 (cat 1-4) | **70.7% ± 0.8%** | Verified |
+| [LoCoMo](locomo/) (atomized) | Same protocol, per-entity DB | 1,540 (cat 1-4) | **72.3% ± 0.1%** | Verified |
 | [LongMemEval](longmemeval/) | Binary yes/no judge (official paper protocol) | 500 | 90.0% (oracle) | S-mode in progress |
 
 ## Methodology
