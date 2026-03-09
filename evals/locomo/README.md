@@ -124,10 +124,41 @@ The script prints a methodology header, per-category breakdown, recall@K metrics
 | Mem0 | 66.9% | Free-text + LLM judge | Reported on their GitHub |
 | OpenAI Memory | 52.9% | Free-text + LLM judge | Reported |
 | Hindsight | 89.6% | Free-text + LLM judge | Research system |
-| MnemeFusion | TBD | Free-text + LLM judge | Standard protocol |
+| **MnemeFusion** | **70.7% ± 0.8%** | Free-text + LLM judge | 3 runs, 1540q, Phi-4-mini extraction on A40 |
 | MnemeFusion (MCQ) | 70.2% | MCQ (non-standard) | Internal metric |
 
 *Note: Competitor numbers are unverified reference points. Direct comparison requires running on the same dataset scope with the same protocol.*
+
+## Results
+
+Evaluated on the full LoCoMo dataset (10 conversations, 1,540 questions, categories 1-4) with 3 independent runs.
+
+**Setup:** Phi-4-mini-instruct (Q4_K_M, 2.5GB) for entity extraction, NVIDIA A40 GPU, single-pass ingestion.
+
+| Metric | Score |
+|--------|-------|
+| **Overall accuracy** | **70.7% ± 0.8%** |
+| Per-run accuracies | 71.2%, 71.2%, 69.8% |
+
+### Per-Category Breakdown
+
+| Category | Count | Accuracy | R@5 | R@10 | R@20 |
+|----------|-------|----------|-----|------|------|
+| Single-hop (factual) | 282 | 64.5% | 14% | 21% | 33% |
+| Multi-hop (reasoning) | 321 | 59.2% | 44% | 49% | 57% |
+| Temporal (time-based) | 96 | 63.5% | 21% | 27% | 36% |
+| Open-domain (knowledge) | 841 | 76.3% | 40% | 48% | 62% |
+
+### Retrieval & Performance
+
+| Metric | Value |
+|--------|-------|
+| Recall@5 | 35.0% |
+| Recall@10 | 42.2% |
+| Recall@20 | 54.0% |
+| Latency P50 | 194ms |
+| Latency P95 | 239ms |
+| Ingestion time | ~1h47m (5,882 docs on A40) |
 
 ## References
 

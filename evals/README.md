@@ -4,10 +4,10 @@ MnemeFusion is evaluated on two established conversational memory benchmarks usi
 
 ## Benchmarks
 
-| Benchmark | Protocol | Metric | Questions | Status |
-|-----------|----------|--------|-----------|--------|
-| [LoCoMo](locomo/) | Free-text + LLM-as-judge (Mem0-compatible) | Accuracy | 1,540 (cat 1-4) | Ready |
-| [LongMemEval](longmemeval/) | Binary yes/no judge (official paper protocol) | Task-averaged accuracy | 500 | Ready |
+| Benchmark | Protocol | Questions | MnemeFusion | Status |
+|-----------|----------|-----------|-------------|--------|
+| [LoCoMo](locomo/) | Free-text + LLM-as-judge (Mem0-compatible) | 1,540 (cat 1-4) | **70.7% ± 0.8%** | Verified |
+| [LongMemEval](longmemeval/) | Binary yes/no judge (official paper protocol) | 500 | 90.0% (oracle) | S-mode in progress |
 
 ## Methodology
 

@@ -87,7 +87,7 @@ def create_per_conversation_dbs(
     embedder: SentenceTransformer,
     use_llm: bool = False,
     llm_model_path: str = None,
-    llm_tier: str = "quality",
+    llm_tier: str = "balanced",
     extraction_passes: int = 1,
 ) -> Dict[str, str]:
     """
@@ -192,11 +192,12 @@ def run_atomized_evaluation(
     top_k: int = TOP_K,
     use_llm: bool = False,
     llm_model_path: str = None,
-    llm_tier: str = "quality",
+    llm_tier: str = "balanced",
     extraction_passes: int = 1,
     skip_ingestion: bool = False,
     runs: int = 1,
     verbose: bool = False,
+    output_path: str = None,
 ) -> EvaluationResults:
     """Run LoCoMo evaluation with one DB per conversation."""
 
@@ -445,7 +446,7 @@ def run_atomized_evaluation(
         print(f"  Per-run:  {['%.1f%%' % (a*100) for a in run_accuracies]}")
 
     # Save results
-    results_path = os.path.join(
+    results_path = output_path or os.path.join(
         Path(__file__).parent, "fixtures", "locomo_results_atomized.json"
     )
     os.makedirs(os.path.dirname(results_path), exist_ok=True)
@@ -489,7 +490,7 @@ def main():
         description="LoCoMo Atomized Evaluation (one DB per conversation)"
     )
     parser.add_argument("--dataset", type=str,
-                        default=str(Path(__file__).parent.parent / "tests" / "benchmarks" / "fixtures" / "locomo10.json"),
+                        default=str(Path(__file__).parent / "locomo10.json"),
                         help="Path to locomo10.json")
     parser.add_argument("--db-dir", type=str, default=None,
                         help="Directory with per-conversation .mfdb files")
@@ -499,7 +500,7 @@ def main():
                         help="Enable LLM entity extraction during ingestion")
     parser.add_argument("--llm-model", type=str, default=None,
                         help="Path to GGUF model file")
-    parser.add_argument("--llm-tier", type=str, default="quality",
+    parser.add_argument("--llm-tier", type=str, default="balanced",
                         help="Model tier: balanced or quality")
     parser.add_argument("--extraction-passes", type=int, default=1)
     parser.add_argument("--num-conversations", type=int, default=None)
@@ -507,6 +508,8 @@ def main():
     parser.add_argument("--categories", type=int, nargs="+", default=None)
     parser.add_argument("--runs", type=int, default=1,
                         help="Number of evaluation runs (for mean +/- stddev)")
+    parser.add_argument("--output", type=str, default=None,
+                        help="Path to save results JSON")
     parser.add_argument("--verbose", action="store_true")
 
     args = parser.parse_args()
@@ -532,6 +535,7 @@ def main():
         skip_ingestion=args.skip_ingestion,
         runs=args.runs,
         verbose=args.verbose,
+        output_path=args.output,
     )
 
 
