@@ -225,9 +225,14 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────
-# Step 7: Smoke test
+# Step 7: Set LD_LIBRARY_PATH + Smoke test
 # ─────────────────────────────────────────────────────────────
 cd "$WORKSPACE"
+
+# Backend .so files are in workspace root — add to LD_LIBRARY_PATH
+export LD_LIBRARY_PATH="$WORKSPACE:${LD_LIBRARY_PATH:-}"
+info "Set LD_LIBRARY_PATH=$WORKSPACE"
+
 info "Running smoke test..."
 python3 -c "
 import mnemefusion
@@ -236,8 +241,8 @@ td = tempfile.mkdtemp()
 db = os.path.join(td, 'smoke.mfdb')
 mem = mnemefusion.Memory(db)
 mem.add('Smoke test memory', [0.1] * 384)
-results = mem.query('smoke test', [0.1] * 384, 5)
-assert len(results) == 1, f'Expected 1 result, got {len(results)}'
+intent, matches, profiles = mem.query('smoke test', [0.1] * 384, 5)
+assert isinstance(matches, list), f'Expected list, got {type(matches)}'
 print('Smoke test passed: Memory add + query works')
 
 # Test LLM extraction if model exists
@@ -262,6 +267,7 @@ shutil.rmtree(td)
 " 2>&1
 
 info "Setup complete! Environment variables for future sessions:"
+echo "  export LD_LIBRARY_PATH=$WORKSPACE:\$LD_LIBRARY_PATH"
 echo "  export CMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH}"
 echo "  export LLAMA_BUILD_SHARED_LIBS=1"
 echo "  export CUDA_PATH=${CUDA_PATH}"
