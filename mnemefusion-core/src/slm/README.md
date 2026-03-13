@@ -180,4 +180,4 @@ Once authenticated:
 
 - HuggingFace authentication issues: https://huggingface.co/docs/hub/security-tokens
 - Gemma license questions: https://ai.google.dev/gemma/terms
-- MnemeFusion issues: https://github.com/yourusername/mnemefusion/issues
+- MnemeFusion issues: https://github.com/gkanellopoulos/mnemefusion/issues

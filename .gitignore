@@ -167,3 +167,7 @@ apps/.env
 # Machine-specific Cargo config (contains hardcoded CUDA paths)
 # Each machine needs its own config — DO NOT commit
 .cargo/config.toml
+
+# Dev-only convenience scripts (contain machine-specific paths)
+scripts/start_*_task.py
+scripts/*.bat

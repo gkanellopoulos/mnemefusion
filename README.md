@@ -35,8 +35,9 @@ LoCoMo uses the Mem0-compatible evaluation protocol (GPT-4o-mini judge, binary C
 ### Python
 
 ```bash
-# Build from source (requires Rust toolchain)
-cd mnemefusion-python
+# Build from source (requires Rust toolchain — pre-built wheels coming soon)
+git clone https://github.com/gkanellopoulos/mnemefusion.git
+cd mnemefusion/mnemefusion-python
 pip install maturin
 maturin develop --release
 ```
@@ -87,8 +88,20 @@ intent, results, profiles = mem.query("What are my hobbies?")
 
 ### With LLM Entity Extraction
 
+Entity extraction uses a local GGUF model (no cloud API needed). Download a supported model:
+
+```bash
+# Recommended: Phi-4-mini (3.8B, ~2.3GB, best accuracy)
+pip install huggingface-hub
+huggingface-cli download microsoft/Phi-4-mini-instruct-gguf Phi-4-mini-instruct-Q4_K_M.gguf --local-dir models/
+
+# Alternative: Qwen3-4B (~2.5GB, good accuracy)
+huggingface-cli download Qwen/Qwen3-4B-GGUF qwen3-4b-q4_k_m.gguf --local-dir models/
+```
+
 ```python
-mem = mnemefusion.Memory("./brain.mfdb", config={"llm_model": "path/to/model.gguf"})
+mem = mnemefusion.Memory("./brain.mfdb")
+mem.enable_llm_entity_extraction("models/Phi-4-mini-instruct-Q4_K_M.gguf", tier="balanced")
 
 # Entity extraction runs automatically on add()
 mem.add("Caroline studies marine biology at Stanford")
@@ -98,13 +111,15 @@ profile = mem.get_entity_profile("caroline")
 # {'name': 'caroline', 'entity_type': 'person', 'facts': {...}, 'summary': '...'}
 ```
 
+Requires a GPU with 4GB+ VRAM for reasonable speed. CPU-only works but is ~10x slower. Build with `--features entity-extraction-cuda` for GPU acceleration.
+
 ### Rust
 
-Add to your `Cargo.toml`:
+Add to your `Cargo.toml` (not yet on crates.io — use a git dependency for now):
 
 ```toml
 [dependencies]
-mnemefusion-core = "0.1"
+mnemefusion-core = { git = "https://github.com/gkanellopoulos/mnemefusion" }
 ```
 
 ```rust
@@ -268,7 +283,7 @@ let engine = MemoryEngine::open("./brain.mfdb", config)?;
 ### Build
 
 ```bash
-git clone https://github.com/georgek/mnemefusion.git
+git clone https://github.com/gkanellopoulos/mnemefusion.git
 cd mnemefusion
 
 # Build core library

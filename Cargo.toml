@@ -10,7 +10,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["George K."]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/georgek/mnemefusion"
+repository = "https://github.com/gkanellopoulos/mnemefusion"
 
 [workspace.dependencies]
 # Storage

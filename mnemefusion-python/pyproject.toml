@@ -24,8 +24,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/mnemefusion"
-Repository = "https://github.com/yourusername/mnemefusion"
+Homepage = "https://github.com/gkanellopoulos/mnemefusion"
+Repository = "https://github.com/gkanellopoulos/mnemefusion"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
