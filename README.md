@@ -35,7 +35,7 @@ LoCoMo uses a standard free-text + LLM-as-judge protocol (GPT-4o-mini judge, bin
 
 ## Quick Start
 
-For a complete runnable example, see [`examples/minimal.py`](examples/minimal.py) — no GPU or GGUF model required.
+For a complete runnable example, see [`examples/minimal.py`](examples/minimal.py) — no GPU or GGUF model required. For an interactive demo, see the [Chat Demo](apps/) (Streamlit).
 
 ### Python
 

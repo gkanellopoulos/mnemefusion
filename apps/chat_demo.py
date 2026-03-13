@@ -49,12 +49,17 @@ DATA_DIR.mkdir(exist_ok=True)
 # Workspace root (for resolving model paths and DLLs)
 WORKSPACE_ROOT = Path(__file__).parent.parent
 
-EMBEDDING_DIM = 768
+EMBEDDING_DIM = 384
 EMBEDDING_MODEL = "BAAI/bge-base-en-v1.5"
 LLM_MODEL = "gpt-4o-mini"
 
-# LLM entity extraction model — REQUIRED for entity dimension
-GGUF_MODEL_PATH = WORKSPACE_ROOT / "models" / "qwen3-4b" / "Qwen3-4B-Instruct-2507.Q4_K_M.gguf"
+# LLM entity extraction model — optional, enables entity dimension
+# Auto-detected: tries Phi-4-mini (recommended), falls back to Qwen3-4B
+_MODEL_CANDIDATES = [
+    WORKSPACE_ROOT / "models" / "phi-4-mini" / "Phi-4-mini-instruct-Q4_K_M.gguf",
+    WORKSPACE_ROOT / "models" / "qwen3-4b" / "Qwen3-4B-Instruct-2507.Q4_K_M.gguf",
+]
+GGUF_MODEL_PATH = next((p for p in _MODEL_CANDIDATES if p.exists()), _MODEL_CANDIDATES[0])
 
 SYSTEM_PROMPT = """\
 You are a helpful assistant with access to a personal memory system.
