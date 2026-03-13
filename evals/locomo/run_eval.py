@@ -2089,8 +2089,8 @@ Examples:
 
     parser.add_argument(
         "--dataset",
-        default="tests/benchmarks/fixtures/locomo10.json",
-        help="Path to LoCoMo dataset (default: tests/benchmarks/fixtures/locomo10.json)"
+        default="evals/locomo/locomo10.json",
+        help="Path to LoCoMo dataset (default: evals/locomo/locomo10.json)"
     )
     parser.add_argument(
         "--num-conversations",
