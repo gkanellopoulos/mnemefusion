@@ -171,6 +171,8 @@ apps/.env
 # Each machine needs its own config — DO NOT commit
 .cargo/config.toml
 
-# Dev-only convenience scripts (contain machine-specific paths)
+# Dev-only scripts (machine-specific paths, one-off debugging/testing)
 scripts/start_*_task.py
 scripts/*.bat
+scripts/debug_extraction.py
+scripts/test_triplex.py
