@@ -130,14 +130,9 @@ impl InferenceEngine {
             guard.as_mut().unwrap().clear_kv_cache();
         } else {
             let n_batch = 512u32;
-            // Disable Flash Attention — auto-enables on Ampere GPUs (A40 etc.)
-            // but produces garbage output with llama-cpp-2 v0.1.132 and Phi-4-mini.
             let ctx_params = LlamaContextParams::default()
                 .with_n_ctx(NonZeroU32::new(self.n_ctx))
-                .with_n_batch(n_batch)
-                .with_flash_attention_policy(
-                    llama_cpp_sys_2::LLAMA_FLASH_ATTN_TYPE_DISABLED,
-                );
+                .with_n_batch(n_batch);
 
             let backend = LLAMA_BACKEND.get()
                 .ok_or_else(|| Error::InferenceError("Backend not initialized".to_string()))?;

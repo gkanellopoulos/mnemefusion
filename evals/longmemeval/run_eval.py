@@ -762,6 +762,51 @@ def run_evaluation(args):
     print(f"\n  Results saved to: {results_path}")
 
 
+def merge_worker_results(args):
+    """Merge per-worker result files into a single combined results file."""
+    import glob as glob_mod
+
+    scoring_suffix = "detailed" if args.detailed_scoring else "binary"
+    pattern = str(FIXTURES_DIR / f"longmemeval_results_{args.mode}_{scoring_suffix}_w*.json")
+    worker_files = sorted(glob_mod.glob(pattern))
+    if not worker_files:
+        print(f"ERROR: No worker files found matching {pattern}")
+        sys.exit(1)
+
+    all_results = []
+    seen_ids = set()
+    for wf in worker_files:
+        with open(wf, encoding="utf-8") as f:
+            data = json.load(f)
+        for r in data:
+            if r["question_id"] not in seen_ids:
+                all_results.append(r)
+                seen_ids.add(r["question_id"])
+        print(f"  Loaded {len(data)} from {Path(wf).name}")
+
+    merged_path = FIXTURES_DIR / f"longmemeval_results_{args.mode}_{scoring_suffix}.json"
+    with open(merged_path, "w", encoding="utf-8") as f:
+        json.dump(all_results, f, indent=2, ensure_ascii=False)
+    print(f"  Merged {len(all_results)} results -> {merged_path.name}")
+
+    valid = [r for r in all_results if r["score"] >= 0]
+    if valid:
+        cat_scores = defaultdict(list)
+        for r in valid:
+            cat_scores[r["question_type"]].append(r["score"])
+        overall = sum(r["score"] for r in valid) / len(valid) * 100
+        cat_accs = {c: sum(s) / len(s) * 100 for c, s in cat_scores.items()}
+        task_avg = sum(cat_accs.values()) / max(1, len(cat_accs))
+        r5 = sum(r.get("recall_at_5", 0) for r in valid) / len(valid)
+        r10 = sum(r.get("recall_at_10", 0) for r in valid) / len(valid)
+        r20 = sum(r.get("recall_at_20", 0) for r in valid) / len(valid)
+        cost = sum(r.get("api_cost", 0) for r in all_results)
+        print(f"  Overall: {overall:.1f}%  Task-avg: {task_avg:.1f}%")
+        print(f"  R@5={r5:.1%}  R@10={r10:.1%}  R@20={r20:.1%}  Cost: ${cost:.2f}")
+        for c in sorted(cat_accs):
+            print(f"  {c:<30} n={len(cat_scores[c]):>3}  acc={cat_accs[c]:>5.1f}%")
+
+
 # =============================================================================
 # Entry Point
 # =============================================================================
@@ -796,45 +841,7 @@ if __name__ == "__main__":
 
     # Merge mode
     if args.merge:
-        scoring_suffix = "detailed" if args.detailed_scoring else "binary"
-        import glob as glob_mod
-        pattern = str(FIXTURES_DIR / f"longmemeval_results_{args.mode}_{scoring_suffix}_w*.json")
-        worker_files = sorted(glob_mod.glob(pattern))
-        if not worker_files:
-            print(f"ERROR: No worker files found matching {pattern}")
-            sys.exit(1)
-        all_results = []
-        seen_ids = set()
-        for wf in worker_files:
-            import json as json2
-            with open(wf, encoding="utf-8") as f:
-                data = json2.load(f)
-            for r in data:
-                if r["question_id"] not in seen_ids:
-                    all_results.append(r)
-                    seen_ids.add(r["question_id"])
-            print(f"  Loaded {len(data)} from {wf.split(chr(47))[-1]}")
-        merged_path = FIXTURES_DIR / f"longmemeval_results_{args.mode}_{scoring_suffix}.json"
-        with open(merged_path, "w", encoding="utf-8") as f:
-            json.dump(all_results, f, indent=2, ensure_ascii=False)
-        print(f"  Merged {len(all_results)} results -> {merged_path.name}")
-        valid = [r for r in all_results if r["score"] >= 0]
-        if valid:
-            from collections import defaultdict as dd
-            cat_scores = dd(list)
-            for r in valid:
-                cat_scores[r["question_type"]].append(r["score"])
-            overall = sum(r["score"] for r in valid) / len(valid) * 100
-            cat_accs = {c: sum(s)/len(s)*100 for c,s in cat_scores.items()}
-            task_avg = sum(cat_accs.values()) / max(1, len(cat_accs))
-            r5 = sum(r.get("recall_at_5",0) for r in valid) / len(valid)
-            r10 = sum(r.get("recall_at_10",0) for r in valid) / len(valid)
-            r20 = sum(r.get("recall_at_20",0) for r in valid) / len(valid)
-            cost = sum(r.get("api_cost",0) for r in all_results)
-            print(f"  Overall: {overall:.1f}%  Task-avg: {task_avg:.1f}%")
-            print(f"  R@5={r5:.1%}  R@10={r10:.1%}  R@20={r20:.1%}  Cost: ${cost:.2f}")
-            for c in sorted(cat_accs):
-                print(f"  {c:<30} n={len(cat_scores[c]):>3}  acc={cat_accs[c]:>5.1f}%")
+        merge_worker_results(args)
         sys.exit(0)
 
     # Validate worker args
