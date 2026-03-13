@@ -4,6 +4,8 @@
 
 use crate::error::{Error, Result};
 use crate::inference::JsonGrammar;
+#[cfg(target_os = "linux")]
+use std::ffi::c_void;
 use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::context::LlamaContext;
 use llama_cpp_2::llama_backend::LlamaBackend;
@@ -15,6 +17,12 @@ use llama_cpp_2::token::LlamaToken;
 use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
+
+#[cfg(target_os = "linux")]
+unsafe extern "C" {
+    #[link_name = "dlopen"]
+    fn libc_dlopen(filename: *const std::ffi::c_char, flags: i32) -> *mut c_void;
+}
 
 /// Parameters for controlling LLM text generation
 ///
@@ -398,9 +406,111 @@ impl InferenceEngine {
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
+    /// Preload torch's bundled CUDA runtime to prevent soname conflicts.
+    ///
+    /// When libggml-cuda.so is loaded, it pulls in the system libcudart.so.12.
+    /// If PyTorch is installed and bundles a different version of libcudart.so.12
+    /// (e.g., CUDA 12.8 vs system CUDA 12.4), the system version "wins" the soname
+    /// and torch fails with missing symbols like `cudaGetDriverEntryPointByVersion`.
+    ///
+    /// Fix: find torch's bundled cudart and preload it with RTLD_GLOBAL before
+    /// loading ggml-cuda.so, so the newer version claims the soname first.
+    #[cfg(target_os = "linux")]
+    fn preload_torch_cudart() {
+        // Common locations for torch's bundled CUDA runtime
+        let py_lib_dirs: Vec<std::path::PathBuf> = std::env::var("PATH")
+            .unwrap_or_default()
+            .split(':')
+            .filter_map(|p| {
+                let bin = std::path::Path::new(p);
+                bin.parent().map(|base| base.join("lib"))
+            })
+            .collect();
+
+        // Search for nvidia/cuda_runtime/lib/libcudart.so.12 in site-packages
+        let site_packages_patterns = [
+            // venv or conda
+            "lib/python*/site-packages/nvidia/cuda_runtime/lib",
+            "lib/python3.*/site-packages/nvidia/cuda_runtime/lib",
+        ];
+
+        // Also check sys.path via PYTHONPATH-adjacent locations
+        let mut search_dirs: Vec<std::path::PathBuf> = Vec::new();
+
+        // Check the Python process's site-packages by scanning known venv structures
+        for lib_dir in &py_lib_dirs {
+            if let Ok(entries) = std::fs::read_dir(lib_dir) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name();
+                    let name_str = name.to_string_lossy();
+                    if name_str.starts_with("python3") {
+                        let cuda_rt = entry.path()
+                            .join("site-packages")
+                            .join("nvidia")
+                            .join("cuda_runtime")
+                            .join("lib");
+                        if cuda_rt.exists() {
+                            search_dirs.push(cuda_rt);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also check common system Python locations
+        for base in &["/usr/lib", "/usr/local/lib"] {
+            if let Ok(entries) = std::fs::read_dir(base) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name();
+                    let name_str = name.to_string_lossy();
+                    if name_str.starts_with("python3") {
+                        let cuda_rt = entry.path()
+                            .join("dist-packages")
+                            .join("nvidia")
+                            .join("cuda_runtime")
+                            .join("lib");
+                        if cuda_rt.exists() {
+                            search_dirs.push(cuda_rt);
+                        }
+                    }
+                }
+            }
+        }
+
+        for dir in &search_dirs {
+            let cudart = dir.join("libcudart.so.12");
+            if cudart.exists() {
+                // RTLD_GLOBAL (0x100) | RTLD_NOW (0x2) — make symbols globally visible
+                // so they take precedence over system cudart loaded by ggml-cuda.so
+                let path_cstr = match std::ffi::CString::new(cudart.to_string_lossy().as_bytes()) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+                let handle = unsafe { libc_dlopen(path_cstr.as_ptr(), 0x2 | 0x100) };
+                if !handle.is_null() {
+                    tracing::info!(
+                        "Preloaded torch cudart from {} to prevent soname conflict",
+                        cudart.display()
+                    );
+                    // Intentionally leak the handle — cudart must stay loaded
+                    return;
+                }
+            }
+        }
+        // Not found — that's fine, torch may not be installed
+        tracing::debug!("No torch cudart found to preload (torch may not be installed)");
+    }
+
     /// Load ggml backend DLLs (CPU + CUDA) from known locations
     fn load_ggml_backends(load_cuda: bool) {
         use std::ffi::CString;
+
+        // On Linux, preload torch's CUDA runtime before loading ggml-cuda.so
+        // to prevent cudart soname conflicts between system CUDA and torch's bundled CUDA.
+        #[cfg(target_os = "linux")]
+        if load_cuda {
+            Self::preload_torch_cudart();
+        }
 
         // Backend shared libraries to load. CPU is always required.
         // CUDA is skipped when gpu_layers=0 to avoid allocating VRAM compute buffers
