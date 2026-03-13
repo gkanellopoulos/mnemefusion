@@ -7,6 +7,8 @@ MnemeFusion provides multi-dimensional memory indexing (semantic, temporal, caus
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
 
+*MnemeFusion was designed and directed by [George Kanellopoulos](https://github.com/gkanellopoulos), with implementation substantially assisted by [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (Anthropic). The project grew out of an exploration into building a complex, multi-dimensional AI memory engine through human-AI collaboration — the commit history reflects the authentic development process.*
+
 ## Features
 
 - **Five Retrieval Pathways**: Semantic vector search, BM25 keyword matching, temporal range queries, causal graph traversal, entity profile scoring
@@ -353,6 +355,7 @@ Built on excellent open-source libraries:
 - [petgraph](https://github.com/petgraph/petgraph) — Graph algorithms
 - [llama-cpp-2](https://github.com/utilityai/llama-cpp-rs) — Rust bindings for llama.cpp
 - [PyO3](https://github.com/PyO3/pyo3) — Rust-Python interop
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — AI-assisted development
 
 ---
 
