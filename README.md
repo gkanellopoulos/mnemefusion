@@ -158,9 +158,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Architecture
 
-<p align="center">
-  <img src="mnemefusion_architecture_v2.svg" alt="MnemeFusion Architecture" width="680">
-</p>
+![MnemeFusion Architecture](mnemefusion_architecture_v2.svg)
 
 ## Python API Reference
 
