@@ -91,12 +91,24 @@ python run_eval.py \
     --max-questions 50
 ```
 
+### Retrieval-Only Mode
+
+Measure retrieval quality (R@5, R@10, R@20, MRR) without any LLM calls — no OpenAI API key needed:
+
+```bash
+python run_eval.py \
+    --db-path <path-to.mfdb> \
+    --skip-ingestion \
+    --retrieval-only
+```
+
 ### Key Arguments
 
 | Argument | Description |
 |----------|-------------|
 | `--db-path PATH` | Path to .mfdb database file |
 | `--skip-ingestion` | Skip ingestion, use existing database |
+| `--retrieval-only` | Retrieval metrics only (no LLM, no API key needed) |
 | `--mcq` | MCQ mode (deterministic, non-standard) |
 | `--runs N` | Number of runs (default: 1, recommend 3 for publication) |
 | `--use-llm` | Enable LLM entity extraction during ingestion |

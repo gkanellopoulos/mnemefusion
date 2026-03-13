@@ -34,6 +34,8 @@ LoCoMo uses a standard free-text + LLM-as-judge protocol (GPT-4o-mini judge, bin
 
 ## Quick Start
 
+For a complete runnable example, see [`examples/minimal.py`](examples/minimal.py) — no GPU or GGUF model required.
+
 ### Python
 
 ```bash
@@ -242,6 +244,36 @@ let config = Config::new()
     .with_entity_extraction(true);
 
 let engine = MemoryEngine::open("./brain.mfdb", config)?;
+```
+
+## Error Handling
+
+All errors surface as standard Python exceptions — no custom exception types.
+
+| Exception | When | Recoverable |
+|-----------|------|-------------|
+| `IOError` | Database open/close fails, disk full, file not found, concurrent open of same file | Usually yes (fix path, free disk, close other instance) |
+| `ValueError` | Wrong embedding dimension, invalid memory ID, bad config | Yes (fix input) |
+| `RuntimeError` | Calling methods after `close()` | Reopen with a new `Memory()` instance |
+
+```python
+import mnemefusion
+
+mem = mnemefusion.Memory("brain.mfdb")
+
+# After close(), all operations raise RuntimeError
+mem.close()
+try:
+    mem.add("text")
+except RuntimeError as e:
+    print(e)  # "Database is closed"
+
+# Each .mfdb file supports one open instance at a time
+mem1 = mnemefusion.Memory("brain.mfdb")
+try:
+    mem2 = mnemefusion.Memory("brain.mfdb")  # Same file
+except IOError as e:
+    print(e)  # File lock error
 ```
 
 ## Building from Source

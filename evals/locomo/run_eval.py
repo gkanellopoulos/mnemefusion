@@ -307,6 +307,7 @@ class EvaluationResults:
     recall_at_5: float = 0.0
     recall_at_10: float = 0.0
     recall_at_20: float = 0.0
+    mrr: float = 0.0
 
     # Timing
     total_ingestion_time_s: float = 0.0
@@ -1495,6 +1496,7 @@ def run_evaluation(
     mcq_path: str = None,
     adaptive_k_threshold: float = 0.0,
     runs: int = 1,
+    retrieval_only: bool = False,
 ) -> EvaluationResults:
     """
     Run full industry-standard evaluation.
@@ -1611,7 +1613,7 @@ def run_evaluation(
         print(f"  [Session Expand] Enabled — will expand sessions with >= 2 retrieved turns")
     if neighbor_expand:
         print(f"  [Neighbor Expand] Enabled — will add ±2 neighboring turns for each retrieved result")
-    llm = LLMClient(model="gpt-4o-mini")
+    llm = None if retrieval_only else LLMClient(model="gpt-4o-mini")
 
     # Database: --db-path for persistent storage, else temporary (auto-cleanup)
     _temp_ctx = tempfile.TemporaryDirectory() if not db_path else contextlib.nullcontext()
@@ -1803,7 +1805,13 @@ def run_evaluation(
 
                 # Generate answer (or select MCQ choice)
                 gen_start = time.time()
-                if mcq and question in mcq_map:
+                if retrieval_only:
+                    answer = ""
+                    tokens = 0
+                    judge_score = 0
+                    f1 = 0.0
+                    bleu = 0.0
+                elif mcq and question in mcq_map:
                     # MCQ mode: single LLM call to select from 10 choices
                     mcq_data = mcq_map[question]
                     selected_idx, tokens = llm.select_mcq_answer(
@@ -1853,7 +1861,9 @@ def run_evaluation(
 
                 if verbose:
                     recall_str = f"R@10: {r_at_10:.0%}" if evidence_set else "R@10: N/A"
-                    if mcq and question in mcq_map:
+                    if retrieval_only:
+                        print(f"    {recall_str} | R@20: {r_at_20:.0%}")
+                    elif mcq and question in mcq_map:
                         print(f"    MCQ: {'CORRECT' if judge_score else 'WRONG'} (selected: {answer[:50]}) | {recall_str}")
                     else:
                         print(f"    Judge: {'CORRECT' if judge_score else 'WRONG'} | F1: {f1:.2f} | BLEU: {bleu:.2f} | {recall_str}")
@@ -1868,7 +1878,7 @@ def run_evaluation(
                 num_conversations=len(conversations),
                 total_ingestion_time_s=ingestion_time,
                 total_evaluation_time_s=eval_time,
-                total_tokens_used=llm.total_tokens
+                total_tokens_used=0 if retrieval_only else llm.total_tokens
             )
 
             # Overall metrics
@@ -1884,6 +1894,18 @@ def run_evaluation(
                     final_results.recall_at_5 = sum(r.recall_at_5 for r in results_with_evidence) / len(results_with_evidence) * 100
                     final_results.recall_at_10 = sum(r.recall_at_10 for r in results_with_evidence) / len(results_with_evidence) * 100
                     final_results.recall_at_20 = sum(r.recall_at_20 for r in results_with_evidence) / len(results_with_evidence) * 100
+
+                    # MRR: reciprocal rank of first evidence hit in retrieved results
+                    mrr_scores = []
+                    for r in results_with_evidence:
+                        ev_set = set(r.evidence_ids)
+                        rr = 0.0
+                        for rank, rid in enumerate(r.retrieved_dialog_ids, 1):
+                            if rid in ev_set:
+                                rr = 1.0 / rank
+                                break
+                        mrr_scores.append(rr)
+                    final_results.mrr = sum(mrr_scores) / len(mrr_scores) * 100
 
                 # Latency percentiles
                 sorted_latencies = sorted(latencies)
@@ -1913,11 +1935,14 @@ def run_evaluation(
 
             # Print results for this run
             if runs > 1:
-                print(f"\n  Run {run_idx + 1} accuracy: {final_results.llm_judge_accuracy:.1f}%")
+                if retrieval_only:
+                    print(f"\n  Run {run_idx + 1} R@10: {final_results.recall_at_10:.1f}%  R@20: {final_results.recall_at_20:.1f}%")
+                else:
+                    print(f"\n  Run {run_idx + 1} accuracy: {final_results.llm_judge_accuracy:.1f}%")
             else:
-                print_results(final_results)
+                print_results(final_results, retrieval_only=retrieval_only)
 
-            run_accuracies.append(final_results.llm_judge_accuracy)
+            run_accuracies.append(final_results.recall_at_10 if retrieval_only else final_results.llm_judge_accuracy)
 
             # Save detailed results if requested (last run's results)
             if output_path and run_idx == runs - 1:
@@ -1929,22 +1954,23 @@ def run_evaluation(
             mean_acc = statistics.mean(run_accuracies)
             stddev_acc = statistics.stdev(run_accuracies) if len(run_accuracies) > 1 else 0.0
 
-            print_results(final_results)  # Print last run's detailed results
+            print_results(final_results, retrieval_only=retrieval_only)  # Print last run's detailed results
 
             print(f"\n{'=' * 70}")
+            metric_name = "R@10" if retrieval_only else "accuracy"
             print(f"MULTI-RUN SUMMARY ({runs} runs)")
             print(f"{'=' * 70}")
-            print(f"  Per-run accuracies: {', '.join(f'{a:.1f}%' for a in run_accuracies)}")
-            print(f"  Mean accuracy:      {mean_acc:.1f}% ± {stddev_acc:.1f}%")
+            print(f"  Per-run {metric_name}: {', '.join(f'{a:.1f}%' for a in run_accuracies)}")
+            print(f"  Mean {metric_name}:      {mean_acc:.1f}% ± {stddev_acc:.1f}%")
             print(f"{'=' * 70}")
 
         return final_results
 
 
-def print_results(results: EvaluationResults):
+def print_results(results: EvaluationResults, retrieval_only: bool = False):
     """Print formatted evaluation results"""
     print("\n" + "=" * 70)
-    print("EVALUATION RESULTS")
+    print("EVALUATION RESULTS" + (" (retrieval-only)" if retrieval_only else ""))
     print("=" * 70)
 
     print(f"\nDataset:")
@@ -1952,25 +1978,27 @@ def print_results(results: EvaluationResults):
     print(f"  Documents:         {results.num_documents}")
     print(f"  Questions:         {results.total_questions}")
 
-    print(f"\n{'='*70}")
-    print("OVERALL METRICS")
-    print("=" * 70)
-    print(f"  Accuracy:            {results.llm_judge_accuracy:.1f}%")
-    print(f"  F1 Score:            {results.avg_f1_score:.1f}%")
-    print(f"  BLEU-1 Score:        {results.avg_bleu_score:.1f}%")
+    if not retrieval_only:
+        print(f"\n{'='*70}")
+        print("OVERALL METRICS")
+        print("=" * 70)
+        print(f"  Accuracy:            {results.llm_judge_accuracy:.1f}%")
+        print(f"  F1 Score:            {results.avg_f1_score:.1f}%")
+        print(f"  BLEU-1 Score:        {results.avg_bleu_score:.1f}%")
 
     print(f"\n{'='*70}")
-    print("RETRIEVAL RECALL (Solution 6)")
+    print("RETRIEVAL METRICS")
     print("=" * 70)
     print(f"  Recall@5:            {results.recall_at_5:.1f}%")
     print(f"  Recall@10:           {results.recall_at_10:.1f}%")
     print(f"  Recall@20:           {results.recall_at_20:.1f}%")
+    print(f"  MRR:                 {results.mrr:.1f}%")
     if results.recall_at_10 > 0 and results.recall_at_20 > 0:
         if results.recall_at_10 < 50 and results.recall_at_20 > 70:
             print(f"  Diagnosis:           Ranking problem (right memories found but buried)")
         elif results.recall_at_20 < 50:
             print(f"  Diagnosis:           Recall problem (memories not found at all)")
-        elif results.recall_at_10 > 70 and results.llm_judge_accuracy < 60:
+        elif not retrieval_only and results.recall_at_10 > 70 and results.llm_judge_accuracy < 60:
             print(f"  Diagnosis:           Reasoning problem (outside MnemeFusion scope)")
 
     print(f"\n{'='*70}")
@@ -1981,9 +2009,10 @@ def print_results(results: EvaluationResults):
     print(f"    P50:               {results.p50_retrieval_latency_ms:.1f}ms")
     print(f"    P95:               {results.p95_retrieval_latency_ms:.1f}ms")
     print(f"    P99:               {results.p99_retrieval_latency_ms:.1f}ms")
-    print(f"  Token Consumption:")
-    print(f"    Avg per question:  {results.avg_tokens_per_question:.0f}")
-    print(f"    Total:             {results.total_tokens_used:,}")
+    if not retrieval_only:
+        print(f"  Token Consumption:")
+        print(f"    Avg per question:  {results.avg_tokens_per_question:.0f}")
+        print(f"    Total:             {results.total_tokens_used:,}")
     print(f"  Timing:")
     print(f"    Ingestion:         {results.total_ingestion_time_s:.1f}s")
     print(f"    Evaluation:        {results.total_evaluation_time_s:.1f}s")
@@ -2000,8 +2029,12 @@ def print_results(results: EvaluationResults):
         5: "Adversarial"
     }
 
-    print(f"  {'Category':<25} {'Count':>6} {'Judge':>8} {'R@5':>7} {'R@10':>7} {'R@20':>7}")
-    print(f"  {'-'*25} {'-'*6} {'-'*8} {'-'*7} {'-'*7} {'-'*7}")
+    if retrieval_only:
+        print(f"  {'Category':<25} {'Count':>6} {'R@5':>7} {'R@10':>7} {'R@20':>7}")
+        print(f"  {'-'*25} {'-'*6} {'-'*7} {'-'*7} {'-'*7}")
+    else:
+        print(f"  {'Category':<25} {'Count':>6} {'Judge':>8} {'R@5':>7} {'R@10':>7} {'R@20':>7}")
+        print(f"  {'-'*25} {'-'*6} {'-'*8} {'-'*7} {'-'*7} {'-'*7}")
 
     for cat in sorted(results.category_results.keys()):
         cat_data = results.category_results[cat]
@@ -2009,7 +2042,10 @@ def print_results(results: EvaluationResults):
         r5 = f"{cat_data.get('recall_at_5', 0):.0f}%" if cat_data.get('questions_with_evidence', 0) > 0 else "N/A"
         r10 = f"{cat_data.get('recall_at_10', 0):.0f}%" if cat_data.get('questions_with_evidence', 0) > 0 else "N/A"
         r20 = f"{cat_data.get('recall_at_20', 0):.0f}%" if cat_data.get('questions_with_evidence', 0) > 0 else "N/A"
-        print(f"  {cat_name:<25} {cat_data['count']:>6} {cat_data['llm_judge_accuracy']:>7.1f}% {r5:>7} {r10:>7} {r20:>7}")
+        if retrieval_only:
+            print(f"  {cat_name:<25} {cat_data['count']:>6} {r5:>7} {r10:>7} {r20:>7}")
+        else:
+            print(f"  {cat_name:<25} {cat_data['count']:>6} {cat_data['llm_judge_accuracy']:>7.1f}% {r5:>7} {r10:>7} {r20:>7}")
 
     print("=" * 70)
 
@@ -2210,10 +2246,16 @@ Examples:
         help="Number of evaluation runs. For publication, use 3-5 runs to report "
              "mean ± stddev. Default: 1."
     )
+    parser.add_argument(
+        "--retrieval-only",
+        action="store_true",
+        help="Retrieval-only mode: skip LLM answer generation and judging. "
+             "Reports R@5, R@10, R@20, and MRR. No OpenAI API key needed."
+    )
 
     args = parser.parse_args()
-    # Check API key
-    if not os.environ.get("OPENAI_API_KEY"):
+    # Check API key (not needed for retrieval-only mode)
+    if not args.retrieval_only and not os.environ.get("OPENAI_API_KEY"):
         print("ERROR: OPENAI_API_KEY environment variable not set")
         print("Set it with: export OPENAI_API_KEY=sk-...")
         sys.exit(1)
@@ -2253,6 +2295,7 @@ Examples:
         mcq_path=args.mcq_path,
         adaptive_k_threshold=args.adaptive_k,
         runs=args.runs,
+        retrieval_only=args.retrieval_only,
     )
 
 
