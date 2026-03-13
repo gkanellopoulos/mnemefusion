@@ -103,20 +103,14 @@ pub struct FusedResult {
 }
 
 /// Fusion strategy for combining multi-dimensional search results
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FusionStrategy {
     /// Weighted fusion: score = Σ (weight_i * score_i)
     Weighted,
     /// Reciprocal Rank Fusion: score = Σ 1/(k + rank_i)
     /// Rank-based fusion that doesn't require score normalization
+    #[default]
     ReciprocalRank,
-}
-
-impl Default for FusionStrategy {
-    fn default() -> Self {
-        // Use RRF by default (proven to work better)
-        Self::ReciprocalRank
-    }
 }
 
 /// Fusion engine for combining multi-dimensional search results
@@ -358,32 +352,27 @@ impl FusionEngine {
 
         // Semantic pathway
         for (rank, id) in semantic_ranked.iter().enumerate() {
-            *rrf_scores.entry(id.clone()).or_default() +=
-                1.0 / (self.rrf_k + rank as f32 + 1.0);
+            *rrf_scores.entry(id.clone()).or_default() += 1.0 / (self.rrf_k + rank as f32 + 1.0);
         }
 
         // BM25 pathway
         for (rank, id) in bm25_ranked.iter().enumerate() {
-            *rrf_scores.entry(id.clone()).or_default() +=
-                1.0 / (self.rrf_k + rank as f32 + 1.0);
+            *rrf_scores.entry(id.clone()).or_default() += 1.0 / (self.rrf_k + rank as f32 + 1.0);
         }
 
         // Temporal pathway
         for (rank, id) in temporal_ranked.iter().enumerate() {
-            *rrf_scores.entry(id.clone()).or_default() +=
-                1.0 / (self.rrf_k + rank as f32 + 1.0);
+            *rrf_scores.entry(id.clone()).or_default() += 1.0 / (self.rrf_k + rank as f32 + 1.0);
         }
 
         // Causal pathway
         for (rank, id) in causal_ranked.iter().enumerate() {
-            *rrf_scores.entry(id.clone()).or_default() +=
-                1.0 / (self.rrf_k + rank as f32 + 1.0);
+            *rrf_scores.entry(id.clone()).or_default() += 1.0 / (self.rrf_k + rank as f32 + 1.0);
         }
 
         // Entity pathway
         for (rank, id) in entity_ranked.iter().enumerate() {
-            *rrf_scores.entry(id.clone()).or_default() +=
-                1.0 / (self.rrf_k + rank as f32 + 1.0);
+            *rrf_scores.entry(id.clone()).or_default() += 1.0 / (self.rrf_k + rank as f32 + 1.0);
         }
 
         // FILTER: Apply semantic threshold to prevent keyword flooding.
@@ -469,7 +458,9 @@ mod tests {
         let weights = IntentWeights::new(1.0, 2.0, 3.0, 4.0, 5.0);
         assert!(weights.validate());
         assert!(
-            (weights.semantic + weights.bm25 + weights.temporal + weights.causal + weights.entity - 1.0).abs()
+            (weights.semantic + weights.bm25 + weights.temporal + weights.causal + weights.entity
+                - 1.0)
+                .abs()
                 < 0.01
         );
     }
@@ -546,7 +537,14 @@ mod tests {
         let causal = HashMap::new();
         let entity = HashMap::new();
 
-        let results = engine.fuse(QueryIntent::Factual, &semantic, &bm25, &temporal, &causal, &entity);
+        let results = engine.fuse(
+            QueryIntent::Factual,
+            &semantic,
+            &bm25,
+            &temporal,
+            &causal,
+            &entity,
+        );
 
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].id, make_memory_id(1));
@@ -821,7 +819,7 @@ mod tests {
 
         assert_eq!(results.len(), 3);
         assert_eq!(results[0].id, make_memory_id(1)); // Highest RRF (in both lists)
-        // Memory 2 and 3 have same RRF score, order may vary
+                                                      // Memory 2 and 3 have same RRF score, order may vary
     }
 
     #[test]
@@ -964,7 +962,7 @@ mod tests {
         let engine = FusionEngine::new(); // threshold = 0.15
 
         let mut semantic = HashMap::new();
-        semantic.insert(make_memory_id(1), 0.5);  // Above threshold — passes
+        semantic.insert(make_memory_id(1), 0.5); // Above threshold — passes
         semantic.insert(make_memory_id(2), 0.10); // Below 0.15 threshold
 
         let mut bm25 = HashMap::new();

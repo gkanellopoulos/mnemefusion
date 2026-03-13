@@ -520,7 +520,11 @@ mod tests {
 
     #[test]
     fn test_parse_relationship_target_parenthetical() {
-        let names = vec!["melanie".to_string(), "caroline".to_string(), "mel".to_string()];
+        let names = vec![
+            "melanie".to_string(),
+            "caroline".to_string(),
+            "mel".to_string(),
+        ];
         // "Entity (relation)" format (Phi-4-mini)
         let result = parse_relationship_target("Melanie (colleague or friend)", &names);
         assert_eq!(result, Some(("colleague or friend", "Melanie")));

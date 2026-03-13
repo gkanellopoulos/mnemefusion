@@ -3,9 +3,8 @@
 use crate::error::{Error, Result};
 use crate::extraction::output::ExtractionResult;
 use crate::extraction::prompt::{
-    apply_chat_template, build_event_temporal_extraction_prompt,
-    build_fewshot_extraction_prompt, build_relationship_extraction_prompt,
-    build_typed_extraction_prompt, ModelFamily,
+    apply_chat_template, build_event_temporal_extraction_prompt, build_fewshot_extraction_prompt,
+    build_relationship_extraction_prompt, build_typed_extraction_prompt, ModelFamily,
 };
 use crate::inference::{GenerationParams, InferenceEngine};
 use std::path::{Path, PathBuf};
@@ -190,8 +189,11 @@ impl LlmEntityExtractor {
             let name_lower = name.to_lowercase();
             for fact in &mut result.entity_facts {
                 let entity_lower = fact.entity.to_lowercase();
-                if entity_lower == "i" || entity_lower == "me" || entity_lower == "my"
-                    || entity_lower == "myself" || entity_lower == "the speaker"
+                if entity_lower == "i"
+                    || entity_lower == "me"
+                    || entity_lower == "my"
+                    || entity_lower == "myself"
+                    || entity_lower == "the speaker"
                 {
                     fact.entity = name.to_string();
                 }
@@ -199,20 +201,31 @@ impl LlmEntityExtractor {
             // Also fix entity list
             for entity in &mut result.entities {
                 let entity_lower = entity.name.to_lowercase();
-                if entity_lower == "i" || entity_lower == "me" || entity_lower == "my"
-                    || entity_lower == "myself" || entity_lower == "the speaker"
+                if entity_lower == "i"
+                    || entity_lower == "me"
+                    || entity_lower == "my"
+                    || entity_lower == "myself"
+                    || entity_lower == "the speaker"
                 {
                     entity.name = name.to_string();
                 }
             }
             // Ensure speaker is in entities list if they have facts
-            let has_speaker_facts = result.entity_facts.iter().any(|f| f.entity.to_lowercase() == name_lower);
-            let speaker_in_entities = result.entities.iter().any(|e| e.name.to_lowercase() == name_lower);
+            let has_speaker_facts = result
+                .entity_facts
+                .iter()
+                .any(|f| f.entity.to_lowercase() == name_lower);
+            let speaker_in_entities = result
+                .entities
+                .iter()
+                .any(|e| e.name.to_lowercase() == name_lower);
             if has_speaker_facts && !speaker_in_entities {
-                result.entities.push(crate::extraction::output::ExtractedEntity {
-                    name: name.to_string(),
-                    entity_type: "person".to_string(),
-                });
+                result
+                    .entities
+                    .push(crate::extraction::output::ExtractedEntity {
+                        name: name.to_string(),
+                        entity_type: "person".to_string(),
+                    });
             }
         }
 
@@ -242,9 +255,9 @@ impl LlmEntityExtractor {
         let chatml_prompt = build_fewshot_extraction_prompt(&attributed_content, speaker);
         let prompt = apply_chat_template(&chatml_prompt, self.family);
 
-        let raw_output = self
-            .engine
-            .generate_with_params(&prompt, self.tier.max_tokens(), params)?;
+        let raw_output =
+            self.engine
+                .generate_with_params(&prompt, self.tier.max_tokens(), params)?;
 
         let fixed_output = Self::fix_json(&raw_output);
         let json_output = Self::extract_json(&fixed_output)?;
@@ -343,9 +356,9 @@ impl LlmEntityExtractor {
         };
         let prompt = apply_chat_template(&chatml_prompt, self.family);
 
-        let raw_output = self
-            .engine
-            .generate_with_params(&prompt, self.tier.max_tokens(), params)?;
+        let raw_output =
+            self.engine
+                .generate_with_params(&prompt, self.tier.max_tokens(), params)?;
 
         let fixed_output = Self::fix_json(&raw_output);
         let json_output = Self::extract_json(&fixed_output)?;
@@ -563,7 +576,11 @@ impl LlmEntityExtractor {
         let mut i = 0;
         while i < chars.len() {
             // Look for pattern: `:` ws `0-0.` or `:` ws `0-1`
-            if i + 3 < chars.len() && chars[i].is_ascii_digit() && chars[i + 1] == '-' && chars[i + 2].is_ascii_digit() {
+            if i + 3 < chars.len()
+                && chars[i].is_ascii_digit()
+                && chars[i + 1] == '-'
+                && chars[i + 2].is_ascii_digit()
+            {
                 // Check if this is inside a number context (after `:` or `,`)
                 let prev_non_ws = result.trim_end().chars().last();
                 if prev_non_ws == Some(':') || prev_non_ws == Some(',') {
@@ -577,8 +594,11 @@ impl LlmEntityExtractor {
         }
 
         // Fix trailing commas: `[..., ]` → `[...]` and `{..., }` → `{...}`
-        result = result.replace(", ]", "]").replace(",]", "]")
-                       .replace(", }", "}").replace(",}", "}");
+        result = result
+            .replace(", ]", "]")
+            .replace(",]", "]")
+            .replace(", }", "}")
+            .replace(",}", "}");
 
         result
     }
@@ -683,7 +703,9 @@ impl LlmEntityExtractor {
             ModelTier::Balanced => "qwen3-4b",
             ModelTier::Quality => "qwen3-8b",
         };
-        let local_models = PathBuf::from("models").join(tier_dir).join(tier.model_filename());
+        let local_models = PathBuf::from("models")
+            .join(tier_dir)
+            .join(tier.model_filename());
         if local_models.exists() {
             return Ok(local_models);
         }

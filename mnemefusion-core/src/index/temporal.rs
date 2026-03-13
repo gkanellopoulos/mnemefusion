@@ -277,7 +277,9 @@ impl TemporalIndex {
                 // Get temporal expressions from metadata
                 if let Some(temporal_expr_json) = memory.get_metadata("temporal_expressions") {
                     // Parse JSON array of temporal expression strings
-                    if let Ok(expr_strings) = serde_json::from_str::<Vec<String>>(temporal_expr_json) {
+                    if let Ok(expr_strings) =
+                        serde_json::from_str::<Vec<String>>(temporal_expr_json)
+                    {
                         if !expr_strings.is_empty() {
                             // Convert strings back to TemporalExpression objects
                             // For scoring, we just need the text, so create simple Relative expressions
@@ -287,7 +289,8 @@ impl TemporalIndex {
                                 .collect();
 
                             // Calculate overlap score
-                            let score = extractor.calculate_overlap(&query_expressions, &memory_expressions);
+                            let score = extractor
+                                .calculate_overlap(&query_expressions, &memory_expressions);
 
                             if score > 0.0 {
                                 scored_results.push((memory_id, score));
@@ -529,7 +532,10 @@ mod tests {
             .unwrap();
 
         // Should find mem1 with "yesterday"
-        assert!(!results.is_empty(), "Should find memories with matching temporal expressions");
+        assert!(
+            !results.is_empty(),
+            "Should find memories with matching temporal expressions"
+        );
         assert_eq!(results[0].0, mem1.id, "Should rank mem1 (yesterday) first");
         assert!(results[0].1 > 0.0, "Should have positive score");
     }
@@ -539,10 +545,7 @@ mod tests {
         let (temporal, storage, _dir) = create_test_index();
 
         // Add memory with temporal expression
-        let mut mem1 = Memory::new(
-            "We met yesterday".to_string(),
-            vec![0.1; 384],
-        );
+        let mut mem1 = Memory::new("We met yesterday".to_string(), vec![0.1; 384]);
         mem1.set_metadata(
             "temporal_expressions".to_string(),
             r#"["yesterday"]"#.to_string(),
@@ -555,7 +558,11 @@ mod tests {
             .unwrap();
 
         // Should return empty (no temporal expressions in query)
-        assert_eq!(results.len(), 0, "Should return empty when query has no temporal expressions");
+        assert_eq!(
+            results.len(),
+            0,
+            "Should return empty when query has no temporal expressions"
+        );
     }
 
     #[test]
@@ -583,10 +590,7 @@ mod tests {
         );
         storage.store_memory(&mem2).unwrap();
 
-        let mut mem3 = Memory::new(
-            "The meeting was last week".to_string(),
-            vec![0.3; 384],
-        );
+        let mut mem3 = Memory::new("The meeting was last week".to_string(), vec![0.3; 384]);
         mem3.set_metadata(
             "temporal_expressions".to_string(),
             r#"["last week"]"#.to_string(),
@@ -599,11 +603,20 @@ mod tests {
             .unwrap();
 
         // Should find both mem1 and mem2 (both have "yesterday")
-        assert!(results.len() >= 2, "Should find multiple memories with matching temporal expression");
+        assert!(
+            results.len() >= 2,
+            "Should find multiple memories with matching temporal expression"
+        );
 
         let result_ids: Vec<_> = results.iter().map(|(id, _)| id).collect();
-        assert!(result_ids.contains(&&mem1.id), "Should include mem1 (yesterday)");
-        assert!(result_ids.contains(&&mem2.id), "Should include mem2 (yesterday)");
+        assert!(
+            result_ids.contains(&&mem1.id),
+            "Should include mem1 (yesterday)"
+        );
+        assert!(
+            result_ids.contains(&&mem2.id),
+            "Should include mem2 (yesterday)"
+        );
     }
 
     #[test]
@@ -622,10 +635,7 @@ mod tests {
         storage.store_memory(&mem1).unwrap();
 
         // Add memory with only one matching expression
-        let mut mem2 = Memory::new(
-            "I went to the park yesterday".to_string(),
-            vec![0.2; 384],
-        );
+        let mut mem2 = Memory::new("I went to the park yesterday".to_string(), vec![0.2; 384]);
         mem2.set_metadata(
             "temporal_expressions".to_string(),
             r#"["yesterday"]"#.to_string(),
@@ -643,7 +653,13 @@ mod tests {
         // Note: The actual scoring depends on TemporalExtractor.calculate_overlap()
         // which may normalize scores, so we just verify both are found
         let result_ids: Vec<_> = results.iter().map(|(id, _)| id).collect();
-        assert!(result_ids.contains(&&mem1.id), "Should include mem1 (yesterday morning)");
-        assert!(result_ids.contains(&&mem2.id), "Should include mem2 (yesterday)");
+        assert!(
+            result_ids.contains(&&mem1.id),
+            "Should include mem1 (yesterday morning)"
+        );
+        assert!(
+            result_ids.contains(&&mem2.id),
+            "Should include mem2 (yesterday)"
+        );
     }
 }

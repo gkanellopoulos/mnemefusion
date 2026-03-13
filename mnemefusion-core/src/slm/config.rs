@@ -6,7 +6,6 @@
 ///
 /// The SLM is optional and disabled by default. Pattern-based classification remains
 /// the fallback to ensure zero regression if SLM fails or is not configured.
-
 use std::path::PathBuf;
 
 /// Configuration for SLM-based intent classification
@@ -82,9 +81,7 @@ impl Default for SlmConfig {
         let hf_token = std::env::var("HF_TOKEN").ok();
 
         // Try to get model path from MODEL_PATH environment variable
-        let model_path = std::env::var("MODEL_PATH")
-            .ok()
-            .map(PathBuf::from);
+        let model_path = std::env::var("MODEL_PATH").ok().map(PathBuf::from);
 
         Self {
             model_id: "Qwen/Qwen2.5-0.5B-Instruct".to_string(), // Qwen3 0.6B - reasoning optimized

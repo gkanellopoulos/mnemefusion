@@ -1864,11 +1864,8 @@ mod tests {
 
         // Create a profile
         let entity_id = EntityId::new();
-        let mut profile = EntityProfile::new(
-            entity_id.clone(),
-            "Alice".to_string(),
-            "person".to_string(),
-        );
+        let mut profile =
+            EntityProfile::new(entity_id.clone(), "Alice".to_string(), "person".to_string());
 
         // Add a fact
         let memory_id = MemoryId::new();
@@ -1891,7 +1888,10 @@ mod tests {
         assert_eq!(retrieved.name, "Alice");
         assert_eq!(retrieved.entity_type, "person");
         assert_eq!(retrieved.facts.get("occupation").unwrap().len(), 1);
-        assert_eq!(retrieved.facts.get("occupation").unwrap()[0].value, "engineer");
+        assert_eq!(
+            retrieved.facts.get("occupation").unwrap()[0].value,
+            "engineer"
+        );
     }
 
     #[test]
@@ -1902,11 +1902,8 @@ mod tests {
         let path = dir.path().join("test.mfdb");
         let engine = StorageEngine::open(&path).unwrap();
 
-        let profile = EntityProfile::new(
-            EntityId::new(),
-            "Alice".to_string(),
-            "person".to_string(),
-        );
+        let profile =
+            EntityProfile::new(EntityId::new(), "Alice".to_string(), "person".to_string());
         engine.store_entity_profile(&profile).unwrap();
 
         // Case-insensitive lookup
@@ -1935,16 +1932,9 @@ mod tests {
         let engine = StorageEngine::open(&path).unwrap();
 
         // Create and store profiles
-        let profile1 = EntityProfile::new(
-            EntityId::new(),
-            "Alice".to_string(),
-            "person".to_string(),
-        );
-        let profile2 = EntityProfile::new(
-            EntityId::new(),
-            "Bob".to_string(),
-            "person".to_string(),
-        );
+        let profile1 =
+            EntityProfile::new(EntityId::new(), "Alice".to_string(), "person".to_string());
+        let profile2 = EntityProfile::new(EntityId::new(), "Bob".to_string(), "person".to_string());
         let profile3 = EntityProfile::new(
             EntityId::new(),
             "Acme Corp".to_string(),
@@ -1973,11 +1963,8 @@ mod tests {
         let path = dir.path().join("test.mfdb");
         let engine = StorageEngine::open(&path).unwrap();
 
-        let profile = EntityProfile::new(
-            EntityId::new(),
-            "Alice".to_string(),
-            "person".to_string(),
-        );
+        let profile =
+            EntityProfile::new(EntityId::new(), "Alice".to_string(), "person".to_string());
         engine.store_entity_profile(&profile).unwrap();
 
         // Verify it exists
@@ -2005,18 +1992,22 @@ mod tests {
 
         assert_eq!(engine.count_entity_profiles().unwrap(), 0);
 
-        engine.store_entity_profile(&EntityProfile::new(
-            EntityId::new(),
-            "Alice".to_string(),
-            "person".to_string(),
-        )).unwrap();
+        engine
+            .store_entity_profile(&EntityProfile::new(
+                EntityId::new(),
+                "Alice".to_string(),
+                "person".to_string(),
+            ))
+            .unwrap();
         assert_eq!(engine.count_entity_profiles().unwrap(), 1);
 
-        engine.store_entity_profile(&EntityProfile::new(
-            EntityId::new(),
-            "Bob".to_string(),
-            "person".to_string(),
-        )).unwrap();
+        engine
+            .store_entity_profile(&EntityProfile::new(
+                EntityId::new(),
+                "Bob".to_string(),
+                "person".to_string(),
+            ))
+            .unwrap();
         assert_eq!(engine.count_entity_profiles().unwrap(), 2);
     }
 
@@ -2030,11 +2021,8 @@ mod tests {
 
         // Create initial profile
         let entity_id = EntityId::new();
-        let mut profile = EntityProfile::new(
-            entity_id.clone(),
-            "Alice".to_string(),
-            "person".to_string(),
-        );
+        let mut profile =
+            EntityProfile::new(entity_id.clone(), "Alice".to_string(), "person".to_string());
         profile.add_fact(EntityFact::new(
             "occupation",
             "engineer",
@@ -2044,12 +2032,7 @@ mod tests {
         engine.store_entity_profile(&profile).unwrap();
 
         // Update profile with new fact
-        profile.add_fact(EntityFact::new(
-            "skill",
-            "Rust",
-            0.85,
-            MemoryId::new(),
-        ));
+        profile.add_fact(EntityFact::new("skill", "Rust", 0.85, MemoryId::new()));
         engine.store_entity_profile(&profile).unwrap();
 
         // Retrieve and verify update
@@ -2071,11 +2054,8 @@ mod tests {
         // Create and store profile
         {
             let engine = StorageEngine::open(&path).unwrap();
-            let mut profile = EntityProfile::new(
-                entity_id.clone(),
-                "Alice".to_string(),
-                "person".to_string(),
-            );
+            let mut profile =
+                EntityProfile::new(entity_id.clone(), "Alice".to_string(), "person".to_string());
             profile.add_fact(EntityFact::new(
                 "occupation",
                 "engineer",
@@ -2090,7 +2070,10 @@ mod tests {
             let engine = StorageEngine::open(&path).unwrap();
             let retrieved = engine.get_entity_profile("Alice").unwrap().unwrap();
             assert_eq!(retrieved.name, "Alice");
-            assert_eq!(retrieved.facts.get("occupation").unwrap()[0].value, "engineer");
+            assert_eq!(
+                retrieved.facts.get("occupation").unwrap()[0].value,
+                "engineer"
+            );
         }
     }
 }

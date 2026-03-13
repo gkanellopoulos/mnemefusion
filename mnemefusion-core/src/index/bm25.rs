@@ -22,28 +22,25 @@
 //! Reference: Robertson & Zaragoza (2009), "The Probabilistic Relevance Framework: BM25 and Beyond"
 
 use crate::error::Result;
-use crate::types::MemoryId;
 use crate::storage::StorageEngine;
+use crate::types::MemoryId;
 use rust_stemmers::{Algorithm, Stemmer};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
-use serde::{Deserialize, Serialize};
 
 /// Common English stop words to filter out during indexing
 const STOP_WORDS: &[&str] = &[
-    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
-    "has", "he", "in", "is", "it", "its", "of", "on", "that", "the",
-    "to", "was", "were", "will", "with", "the", "this", "but", "they",
-    "have", "had", "what", "when", "where", "who", "which", "why", "how",
-    "all", "each", "every", "both", "few", "more", "most", "other",
-    "some", "such", "no", "nor", "not", "only", "own", "same", "so",
-    "than", "too", "very", "just", "can", "could", "may", "might",
-    "must", "shall", "should", "would", "now", "also", "like", "even",
-    "because", "been", "being", "before", "after", "above", "below",
-    "between", "into", "through", "during", "out", "off", "over", "under",
-    "again", "further", "then", "once", "here", "there", "about", "did",
-    "does", "doing", "don", "down", "up", "your", "you", "we", "our",
-    "me", "my", "myself", "him", "his", "her", "she", "i", "am",
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "has", "he", "in", "is", "it",
+    "its", "of", "on", "that", "the", "to", "was", "were", "will", "with", "the", "this", "but",
+    "they", "have", "had", "what", "when", "where", "who", "which", "why", "how", "all", "each",
+    "every", "both", "few", "more", "most", "other", "some", "such", "no", "nor", "not", "only",
+    "own", "same", "so", "than", "too", "very", "just", "can", "could", "may", "might", "must",
+    "shall", "should", "would", "now", "also", "like", "even", "because", "been", "being",
+    "before", "after", "above", "below", "between", "into", "through", "during", "out", "off",
+    "over", "under", "again", "further", "then", "once", "here", "there", "about", "did", "does",
+    "doing", "don", "down", "up", "your", "you", "we", "our", "me", "my", "myself", "him", "his",
+    "her", "she", "i", "am",
 ];
 
 /// BM25 configuration parameters
@@ -214,7 +211,7 @@ impl BM25Index {
                 // Update inverted index
                 inverted_index
                     .entry(term.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push((memory_id.clone(), *freq));
 
                 // Update document frequency (only count once per document)
@@ -314,7 +311,7 @@ impl BM25Index {
                 for (doc_id, _tf) in postings {
                     candidates
                         .entry(doc_id.clone())
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(query_term.clone());
                 }
             }
@@ -343,7 +340,11 @@ impl BM25Index {
             .collect();
 
         // Sort by score descending
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Return top-k results
         results.truncate(limit);
@@ -469,10 +470,8 @@ impl BM25Index {
             let state: Bm25State = serde_json::from_slice(&data)
                 .map_err(|e| crate::Error::Deserialization(e.to_string()))?;
 
-            *self.inverted_index.write().unwrap() =
-                state.inverted_index.into_iter().collect();
-            *self.doc_frequency.write().unwrap() =
-                state.doc_frequency.into_iter().collect();
+            *self.inverted_index.write().unwrap() = state.inverted_index.into_iter().collect();
+            *self.doc_frequency.write().unwrap() = state.doc_frequency.into_iter().collect();
             *self.doc_stats.write().unwrap() = state.doc_stats.into_iter().collect();
             *self.num_docs.write().unwrap() = state.num_docs;
             *self.avg_doc_length.write().unwrap() = state.avg_doc_length;
@@ -517,7 +516,11 @@ mod tests {
     fn test_term_frequencies() {
         let (index, _dir) = create_test_index();
 
-        let terms = vec!["hello".to_string(), "world".to_string(), "hello".to_string()];
+        let terms = vec![
+            "hello".to_string(),
+            "world".to_string(),
+            "hello".to_string(),
+        ];
         let freqs = index.calculate_term_freqs(&terms);
 
         assert_eq!(freqs.get("hello"), Some(&2));
@@ -532,8 +535,12 @@ mod tests {
         let id2 = MemoryId::new();
         let id3 = MemoryId::new();
 
-        index.add(&id1, "The quick brown fox jumps over the lazy dog").unwrap();
-        index.add(&id2, "A quick brown dog runs in the park").unwrap();
+        index
+            .add(&id1, "The quick brown fox jumps over the lazy dog")
+            .unwrap();
+        index
+            .add(&id2, "A quick brown dog runs in the park")
+            .unwrap();
         index.add(&id3, "The lazy cat sleeps all day").unwrap();
 
         assert_eq!(index.num_docs(), 3);
@@ -605,7 +612,9 @@ mod tests {
         index.add(&id1, "The cat sat on the mat").unwrap();
 
         // Document with term mentioned multiple times (should score higher)
-        index.add(&id2, "The cat cat cat sat on the mat mat").unwrap();
+        index
+            .add(&id2, "The cat cat cat sat on the mat mat")
+            .unwrap();
 
         let results = index.search("cat", 10).unwrap();
         assert_eq!(results.len(), 2);
@@ -665,7 +674,9 @@ mod tests {
 
         for i in 0..10 {
             let id = MemoryId::new();
-            index.add(&id, &format!("Document {} with the word test", i)).unwrap();
+            index
+                .add(&id, &format!("Document {} with the word test", i))
+                .unwrap();
         }
 
         let results = index.search("test", 5).unwrap();

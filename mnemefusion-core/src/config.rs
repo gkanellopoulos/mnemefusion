@@ -242,11 +242,11 @@ impl Default for Config {
             fusion_semantic_threshold: 0.15, // 15% minimum semantic relevance
             semantic_prefilter_threshold: 0.3, // 30% pre-fusion filter; aggregation queries use 0.5x (0.15) via adaptive logic in planner
             fusion_strategy: FusionStrategy::default(), // RRF by default
-            rrf_k: 60.0, // From RRF paper
-            slm_config: None, // SLM disabled by default
+            rrf_k: 60.0,                       // From RRF paper
+            slm_config: None,                  // SLM disabled by default
             slm_metadata_extraction_enabled: true, // Enabled by default when slm_config is set
             slm_query_classification_enabled: false, // Disabled by default - rely on RRF fusion
-            extraction_passes: 1, // Single pass by default (backward compatible)
+            extraction_passes: 1,              // Single pass by default (backward compatible)
             profile_entity_types: vec![
                 "person".to_string(),
                 "organization".to_string(),
@@ -627,8 +627,10 @@ impl Config {
     pub fn validate(&self) -> Result<(), crate::Error> {
         // Print warning for entity extraction (English-only feature)
         if self.entity_extraction_enabled {
-            tracing::warn!("Entity extraction is enabled. This feature currently supports English only. \
-                For non-English content, consider disabling with .with_entity_extraction(false)");
+            tracing::warn!(
+                "Entity extraction is enabled. This feature currently supports English only. \
+                For non-English content, consider disabling with .with_entity_extraction(false)"
+            );
         }
 
         if self.embedding_dim == 0 {

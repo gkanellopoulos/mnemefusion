@@ -240,7 +240,8 @@ impl IntentClassifier {
                             // Capitalize first letter
                             let mut chars = text.chars();
                             if let Some(first) = chars.next() {
-                                let capitalized = first.to_uppercase().collect::<String>() + chars.as_str();
+                                let capitalized =
+                                    first.to_uppercase().collect::<String>() + chars.as_str();
                                 return Some(capitalized);
                             }
                         }
@@ -254,11 +255,45 @@ impl IntentClassifier {
     /// Check if word is a common query word (not an entity)
     fn is_common_word(word: &str) -> bool {
         const COMMON_WORDS: &[&str] = &[
-            "what", "does", "do", "are", "were", "is", "was", "the", "a", "an",
-            "like", "enjoy", "prefer", "want", "need", "love", "hate", "dislike",
-            "all", "everything", "about", "for", "regarding", "list", "show", "get",
-            "find", "tell", "me", "i", "we", "know", "hobbies", "interests",
-            "activities", "preferences", "habits", "routines", "everything ",
+            "what",
+            "does",
+            "do",
+            "are",
+            "were",
+            "is",
+            "was",
+            "the",
+            "a",
+            "an",
+            "like",
+            "enjoy",
+            "prefer",
+            "want",
+            "need",
+            "love",
+            "hate",
+            "dislike",
+            "all",
+            "everything",
+            "about",
+            "for",
+            "regarding",
+            "list",
+            "show",
+            "get",
+            "find",
+            "tell",
+            "me",
+            "i",
+            "we",
+            "know",
+            "hobbies",
+            "interests",
+            "activities",
+            "preferences",
+            "habits",
+            "routines",
+            "everything ",
         ];
         COMMON_WORDS.contains(&word.to_lowercase().as_str())
     }

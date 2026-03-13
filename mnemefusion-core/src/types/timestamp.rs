@@ -107,7 +107,7 @@ impl Timestamp {
         let year: i64 = parts[0].parse().ok()?;
         let month: u32 = parts[1].parse().ok()?;
         let day: u32 = parts[2].parse().ok()?;
-        if month < 1 || month > 12 || day < 1 || day > 31 {
+        if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
             return None;
         }
         // Reject dates before Unix epoch
@@ -144,7 +144,7 @@ fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
     let era = if y >= 0 { y } else { y - 399 } / 400;
     let yoe = (y - era * 400) as u32; // year of era [0, 399]
     let m_adj = if m > 2 { m - 3 } else { m + 9 }; // adjusted month [0, 11]
-    let doy = (153 * m_adj as u32 + 2) / 5 + d - 1; // day of year [0, 365]
+    let doy = (153 * m_adj + 2) / 5 + d - 1; // day of year [0, 365]
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // day of era [0, 146096]
     era * 146097 + doe as i64 - 719468 // days since 1970-01-01
 }

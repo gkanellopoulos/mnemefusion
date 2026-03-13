@@ -140,8 +140,8 @@ impl EntityProfile {
         // Reject pronoun-only values
         let lower_value = trimmed_value.to_lowercase();
         const PRONOUNS: &[&str] = &[
-            "i", "me", "my", "myself", "you", "your", "he", "him", "his",
-            "she", "her", "they", "them", "we", "us", "it",
+            "i", "me", "my", "myself", "you", "your", "he", "him", "his", "she", "her", "they",
+            "them", "we", "us", "it",
         ];
         if PRONOUNS.contains(&lower_value.as_str()) {
             return;
@@ -149,8 +149,15 @@ impl EntityProfile {
 
         // Reject null-indicator values
         const NULL_INDICATORS: &[&str] = &[
-            "none", "n/a", "na", "not specified", "not mentioned",
-            "unknown", "unspecified", "not provided", "no information",
+            "none",
+            "n/a",
+            "na",
+            "not specified",
+            "not mentioned",
+            "unknown",
+            "unspecified",
+            "not provided",
+            "no information",
         ];
         if NULL_INDICATORS.contains(&lower_value.as_str()) {
             return;
@@ -181,13 +188,22 @@ impl EntityProfile {
 
         // --- Cross-type dedup: specific types override generic types ---
         const SPECIFIC_TYPES: &[&str] = &[
-            "instrument", "pet", "book", "sport", "food", "hobby", "travel",
-            "occupation", "affiliation", "research_topic", "family",
-            "relationship_status", "career_goal", "event",
+            "instrument",
+            "pet",
+            "book",
+            "sport",
+            "food",
+            "hobby",
+            "travel",
+            "occupation",
+            "affiliation",
+            "research_topic",
+            "family",
+            "relationship_status",
+            "career_goal",
+            "event",
         ];
-        const GENERIC_TYPES: &[&str] = &[
-            "interest", "preference", "action", "characteristic",
-        ];
+        const GENERIC_TYPES: &[&str] = &["interest", "preference", "action", "characteristic"];
 
         let normalized_value = lower_value.clone();
         let is_incoming_specific = SPECIFIC_TYPES.contains(&fact.fact_type.as_str());
@@ -196,13 +212,12 @@ impl EntityProfile {
         if is_incoming_generic {
             // If incoming is generic, check if value already exists under a specific type → reject
             for (existing_type, existing_facts) in &self.facts {
-                if SPECIFIC_TYPES.contains(&existing_type.as_str()) {
-                    if existing_facts
+                if SPECIFIC_TYPES.contains(&existing_type.as_str())
+                    && existing_facts
                         .iter()
                         .any(|f| f.value.trim().to_lowercase() == normalized_value)
-                    {
-                        return; // Specific type already has this value
-                    }
+                {
+                    return; // Specific type already has this value
                 }
             }
         } else if is_incoming_specific {
@@ -417,11 +432,7 @@ impl EntityProfile {
         let mut summary = format!("Profile of {} ({}): ", self.name, self.entity_type);
         let mut first = true;
         for (fact_type, fact) in &all_facts {
-            let segment = format!(
-                "{}: {}",
-                fact_type.replace('_', " "),
-                fact.value
-            );
+            let segment = format!("{}: {}", fact_type.replace('_', " "), fact.value);
             // Check if adding this segment would exceed 500 chars
             let separator = if first { "" } else { "; " };
             if summary.len() + separator.len() + segment.len() > 500 {
@@ -521,7 +532,8 @@ mod tests {
     #[test]
     fn test_entity_profile_new() {
         let entity_id = EntityId::new();
-        let profile = EntityProfile::new(entity_id.clone(), "Alice".to_string(), "person".to_string());
+        let profile =
+            EntityProfile::new(entity_id.clone(), "Alice".to_string(), "person".to_string());
 
         assert_eq!(profile.entity_id, entity_id);
         assert_eq!(profile.name, "Alice");
@@ -577,24 +589,9 @@ mod tests {
         let mut profile =
             EntityProfile::new(EntityId::new(), "Alice".to_string(), "person".to_string());
 
-        profile.add_fact(EntityFact::new(
-            "skill",
-            "Rust",
-            0.7,
-            MemoryId::new(),
-        ));
-        profile.add_fact(EntityFact::new(
-            "skill",
-            "Python",
-            0.95,
-            MemoryId::new(),
-        ));
-        profile.add_fact(EntityFact::new(
-            "skill",
-            "Golang",
-            0.8,
-            MemoryId::new(),
-        ));
+        profile.add_fact(EntityFact::new("skill", "Rust", 0.7, MemoryId::new()));
+        profile.add_fact(EntityFact::new("skill", "Python", 0.95, MemoryId::new()));
+        profile.add_fact(EntityFact::new("skill", "Golang", 0.8, MemoryId::new()));
 
         let skills = profile.get_facts("skill");
         assert_eq!(skills.len(), 3);
@@ -626,12 +623,7 @@ mod tests {
             0.9,
             memory1.clone(),
         ));
-        profile.add_fact(EntityFact::new(
-            "skill",
-            "Rust",
-            0.8,
-            memory1.clone(),
-        ));
+        profile.add_fact(EntityFact::new("skill", "Rust", 0.8, memory1.clone()));
         profile.add_fact(EntityFact::new(
             "occupation",
             "architect",
@@ -646,7 +638,10 @@ mod tests {
 
         // Only architect should remain
         assert_eq!(profile.facts.get("occupation").unwrap().len(), 1);
-        assert_eq!(profile.facts.get("occupation").unwrap()[0].value, "architect");
+        assert_eq!(
+            profile.facts.get("occupation").unwrap()[0].value,
+            "architect"
+        );
 
         // Skill should be empty
         assert!(profile.facts.get("skill").unwrap().is_empty());
@@ -682,18 +677,8 @@ mod tests {
             0.9,
             MemoryId::new(),
         ));
-        profile.add_fact(EntityFact::new(
-            "skill",
-            "Rust",
-            0.8,
-            MemoryId::new(),
-        ));
-        profile.add_fact(EntityFact::new(
-            "location",
-            "Seattle",
-            0.7,
-            MemoryId::new(),
-        ));
+        profile.add_fact(EntityFact::new("skill", "Rust", 0.8, MemoryId::new()));
+        profile.add_fact(EntityFact::new("location", "Seattle", 0.7, MemoryId::new()));
 
         let types = profile.fact_types();
         assert_eq!(types.len(), 3);
@@ -717,18 +702,8 @@ mod tests {
         ));
         assert_eq!(profile.total_facts(), 1);
 
-        profile.add_fact(EntityFact::new(
-            "skill",
-            "Rust",
-            0.8,
-            MemoryId::new(),
-        ));
-        profile.add_fact(EntityFact::new(
-            "skill",
-            "Python",
-            0.7,
-            MemoryId::new(),
-        ));
+        profile.add_fact(EntityFact::new("skill", "Rust", 0.8, MemoryId::new()));
+        profile.add_fact(EntityFact::new("skill", "Python", 0.7, MemoryId::new()));
         assert_eq!(profile.total_facts(), 3);
     }
 
@@ -779,18 +754,8 @@ mod tests {
             EntityProfile::new(EntityId::new(), "Alice".to_string(), "person".to_string());
 
         // Add same fact twice with different confidence
-        profile.add_fact(EntityFact::new(
-            "hobby",
-            "painting",
-            0.7,
-            MemoryId::new(),
-        ));
-        profile.add_fact(EntityFact::new(
-            "hobby",
-            "painting",
-            0.9,
-            MemoryId::new(),
-        ));
+        profile.add_fact(EntityFact::new("hobby", "painting", 0.7, MemoryId::new()));
+        profile.add_fact(EntityFact::new("hobby", "painting", 0.9, MemoryId::new()));
 
         // Should be deduplicated: only 1 fact, with higher confidence
         let hobbies = profile.get_facts("hobby");
@@ -804,18 +769,8 @@ mod tests {
         let mut profile =
             EntityProfile::new(EntityId::new(), "Alice".to_string(), "person".to_string());
 
-        profile.add_fact(EntityFact::new(
-            "hobby",
-            "Painting",
-            0.8,
-            MemoryId::new(),
-        ));
-        profile.add_fact(EntityFact::new(
-            "hobby",
-            "painting",
-            0.6,
-            MemoryId::new(),
-        ));
+        profile.add_fact(EntityFact::new("hobby", "Painting", 0.8, MemoryId::new()));
+        profile.add_fact(EntityFact::new("hobby", "painting", 0.6, MemoryId::new()));
 
         // "Painting" and "painting" are the same normalized value
         let hobbies = profile.get_facts("hobby");
@@ -828,18 +783,8 @@ mod tests {
         let mut profile =
             EntityProfile::new(EntityId::new(), "Alice".to_string(), "person".to_string());
 
-        profile.add_fact(EntityFact::new(
-            "hobby",
-            "painting",
-            0.8,
-            MemoryId::new(),
-        ));
-        profile.add_fact(EntityFact::new(
-            "hobby",
-            "running",
-            0.7,
-            MemoryId::new(),
-        ));
+        profile.add_fact(EntityFact::new("hobby", "painting", 0.8, MemoryId::new()));
+        profile.add_fact(EntityFact::new("hobby", "running", 0.7, MemoryId::new()));
 
         // Different values → both kept
         let hobbies = profile.get_facts("hobby");
@@ -940,13 +885,38 @@ mod tests {
         let mut profile =
             EntityProfile::new(EntityId::new(), "Alice".to_string(), "person".to_string());
 
-        profile.add_fact(EntityFact::new("action", "says 'Wow!'", 0.8, MemoryId::new()));
-        profile.add_fact(EntityFact::new("action", "said hello", 0.8, MemoryId::new()));
-        profile.add_fact(EntityFact::new("action", "tells a joke", 0.8, MemoryId::new()));
-        profile.add_fact(EntityFact::new("action", "asks about weather", 0.8, MemoryId::new()));
+        profile.add_fact(EntityFact::new(
+            "action",
+            "says 'Wow!'",
+            0.8,
+            MemoryId::new(),
+        ));
+        profile.add_fact(EntityFact::new(
+            "action",
+            "said hello",
+            0.8,
+            MemoryId::new(),
+        ));
+        profile.add_fact(EntityFact::new(
+            "action",
+            "tells a joke",
+            0.8,
+            MemoryId::new(),
+        ));
+        profile.add_fact(EntityFact::new(
+            "action",
+            "asks about weather",
+            0.8,
+            MemoryId::new(),
+        ));
         assert!(profile.is_empty()); // All conversational filler rejected
 
-        profile.add_fact(EntityFact::new("action", "went hiking", 0.8, MemoryId::new()));
+        profile.add_fact(EntityFact::new(
+            "action",
+            "went hiking",
+            0.8,
+            MemoryId::new(),
+        ));
         assert_eq!(profile.total_facts(), 1); // Non-filler action kept
     }
 
@@ -978,7 +948,12 @@ mod tests {
         // Add specific type first
         profile.add_fact(EntityFact::new("hobby", "painting", 0.9, MemoryId::new()));
         // Try to add generic type with same value → should be rejected
-        profile.add_fact(EntityFact::new("interest", "painting", 0.8, MemoryId::new()));
+        profile.add_fact(EntityFact::new(
+            "interest",
+            "painting",
+            0.8,
+            MemoryId::new(),
+        ));
 
         assert_eq!(profile.total_facts(), 1);
         assert_eq!(profile.get_facts("hobby").len(), 1);
@@ -990,7 +965,15 @@ mod tests {
         let mut profile =
             EntityProfile::new(EntityId::new(), "Alice".to_string(), "person".to_string());
 
-        for null_val in &["none", "None", "NONE", "N/A", "n/a", "not specified", "unknown"] {
+        for null_val in &[
+            "none",
+            "None",
+            "NONE",
+            "N/A",
+            "n/a",
+            "not specified",
+            "unknown",
+        ] {
             profile.add_fact(EntityFact::new("location", *null_val, 0.9, MemoryId::new()));
         }
         assert!(profile.is_empty()); // All null indicators rejected
@@ -1003,12 +986,22 @@ mod tests {
 
         // 101 chars → rejected
         let long_value = "a".repeat(101);
-        profile.add_fact(EntityFact::new("preference", &long_value, 0.9, MemoryId::new()));
+        profile.add_fact(EntityFact::new(
+            "preference",
+            &long_value,
+            0.9,
+            MemoryId::new(),
+        ));
         assert!(profile.is_empty());
 
         // 100 chars → accepted
         let ok_value = "a".repeat(100);
-        profile.add_fact(EntityFact::new("preference", &ok_value, 0.9, MemoryId::new()));
+        profile.add_fact(EntityFact::new(
+            "preference",
+            &ok_value,
+            0.9,
+            MemoryId::new(),
+        ));
         assert_eq!(profile.total_facts(), 1);
     }
 
@@ -1018,7 +1011,12 @@ mod tests {
             EntityProfile::new(EntityId::new(), "Alice".to_string(), "person".to_string());
 
         // Add generic type first
-        profile.add_fact(EntityFact::new("interest", "painting", 0.8, MemoryId::new()));
+        profile.add_fact(EntityFact::new(
+            "interest",
+            "painting",
+            0.8,
+            MemoryId::new(),
+        ));
         assert_eq!(profile.get_facts("interest").len(), 1);
 
         // Add specific type → should remove the generic
@@ -1034,7 +1032,12 @@ mod tests {
         let mut profile =
             EntityProfile::new(EntityId::new(), "Alice".to_string(), "person".to_string());
 
-        profile.add_fact(EntityFact::new("occupation", "engineer", 0.9, MemoryId::new()));
+        profile.add_fact(EntityFact::new(
+            "occupation",
+            "engineer",
+            0.9,
+            MemoryId::new(),
+        ));
         profile.add_fact(EntityFact::new("hobby", "painting", 0.8, MemoryId::new()));
         profile.add_fact(EntityFact::new("location", "Seattle", 0.7, MemoryId::new()));
 
@@ -1100,7 +1103,12 @@ mod tests {
     fn test_serde_with_summary() {
         let mut profile =
             EntityProfile::new(EntityId::new(), "Alice".to_string(), "person".to_string());
-        profile.add_fact(EntityFact::new("occupation", "engineer", 0.9, MemoryId::new()));
+        profile.add_fact(EntityFact::new(
+            "occupation",
+            "engineer",
+            0.9,
+            MemoryId::new(),
+        ));
         profile.generate_summary();
 
         // Serialize

@@ -4,8 +4,6 @@
 
 use crate::error::{Error, Result};
 use crate::inference::JsonGrammar;
-#[cfg(target_os = "linux")]
-use std::ffi::c_void;
 use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::context::LlamaContext;
 use llama_cpp_2::llama_backend::LlamaBackend;
@@ -14,6 +12,8 @@ use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::LlamaModel;
 use llama_cpp_2::sampling::LlamaSampler;
 use llama_cpp_2::token::LlamaToken;
+#[cfg(target_os = "linux")]
+use std::ffi::c_void;
 use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -132,7 +132,9 @@ impl InferenceEngine {
     /// - `model` is behind `Arc`, guaranteed to outlive any context usage
     /// - `ctx` is declared before `model` in the struct, so it's dropped first
     /// - The C library context holds a raw pointer internally, not a Rust reference
-    fn get_or_create_ctx(&self) -> Result<std::sync::MutexGuard<'_, Option<LlamaContext<'static>>>> {
+    fn get_or_create_ctx(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, Option<LlamaContext<'static>>>> {
         let mut guard = self.ctx.lock().unwrap();
         if guard.is_some() {
             guard.as_mut().unwrap().clear_kv_cache();
@@ -142,7 +144,8 @@ impl InferenceEngine {
                 .with_n_ctx(NonZeroU32::new(self.n_ctx))
                 .with_n_batch(n_batch);
 
-            let backend = LLAMA_BACKEND.get()
+            let backend = LLAMA_BACKEND
+                .get()
                 .ok_or_else(|| Error::InferenceError("Backend not initialized".to_string()))?;
             let new_ctx = self
                 .model
@@ -205,9 +208,9 @@ impl InferenceEngine {
 
         // Create sampler with grammar constraints
         let mut sampler = LlamaSampler::chain_simple([
-            LlamaSampler::temp(0.1),    // Low temperature for deterministic output
+            LlamaSampler::temp(0.1),     // Low temperature for deterministic output
             LlamaSampler::top_p(0.9, 1), // Top-p sampling with min_keep=1
-            LlamaSampler::dist(42),     // Seed for reproducibility
+            LlamaSampler::dist(42),      // Seed for reproducibility
             LlamaSampler::grammar(&self.model, grammar.as_str(), "root")
                 .map_err(|e| Error::InferenceError(format!("Grammar init: {e}")))?,
         ]);
@@ -444,7 +447,8 @@ impl InferenceEngine {
                     let name = entry.file_name();
                     let name_str = name.to_string_lossy();
                     if name_str.starts_with("python3") {
-                        let cuda_rt = entry.path()
+                        let cuda_rt = entry
+                            .path()
                             .join("site-packages")
                             .join("nvidia")
                             .join("cuda_runtime")
@@ -464,7 +468,8 @@ impl InferenceEngine {
                     let name = entry.file_name();
                     let name_str = name.to_string_lossy();
                     if name_str.starts_with("python3") {
-                        let cuda_rt = entry.path()
+                        let cuda_rt = entry
+                            .path()
                             .join("dist-packages")
                             .join("nvidia")
                             .join("cuda_runtime")
@@ -515,7 +520,11 @@ impl InferenceEngine {
         // Backend shared libraries to load. CPU is always required.
         // CUDA is skipped when gpu_layers=0 to avoid allocating VRAM compute buffers
         // (~600MB) that aren't needed for pure CPU inference.
-        let ext = if cfg!(target_os = "windows") { "dll" } else { "so" };
+        let ext = if cfg!(target_os = "windows") {
+            "dll"
+        } else {
+            "so"
+        };
         let cpu_name = format!("ggml-cpu.{}", ext);
         let cuda_name = format!("ggml-cuda.{}", ext);
         let dll_names: Vec<String> = if load_cuda {
@@ -602,7 +611,11 @@ impl InferenceEngine {
         }
 
         // 7. LD_LIBRARY_PATH / PATH directories (system library search paths)
-        let path_var = if cfg!(target_os = "windows") { "PATH" } else { "LD_LIBRARY_PATH" };
+        let path_var = if cfg!(target_os = "windows") {
+            "PATH"
+        } else {
+            "LD_LIBRARY_PATH"
+        };
         if let Ok(paths) = std::env::var(path_var) {
             for p in std::env::split_paths(&paths) {
                 if p.exists() {
@@ -622,11 +635,14 @@ impl InferenceEngine {
                     let dll_path = dir.join(candidate);
                     if dll_path.exists() {
                         if let Ok(path_str) = CString::new(dll_path.to_string_lossy().as_bytes()) {
-                            let reg = unsafe {
-                                llama_cpp_sys_2::ggml_backend_load(path_str.as_ptr())
-                            };
+                            let reg =
+                                unsafe { llama_cpp_sys_2::ggml_backend_load(path_str.as_ptr()) };
                             if !reg.is_null() {
-                                tracing::info!("Loaded backend: {} from {}", dll_name, dll_path.display());
+                                tracing::info!(
+                                    "Loaded backend: {} from {}",
+                                    dll_name,
+                                    dll_path.display()
+                                );
                                 loaded = true;
                                 break;
                             } else {
@@ -635,10 +651,15 @@ impl InferenceEngine {
                         }
                     }
                 }
-                if loaded { break; }
+                if loaded {
+                    break;
+                }
             }
             if !loaded {
-                let dirs: Vec<String> = search_paths.iter().map(|p| p.display().to_string()).collect();
+                let dirs: Vec<String> = search_paths
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect();
                 tracing::warn!(
                     "Backend not found: {} (searched {} dirs: {})",
                     dll_name,

@@ -347,7 +347,11 @@ mod tests {
                 "Should detect causal marker: {}",
                 marker
             );
-            assert!(density > 0.0, "Should have non-zero density for: {}", marker);
+            assert!(
+                density > 0.0,
+                "Should have non-zero density for: {}",
+                marker
+            );
         }
     }
 

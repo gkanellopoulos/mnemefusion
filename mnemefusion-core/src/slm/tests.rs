@@ -5,8 +5,8 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::slm::{SlmClassifier, SlmConfig};
     use crate::query::intent::QueryIntent;
+    use crate::slm::{SlmClassifier, SlmConfig};
 
     #[test]
     fn test_slm_config_default() {
@@ -36,8 +36,7 @@ mod tests {
     #[test]
     fn test_slm_config_cache_dir() {
         let custom_dir = std::path::PathBuf::from("/tmp/test_cache");
-        let config = SlmConfig::default()
-            .with_cache_dir(custom_dir.clone());
+        let config = SlmConfig::default().with_cache_dir(custom_dir.clone());
 
         assert_eq!(config.cache_dir, custom_dir);
     }
@@ -45,8 +44,7 @@ mod tests {
     #[test]
     fn test_slm_config_model_path() {
         let model_path = std::path::PathBuf::from("/models/gemma-2-2b-it");
-        let config = SlmConfig::default()
-            .with_model_path(model_path.clone());
+        let config = SlmConfig::default().with_model_path(model_path.clone());
 
         assert_eq!(config.model_path, Some(model_path));
     }

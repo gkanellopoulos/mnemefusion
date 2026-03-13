@@ -16,13 +16,12 @@ fn check_llama_patches() {
     use std::path::{Path, PathBuf};
 
     // Find llama-cpp-sys-2 source in cargo registry
-    let cargo_home = std::env::var("CARGO_HOME")
-        .unwrap_or_else(|_| {
-            let home = std::env::var("HOME")
-                .or_else(|_| std::env::var("USERPROFILE"))
-                .unwrap_or_default();
-            format!("{}/.cargo", home)
-        });
+    let cargo_home = std::env::var("CARGO_HOME").unwrap_or_else(|_| {
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_default();
+        format!("{}/.cargo", home)
+    });
 
     let registry_src = PathBuf::from(&cargo_home).join("registry").join("src");
     if !registry_src.exists() {
@@ -56,9 +55,15 @@ fn check_llama_patches() {
         if let Ok(content) = std::fs::read_to_string(&cmake_path) {
             if content.contains("GGML_BACKEND_DL") && content.contains("OFF)") {
                 println!("cargo:warning=╔══════════════════════════════════════════════════════════════╗");
-                println!("cargo:warning=║  GGML_BACKEND_DL is OFF — backends won't load at runtime!  ║");
-                println!("cargo:warning=║  Run: python3 scripts/apply_patches.py                     ║");
-                println!("cargo:warning=║  Or:  bash scripts/setup_linux.sh                          ║");
+                println!(
+                    "cargo:warning=║  GGML_BACKEND_DL is OFF — backends won't load at runtime!  ║"
+                );
+                println!(
+                    "cargo:warning=║  Run: python3 scripts/apply_patches.py                     ║"
+                );
+                println!(
+                    "cargo:warning=║  Or:  bash scripts/setup_linux.sh                          ║"
+                );
                 println!("cargo:warning=╚══════════════════════════════════════════════════════════════╝");
             }
         }

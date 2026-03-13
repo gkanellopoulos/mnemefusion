@@ -15,7 +15,9 @@
 
 use crate::error::{Error, Result};
 use crate::extraction::output::ExtractedRelationship;
-use crate::extraction::prompt::{apply_chat_template, build_triplex_extraction_prompt, ModelFamily};
+use crate::extraction::prompt::{
+    apply_chat_template, build_triplex_extraction_prompt, ModelFamily,
+};
 use crate::inference::InferenceEngine;
 use std::path::{Path, PathBuf};
 
@@ -213,7 +215,9 @@ fn parse_direct_triples(output: &str) -> Vec<ExtractedRelationship> {
             continue;
         }
 
-        if let (Some(subject), Some(object)) = (parse_typed_entity(parts[0]), parse_typed_entity(parts[2])) {
+        if let (Some(subject), Some(object)) =
+            (parse_typed_entity(parts[0]), parse_typed_entity(parts[2]))
+        {
             let predicate = parts[1].trim().to_string();
 
             // Only keep entity-to-entity relationships (skip DATE, NUMBER, etc.)
@@ -276,7 +280,9 @@ fn parse_numbered_references(output: &str) -> Vec<ExtractedRelationship> {
     // Resolve references to entities
     let mut results = Vec::new();
     for (from_ref, predicate, to_ref) in triples {
-        if let (Some(from_entity), Some(to_entity)) = (entities.get(&from_ref), entities.get(&to_ref)) {
+        if let (Some(from_entity), Some(to_entity)) =
+            (entities.get(&from_ref), entities.get(&to_ref))
+        {
             if is_entity_type(&from_entity.0) && is_entity_type(&to_entity.0) {
                 results.push(ExtractedRelationship {
                     from_entity: from_entity.1.clone(),
@@ -311,8 +317,15 @@ fn parse_typed_entity(s: &str) -> Option<(String, String)> {
 fn is_entity_type(etype: &str) -> bool {
     matches!(
         etype,
-        "PERSON" | "ORGANIZATION" | "LOCATION"
-            | "ARTIST" | "CITY" | "COUNTRY" | "COMPANY" | "GROUP" | "TEAM"
+        "PERSON"
+            | "ORGANIZATION"
+            | "LOCATION"
+            | "ARTIST"
+            | "CITY"
+            | "COUNTRY"
+            | "COMPANY"
+            | "GROUP"
+            | "TEAM"
     )
 }
 
@@ -393,7 +406,8 @@ mod tests {
 
     #[test]
     fn test_parse_direct_triples_basic() {
-        let output = "PERSON:Alice > FRIEND_OF > PERSON:Bob\nPERSON:Alice > WORKS_AT > ORGANIZATION:Google";
+        let output =
+            "PERSON:Alice > FRIEND_OF > PERSON:Bob\nPERSON:Alice > WORKS_AT > ORGANIZATION:Google";
         let results = parse_triplex_output(output);
         assert_eq!(results.len(), 2);
 
@@ -418,7 +432,8 @@ mod tests {
 
     #[test]
     fn test_parse_direct_triples_filters_non_entities() {
-        let output = "PERSON:Alice > BORN_ON > DATE:1990-01-15\nPERSON:Alice > FRIEND_OF > PERSON:Bob";
+        let output =
+            "PERSON:Alice > BORN_ON > DATE:1990-01-15\nPERSON:Alice > FRIEND_OF > PERSON:Bob";
         let results = parse_triplex_output(output);
         // DATE is not an entity type, so first triple is filtered
         assert_eq!(results.len(), 1);
@@ -458,7 +473,8 @@ mod tests {
 
     #[test]
     fn test_parse_malformed_lines_ignored() {
-        let output = "This is not a triple\nPERSON:Alice > FRIEND_OF > PERSON:Bob\nAnother garbage line";
+        let output =
+            "This is not a triple\nPERSON:Alice > FRIEND_OF > PERSON:Bob\nAnother garbage line";
         let results = parse_triplex_output(output);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].from_entity, "Alice");

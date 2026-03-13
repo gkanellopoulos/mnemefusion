@@ -11,15 +11,16 @@
 //! without query-time SLM inference.
 
 use crate::{
-    error::{Error, Result},
+    error::Result,
     graph::GraphManager,
     index::{BM25Index, TemporalIndex, VectorIndex},
-    ingest::{get_causal_extractor, get_temporal_extractor, EntityExtractor, SimpleEntityExtractor},
+    ingest::{
+        get_causal_extractor, get_temporal_extractor, EntityExtractor, SimpleEntityExtractor,
+    },
     memory::EmbeddingFn,
     storage::StorageEngine,
     types::{
-        AddResult, BatchError, BatchResult, Entity, Memory,
-        MemoryId, MemoryInput, UpsertResult,
+        AddResult, BatchError, BatchResult, Entity, Memory, MemoryId, MemoryInput, UpsertResult,
     },
     util::hash,
 };
@@ -241,7 +242,10 @@ impl IngestionPipeline {
     ///
     /// Returns the number of memories processed (triples extracted).
     #[cfg(feature = "entity-extraction")]
-    pub fn backfill_kg(&self, progress_callback: Option<Box<dyn Fn(usize, usize)>>) -> Result<usize> {
+    pub fn backfill_kg(
+        &self,
+        progress_callback: Option<Box<dyn Fn(usize, usize)>>,
+    ) -> Result<usize> {
         let triplex = match self.triplex_extractor {
             Some(ref t) => t,
             None => {
@@ -329,15 +333,11 @@ impl IngestionPipeline {
         content: &str,
         speaker: Option<&str>,
     ) -> crate::error::Result<crate::extraction::ExtractionResult> {
-        let extractor = self
-            .llm_extractor
-            .as_ref()
-            .ok_or_else(|| {
-                crate::error::Error::InferenceError(
-                    "LLM extractor not enabled. Call enable_llm_entity_extraction() first."
-                        .to_string(),
-                )
-            })?;
+        let extractor = self.llm_extractor.as_ref().ok_or_else(|| {
+            crate::error::Error::InferenceError(
+                "LLM extractor not enabled. Call enable_llm_entity_extraction() first.".to_string(),
+            )
+        })?;
         let ext = extractor.lock().unwrap();
         ext.extract(content, speaker)
     }
@@ -430,8 +430,12 @@ impl IngestionPipeline {
 
                 // GPU context auto-reset
                 let passes = raw_results.len();
-                let prev = self.llm_extraction_count.fetch_add(passes, std::sync::atomic::Ordering::Relaxed);
-                if (prev + passes) / Self::GPU_CONTEXT_RESET_INTERVAL > prev / Self::GPU_CONTEXT_RESET_INTERVAL {
+                let prev = self
+                    .llm_extraction_count
+                    .fetch_add(passes, std::sync::atomic::Ordering::Relaxed);
+                if (prev + passes) / Self::GPU_CONTEXT_RESET_INTERVAL
+                    > prev / Self::GPU_CONTEXT_RESET_INTERVAL
+                {
                     if let Ok(guard) = llm_extractor.lock() {
                         guard.reset_context();
                     }
@@ -440,15 +444,22 @@ impl IngestionPipeline {
                 for result in raw_results {
                     match result {
                         Ok(extraction) => {
-                            if let Err(e) = self.update_entity_profiles_from_llm(
-                                &pending_ex.memory_id,
-                                &extraction,
-                            ) {
-                                tracing::warn!("flush: profile update failed for {}: {}", pending_ex.memory_id, e);
+                            if let Err(e) = self
+                                .update_entity_profiles_from_llm(&pending_ex.memory_id, &extraction)
+                            {
+                                tracing::warn!(
+                                    "flush: profile update failed for {}: {}",
+                                    pending_ex.memory_id,
+                                    e
+                                );
                             }
                         }
                         Err(e) => {
-                            tracing::warn!("flush: LLM extraction failed for {}: {}", pending_ex.memory_id, e);
+                            tracing::warn!(
+                                "flush: LLM extraction failed for {}: {}",
+                                pending_ex.memory_id,
+                                e
+                            );
                         }
                     }
                 }
@@ -513,8 +524,10 @@ impl IngestionPipeline {
         let temporal_expressions = temporal_extractor.extract(&memory.content);
         if !temporal_expressions.is_empty() {
             // Store temporal expressions as JSON array in metadata
-            let expressions_json: Vec<String> =
-                temporal_expressions.iter().map(|e| e.text().to_string()).collect();
+            let expressions_json: Vec<String> = temporal_expressions
+                .iter()
+                .map(|e| e.text().to_string())
+                .collect();
             let json_string = serde_json::to_string(&expressions_json).unwrap_or_default();
             memory.set_metadata("temporal_expressions".to_string(), json_string);
         }
@@ -543,28 +556,34 @@ impl IngestionPipeline {
         // the extraction is deferred. All fast steps (storage, vector, BM25) still run
         // synchronously. Call flush_extraction_queue() to process deferred extractions.
         #[cfg(feature = "entity-extraction")]
-        let llm_extraction_results: Vec<ExtractionResult> =
-            if let Some(ref llm_extractor) = self.llm_extractor {
-                // Check async deferral threshold
-                if self.async_extraction_threshold > 0
-                    && memory.content.len() >= self.async_extraction_threshold
-                {
-                    // Defer: queue for flush_extraction_queue()
-                    let speaker = memory.metadata.get("speaker").cloned();
-                    let session_date = memory.metadata.get("session_date").cloned();
-                    self.pending_extractions.lock().unwrap().push(PendingExtraction {
+        let llm_extraction_results: Vec<ExtractionResult> = if let Some(ref llm_extractor) =
+            self.llm_extractor
+        {
+            // Check async deferral threshold
+            if self.async_extraction_threshold > 0
+                && memory.content.len() >= self.async_extraction_threshold
+            {
+                // Defer: queue for flush_extraction_queue()
+                let speaker = memory.metadata.get("speaker").cloned();
+                let session_date = memory.metadata.get("session_date").cloned();
+                self.pending_extractions
+                    .lock()
+                    .unwrap()
+                    .push(PendingExtraction {
                         memory_id: id.clone(),
                         content: memory.content.clone(),
                         speaker,
                         session_date,
                     });
-                    tracing::debug!(
-                        "Deferred LLM extraction for memory {} ({} bytes >= threshold {})",
-                        id, memory.content.len(), self.async_extraction_threshold
-                    );
-                    vec![] // No results yet; profile updated later via flush()
-                } else {
-                    // Sync extraction (existing path)
+                tracing::debug!(
+                    "Deferred LLM extraction for memory {} ({} bytes >= threshold {})",
+                    id,
+                    memory.content.len(),
+                    self.async_extraction_threshold
+                );
+                vec![] // No results yet; profile updated later via flush()
+            } else {
+                // Sync extraction (existing path)
                 let speaker = memory.metadata.get("speaker").map(|s| s.as_str());
                 let session_date = memory.metadata.get("session_date").map(|s| s.as_str());
                 let extractor = llm_extractor.lock().unwrap();
@@ -572,14 +591,9 @@ impl IngestionPipeline {
                     // Use typed extraction prompt for richer entity facts + temporal metadata.
                     // Research: ENGRAM (arXiv 2511.12960) and TReMu (ACL 2025) show
                     // typed separation and event date inference improve QA accuracy.
-                    vec![extractor.extract_typed(
-                        &memory.content,
-                        speaker,
-                        session_date,
-                    )]
+                    vec![extractor.extract_typed(&memory.content, speaker, session_date)]
                 } else {
-                    extractor
-                        .extract_multi_pass(&memory.content, speaker, self.extraction_passes)
+                    extractor.extract_multi_pass(&memory.content, speaker, self.extraction_passes)
                 };
                 drop(extractor); // release lock before processing
 
@@ -623,21 +637,21 @@ impl IngestionPipeline {
                     }
                 }
 
-                    successes
-                } // end sync extraction else-branch
-            } else {
-                Vec::new()
-            };
+                successes
+            } // end sync extraction else-branch
+        } else {
+            Vec::new()
+        };
 
         // Auto-reset GPU context periodically to prevent CUDA memory fragmentation.
         // Count ALL passes (not just documents) for accurate fragmentation tracking.
         #[cfg(feature = "entity-extraction")]
         if !llm_extraction_results.is_empty() {
             let passes_completed = llm_extraction_results.len();
-            let count = self.llm_extraction_count.fetch_add(
-                passes_completed,
-                std::sync::atomic::Ordering::Relaxed,
-            ) + passes_completed;
+            let count = self
+                .llm_extraction_count
+                .fetch_add(passes_completed, std::sync::atomic::Ordering::Relaxed)
+                + passes_completed;
             if count / Self::GPU_CONTEXT_RESET_INTERVAL
                 > (count - passes_completed) / Self::GPU_CONTEXT_RESET_INTERVAL
             {
@@ -834,10 +848,7 @@ impl IngestionPipeline {
                 triplex.lock().unwrap().reset_context();
             }
 
-            let speaker = memory
-                .metadata
-                .get("speaker")
-                .map(|s| s.as_str());
+            let speaker = memory.metadata.get("speaker").map(|s| s.as_str());
             match triplex.lock().unwrap().extract(&memory.content, speaker) {
                 Ok(triples) => {
                     if !triples.is_empty() {
@@ -1001,7 +1012,7 @@ impl IngestionPipeline {
         let temporal_extractor = get_temporal_extractor();
         let causal_extractor = get_causal_extractor();
 
-        let mut memories: Vec<Memory> = inputs
+        let memories: Vec<Memory> = inputs
             .iter()
             .map(|input| {
                 let mut memory = input.to_memory();
@@ -1009,8 +1020,10 @@ impl IngestionPipeline {
                 // Extract temporal expressions from content
                 let temporal_expressions = temporal_extractor.extract(&memory.content);
                 if !temporal_expressions.is_empty() {
-                    let expressions_json: Vec<String> =
-                        temporal_expressions.iter().map(|e| e.text().to_string()).collect();
+                    let expressions_json: Vec<String> = temporal_expressions
+                        .iter()
+                        .map(|e| e.text().to_string())
+                        .collect();
                     let json_string = serde_json::to_string(&expressions_json).unwrap_or_default();
                     memory.set_metadata("temporal_expressions".to_string(), json_string);
                 }
@@ -1439,26 +1452,19 @@ impl IngestionPipeline {
         crate::graph::persist::save_graph(&graph, &self.storage)
     }
 
-    /// Update entity profiles from LLM-extracted entity facts
-    ///
-    /// This creates or updates EntityProfiles based on the entity_facts extracted
-    /// by the native LLM at ingestion time. Each fact is associated with its source
-    /// memory for provenance tracking.
-    ///
-    /// # Arguments
-    ///
-    /// * `memory_id` - The memory that the facts were extracted from
-    /// * `extraction` - The LLM extraction result containing entity_facts
     /// Check if an entity type is allowed to have a profile.
     ///
     /// If `profile_entity_types` is empty, all types are allowed.
     /// Otherwise, the entity_type must match (case-insensitive) one of the allowed types.
+    #[allow(dead_code)]
     fn is_entity_type_allowed(&self, entity_type: &str) -> bool {
         if self.profile_entity_types.is_empty() {
             return true;
         }
         let et_lower = entity_type.to_lowercase();
-        self.profile_entity_types.iter().any(|t| t.to_lowercase() == et_lower)
+        self.profile_entity_types
+            .iter()
+            .any(|t| t.to_lowercase() == et_lower)
     }
 
     /// Update entity profiles from an extraction result.
@@ -1519,11 +1525,7 @@ impl IngestionPipeline {
                 .storage
                 .get_entity_profile(&entity_name)?
                 .unwrap_or_else(|| {
-                    EntityProfile::new(
-                        EntityId::new(),
-                        entity_name.clone(),
-                        entity_type.clone(),
-                    )
+                    EntityProfile::new(EntityId::new(), entity_name.clone(), entity_type.clone())
                 });
 
             // Create EntityFact from ExtractedFact
@@ -1587,22 +1589,18 @@ impl IngestionPipeline {
             // Skip entities whose type is not in the allowed list
             // (unless they already have a profile from before the filter was added)
             if !self.is_entity_type_allowed(&entity.entity_type) {
-                let resolved = crate::query::profile_search::resolve_entity_alias(
-                    &entity.name,
-                    &known_names,
-                )
-                .unwrap_or_else(|| entity.name.clone());
+                let resolved =
+                    crate::query::profile_search::resolve_entity_alias(&entity.name, &known_names)
+                        .unwrap_or_else(|| entity.name.clone());
                 if self.storage.get_entity_profile(&resolved)?.is_none() {
                     continue;
                 }
             }
 
             // Canonicalize entity name via alias resolution
-            let entity_name = crate::query::profile_search::resolve_entity_alias(
-                &entity.name,
-                &known_names,
-            )
-            .unwrap_or_else(|| entity.name.clone());
+            let entity_name =
+                crate::query::profile_search::resolve_entity_alias(&entity.name, &known_names)
+                    .unwrap_or_else(|| entity.name.clone());
 
             if linked_entities.contains(&entity_name.to_lowercase()) {
                 continue; // Already linked via entity_facts above
@@ -1749,17 +1747,13 @@ impl IngestionPipeline {
             }
 
             // Resolve aliases for both entities
-            let from_name = crate::query::profile_search::resolve_entity_alias(
-                &rel.from_entity,
-                &known_names,
-            )
-            .unwrap_or_else(|| rel.from_entity.clone());
+            let from_name =
+                crate::query::profile_search::resolve_entity_alias(&rel.from_entity, &known_names)
+                    .unwrap_or_else(|| rel.from_entity.clone());
 
-            let to_name = crate::query::profile_search::resolve_entity_alias(
-                &rel.to_entity,
-                &known_names,
-            )
-            .unwrap_or_else(|| rel.to_entity.clone());
+            let to_name =
+                crate::query::profile_search::resolve_entity_alias(&rel.to_entity, &known_names)
+                    .unwrap_or_else(|| rel.to_entity.clone());
 
             // Store relationship fact in "from" entity's profile
             if let Ok(Some(mut from_profile)) = self.storage.get_entity_profile(&from_name) {
@@ -1843,11 +1837,7 @@ impl IngestionPipeline {
                         .map(|e| e.entity_type.clone())
                         .unwrap_or_else(|| "unknown".to_string());
 
-                    EntityProfile::new(
-                        EntityId::new(),
-                        extracted_fact.entity.clone(),
-                        entity_type,
-                    )
+                    EntityProfile::new(EntityId::new(), extracted_fact.entity.clone(), entity_type)
                 });
 
             // Create EntityFact from ExtractedEntityFact
@@ -2581,7 +2571,11 @@ mod tests {
         pipeline.storage.store_entity_profile(&profile).unwrap();
 
         // Verify profile exists with the fact
-        let stored = pipeline.storage.get_entity_profile("TestEntity").unwrap().unwrap();
+        let stored = pipeline
+            .storage
+            .get_entity_profile("TestEntity")
+            .unwrap()
+            .unwrap();
         assert_eq!(stored.total_facts(), 1);
         assert!(stored.source_memories.contains(&id));
 
@@ -2630,14 +2624,22 @@ mod tests {
         pipeline.storage.store_entity_profile(&profile).unwrap();
 
         // Verify profile has both facts
-        let stored = pipeline.storage.get_entity_profile("SharedEntity").unwrap().unwrap();
+        let stored = pipeline
+            .storage
+            .get_entity_profile("SharedEntity")
+            .unwrap()
+            .unwrap();
         assert_eq!(stored.total_facts(), 2);
 
         // Delete memory1
         pipeline.delete(&id1).unwrap();
 
         // Profile should still exist with only mem2's fact
-        let profile_after = pipeline.storage.get_entity_profile("SharedEntity").unwrap().unwrap();
+        let profile_after = pipeline
+            .storage
+            .get_entity_profile("SharedEntity")
+            .unwrap()
+            .unwrap();
         assert_eq!(profile_after.total_facts(), 1);
         assert!(!profile_after.source_memories.contains(&id1));
         assert!(profile_after.source_memories.contains(&id2));
@@ -2674,7 +2676,11 @@ mod tests {
         assert!(!deleted);
 
         // Profile should be unchanged
-        let profile_after = pipeline.storage.get_entity_profile("PersistentEntity").unwrap().unwrap();
+        let profile_after = pipeline
+            .storage
+            .get_entity_profile("PersistentEntity")
+            .unwrap()
+            .unwrap();
         assert_eq!(profile_after.total_facts(), 1);
     }
 
@@ -2732,14 +2738,24 @@ mod tests {
         pipeline.storage.store_entity_profile(&profile2).unwrap();
 
         // Delete memories 1 and 2
-        let deleted = pipeline.delete_batch(vec![id1.clone(), id2.clone()]).unwrap();
+        let deleted = pipeline
+            .delete_batch(vec![id1.clone(), id2.clone()])
+            .unwrap();
         assert_eq!(deleted, 2);
 
         // Entity1 profile should be deleted (only had facts from id1)
-        assert!(pipeline.storage.get_entity_profile("Entity1").unwrap().is_none());
+        assert!(pipeline
+            .storage
+            .get_entity_profile("Entity1")
+            .unwrap()
+            .is_none());
 
         // Entity2 profile should exist with only id3's fact
-        let profile2_after = pipeline.storage.get_entity_profile("Entity2").unwrap().unwrap();
+        let profile2_after = pipeline
+            .storage
+            .get_entity_profile("Entity2")
+            .unwrap()
+            .unwrap();
         assert_eq!(profile2_after.total_facts(), 1);
         assert!(profile2_after.source_memories.contains(&id3));
         assert!(!profile2_after.source_memories.contains(&id1));
@@ -2899,20 +2915,14 @@ mod tests {
         let (pipeline, _dir) = create_test_pipeline();
 
         // Pre-create "melanie" profile (canonical form)
-        let melanie_profile = EntityProfile::new(
-            EntityId::new(),
-            "melanie".to_string(),
-            "person".to_string(),
-        );
+        let melanie_profile =
+            EntityProfile::new(EntityId::new(), "melanie".to_string(), "person".to_string());
         pipeline
             .storage
             .store_entity_profile(&melanie_profile)
             .unwrap();
 
-        let memory = Memory::new(
-            "Mel loves hiking and cooking".to_string(),
-            vec![0.1; 384],
-        );
+        let memory = Memory::new("Mel loves hiking and cooking".to_string(), vec![0.1; 384]);
         let id = memory.id.clone();
         pipeline.storage.store_memory(&memory).unwrap();
 
@@ -2941,7 +2951,11 @@ mod tests {
             .get_entity_profile("melanie")
             .unwrap()
             .expect("melanie profile should exist");
-        assert_eq!(melanie.total_facts(), 1, "Fact should be stored under 'melanie'");
+        assert_eq!(
+            melanie.total_facts(),
+            1,
+            "Fact should be stored under 'melanie'"
+        );
         assert!(melanie.source_memories.contains(&id));
 
         // No separate "mel" profile should be created
@@ -3016,7 +3030,10 @@ mod tests {
         assert!(dogs.is_none(), "Animal entity should be filtered out");
 
         let basketball = pipeline.storage.get_entity_profile("basketball").unwrap();
-        assert!(basketball.is_none(), "Activity entity should be filtered out");
+        assert!(
+            basketball.is_none(),
+            "Activity entity should be filtered out"
+        );
     }
 
     #[cfg(feature = "entity-extraction")]

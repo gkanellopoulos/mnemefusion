@@ -706,7 +706,8 @@ mod tests {
 
     #[test]
     fn test_fewshot_prompt_with_speaker() {
-        let prompt = build_fewshot_extraction_prompt("Researching adoption agencies", Some("Caroline"));
+        let prompt =
+            build_fewshot_extraction_prompt("Researching adoption agencies", Some("Caroline"));
         assert!(prompt.contains("Researching adoption agencies"));
         assert!(prompt.contains("spoken by Caroline"));
         assert!(prompt.contains("Attribute all facts to Caroline"));
@@ -844,7 +845,8 @@ mod tests {
 
     #[test]
     fn test_triplex_prompt_with_speaker() {
-        let prompt = build_triplex_extraction_prompt("My friend Bob works at Google", Some("Alice"));
+        let prompt =
+            build_triplex_extraction_prompt("My friend Bob works at Google", Some("Alice"));
         assert!(prompt.contains("Alice says: My friend Bob works at Google"));
         assert!(prompt.contains("WORKS_AT"));
     }

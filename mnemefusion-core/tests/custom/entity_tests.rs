@@ -52,7 +52,13 @@ fn test_entity_basic_001_about_query() {
     let query_embedding = generate_test_embedding("about Alice", 384);
     let (intent, _results, _profile_ctx) = ctx
         .engine
-        .query("Tell me about Alice", query_embedding.clone(), 10, None, None)
+        .query(
+            "Tell me about Alice",
+            query_embedding.clone(),
+            10,
+            None,
+            None,
+        )
         .unwrap();
 
     // Should detect entity intent
@@ -171,7 +177,13 @@ fn test_entity_basic_005_with_entity() {
     let query_embedding = generate_test_embedding("with Charlie", 384);
     let (intent, _results, _profile_ctx) = ctx
         .engine
-        .query("Meetings with Charlie", query_embedding.clone(), 10, None, None)
+        .query(
+            "Meetings with Charlie",
+            query_embedding.clone(),
+            10,
+            None,
+            None,
+        )
         .unwrap();
 
     assert_eq!(
@@ -196,7 +208,13 @@ fn test_entity_basic_006_involving_entity() {
     let query_embedding = generate_test_embedding("involving Diana", 384);
     let (intent, _results, _profile_ctx) = ctx
         .engine
-        .query("Issues involving Diana", query_embedding.clone(), 10, None, None)
+        .query(
+            "Issues involving Diana",
+            query_embedding.clone(),
+            10,
+            None,
+            None,
+        )
         .unwrap();
 
     assert_eq!(
@@ -1284,7 +1302,13 @@ fn test_entity_mixed_008_entity_with_location() {
     let query_embedding = generate_test_embedding("Alice San Francisco", 384);
     let (_intent, results, _profile_ctx) = ctx
         .engine
-        .query("Alice in San Francisco", query_embedding.clone(), 10, None, None)
+        .query(
+            "Alice in San Francisco",
+            query_embedding.clone(),
+            10,
+            None,
+            None,
+        )
         .unwrap();
 
     // Should find memories with both Alice and San Francisco
@@ -1614,7 +1638,13 @@ fn test_entity_query_001_entity_intent_returns_relevant() {
     let query_embedding = generate_test_embedding("Tell me about Alice", 384);
     let (intent, results, _profile_ctx) = ctx
         .engine
-        .query("Tell me about Alice", query_embedding.clone(), 10, None, None)
+        .query(
+            "Tell me about Alice",
+            query_embedding.clone(),
+            10,
+            None,
+            None,
+        )
         .unwrap();
 
     // Should detect entity intent

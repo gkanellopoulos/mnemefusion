@@ -162,12 +162,8 @@ impl MultiTurnAggregator {
         let query_terms = Self::extract_query_terms(query_text);
 
         // Find best combination using greedy coverage algorithm
-        let best_combination = self.greedy_coverage_combination(
-            &to_aggregate,
-            &query_terms,
-            storage,
-            limit,
-        )?;
+        let best_combination =
+            self.greedy_coverage_combination(&to_aggregate, &query_terms, storage, limit)?;
 
         Ok(best_combination)
     }
@@ -203,8 +199,7 @@ impl MultiTurnAggregator {
             for (idx, candidate) in remaining.iter().enumerate() {
                 if let Some(content) = content_map.get(&candidate.id.to_string()) {
                     let content_terms = Self::extract_answer_terms(content, query_terms);
-                    let new_terms: HashSet<_> =
-                        content_terms.difference(&covered_terms).collect();
+                    let new_terms: HashSet<_> = content_terms.difference(&covered_terms).collect();
 
                     // Score = (new terms added) * (relevance score) + (base relevance)
                     // This balances coverage with relevance
@@ -275,12 +270,12 @@ impl MultiTurnAggregator {
             "on", "with", "he", "as", "you", "do", "at", "this", "but", "his", "by", "from",
             "they", "we", "say", "her", "she", "or", "an", "will", "my", "one", "all", "would",
             "there", "their", "what", "so", "up", "out", "if", "about", "who", "get", "which",
-            "go", "me", "when", "make", "can", "like", "time", "no", "just", "him", "know",
-            "take", "people", "into", "year", "your", "good", "some", "could", "them", "see",
-            "other", "than", "then", "now", "look", "only", "come", "its", "over", "think",
-            "also", "back", "after", "use", "two", "how", "our", "work", "first", "well", "way",
-            "even", "new", "want", "because", "any", "these", "give", "day", "most", "us", "is",
-            "was", "are", "been", "has", "had", "were", "did", "does",
+            "go", "me", "when", "make", "can", "like", "time", "no", "just", "him", "know", "take",
+            "people", "into", "year", "your", "good", "some", "could", "them", "see", "other",
+            "than", "then", "now", "look", "only", "come", "its", "over", "think", "also", "back",
+            "after", "use", "two", "how", "our", "work", "first", "well", "way", "even", "new",
+            "want", "because", "any", "these", "give", "day", "most", "us", "is", "was", "are",
+            "been", "has", "had", "were", "did", "does",
         ];
 
         STOPWORDS.contains(&word)
@@ -378,7 +373,9 @@ mod tests {
     fn test_is_hypothetical() {
         assert!(MultiTurnAggregator::is_hypothetical("would x happen?"));
         assert!(MultiTurnAggregator::is_hypothetical("could this work?"));
-        assert!(MultiTurnAggregator::is_hypothetical("what would likely occur?"));
+        assert!(MultiTurnAggregator::is_hypothetical(
+            "what would likely occur?"
+        ));
         assert!(!MultiTurnAggregator::is_hypothetical("what happened?"));
     }
 
@@ -389,24 +386,44 @@ mod tests {
         assert!(MultiTurnAggregator::is_aggregation("list all topics"));
         assert!(MultiTurnAggregator::is_aggregation("show all entries"));
         assert!(MultiTurnAggregator::is_aggregation("name all the members"));
-        assert!(MultiTurnAggregator::is_aggregation("how many times did she visit?"));
-        assert!(MultiTurnAggregator::is_aggregation("in what ways does he help?"));
+        assert!(MultiTurnAggregator::is_aggregation(
+            "how many times did she visit?"
+        ));
+        assert!(MultiTurnAggregator::is_aggregation(
+            "in what ways does he help?"
+        ));
 
         // Non-aggregation queries
-        assert!(!MultiTurnAggregator::is_aggregation("when did this happen?"));
+        assert!(!MultiTurnAggregator::is_aggregation(
+            "when did this happen?"
+        ));
         assert!(!MultiTurnAggregator::is_aggregation("where is it?"));
-        assert!(!MultiTurnAggregator::is_aggregation("what does caroline do to destress?"));
-        assert!(!MultiTurnAggregator::is_aggregation("what has she been reading?"));
+        assert!(!MultiTurnAggregator::is_aggregation(
+            "what does caroline do to destress?"
+        ));
+        assert!(!MultiTurnAggregator::is_aggregation(
+            "what has she been reading?"
+        ));
     }
 
     #[test]
     fn test_is_aggregation_no_domain_words() {
         // Domain-specific vocabulary should NOT trigger aggregation on its own
-        assert!(!MultiTurnAggregator::is_aggregation("what activities does melanie do?"));
-        assert!(!MultiTurnAggregator::is_aggregation("does she have any hobbies?"));
-        assert!(!MultiTurnAggregator::is_aggregation("what instruments does he play?"));
-        assert!(!MultiTurnAggregator::is_aggregation("tell me about her paintings"));
-        assert!(!MultiTurnAggregator::is_aggregation("what books has she read?"));
+        assert!(!MultiTurnAggregator::is_aggregation(
+            "what activities does melanie do?"
+        ));
+        assert!(!MultiTurnAggregator::is_aggregation(
+            "does she have any hobbies?"
+        ));
+        assert!(!MultiTurnAggregator::is_aggregation(
+            "what instruments does he play?"
+        ));
+        assert!(!MultiTurnAggregator::is_aggregation(
+            "tell me about her paintings"
+        ));
+        assert!(!MultiTurnAggregator::is_aggregation(
+            "what books has she read?"
+        ));
     }
 
     #[test]
@@ -429,17 +446,23 @@ mod tests {
             })
             .collect();
 
-        let result = aggregator.aggregate(
-            QueryType::Extraction,
-            "when did we meet?",
-            candidates,
-            &crate::storage::StorageEngine::open(
-                &std::env::temp_dir().join("test_agg_ext.mfdb"),
-            ).unwrap(),
+        let result = aggregator
+            .aggregate(
+                QueryType::Extraction,
+                "when did we meet?",
+                candidates,
+                &crate::storage::StorageEngine::open(
+                    &std::env::temp_dir().join("test_agg_ext.mfdb"),
+                )
+                .unwrap(),
+                25,
+            )
+            .unwrap();
+
+        assert_eq!(
+            result.len(),
             25,
-        ).unwrap();
-
-        assert_eq!(result.len(), 25, "Extraction should return exactly limit results");
+            "Extraction should return exactly limit results"
+        );
     }
-
 }

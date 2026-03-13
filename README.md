@@ -302,9 +302,39 @@ config = {"entity_extraction_enabled": False, "embedding_dim": 768}
 mem = mnemefusion.Memory("brain.mfdb", config=config)
 ```
 
+## API Stability
+
+MnemeFusion is pre-1.0. The following APIs are considered **stable** and will not change without a version bump:
+
+| API | Stable Since |
+|-----|-------------|
+| `Memory(path, config, user)` | 0.1.0-alpha |
+| `add(content, embedding, metadata, timestamp)` | 0.1.0-alpha |
+| `query(query_text, query_embedding, limit, namespace, filters)` | 0.1.0-alpha |
+| `search(query_embedding, top_k, namespace, filters)` | 0.1.0-alpha |
+| `get(memory_id)` / `delete(memory_id)` | 0.1.0-alpha |
+| `close()` | 0.1.0-alpha |
+| `add_batch(memories, namespace)` | 0.1.0-alpha |
+| `set_embedding_fn(fn)` | 0.1.0-alpha |
+
+Everything else (entity extraction API, profile management, config keys) may change between minor versions. The `.mfdb` file format is not yet versioned — format-breaking changes will be documented in the [CHANGELOG](CHANGELOG.md).
+
+## Performance Characteristics
+
+| Operation | Complexity | Typical Latency |
+|-----------|-----------|-----------------|
+| `add()` | O(log n) HNSW insertion + O(n) BM25 update | <5ms without entity extraction |
+| `add()` with LLM extraction | Same + LLM inference | ~3-9s depending on GPU |
+| `query()` | O(k·log n) across all dimensions + RRF fusion | ~50ms at 5K memories, ~200ms at 50K |
+| `search()` | O(k·log n) vector-only | <10ms |
+| `get()` / `delete()` | O(1) key lookup | <1ms |
+| Storage overhead | ~1.5-2x raw content size (384-dim embeddings) | — |
+
+Tested with up to 10K memories in a single `.mfdb` file. For production deployments with per-user databases (the recommended pattern), individual databases typically contain 1K-10K memories.
+
 ## Contributing
 
-Contributions are welcome! Please open an issue or pull request on GitHub.
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions, test commands, and PR guidelines.
 
 ## License
 

@@ -42,6 +42,7 @@ impl Default for TraversalConfig {
 /// Policy-guided graph traversal engine
 pub struct GraphTraversal {
     graph_manager: Arc<RwLock<GraphManager>>,
+    #[allow(dead_code)]
     storage: Arc<StorageEngine>,
     config: TraversalConfig,
 }
@@ -271,8 +272,7 @@ impl GraphTraversal {
                                 continue;
                             }
                             // 2-hop decay: seed → entity → related_entity → memory
-                            let expansion_score =
-                                seed_score * self.config.decay_factor.powi(2);
+                            let expansion_score = seed_score * self.config.decay_factor.powi(2);
                             expanded.insert(memory_id.clone(), expansion_score);
                             expansions_added += 1;
                             if expansions_added >= self.config.max_expansions_per_seed {

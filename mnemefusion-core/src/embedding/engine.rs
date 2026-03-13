@@ -54,9 +54,7 @@ impl EmbeddingEngine {
     pub fn from_model_id(_model_id: &str) -> Result<Self> {
         // Only BGE-base supported for now — matches existing DB embedding dim.
         let model = TextEmbedding::try_new(InitOptions::new(EmbeddingModel::BGEBaseENV15))
-            .map_err(|e| {
-                Error::Configuration(format!("Failed to load embedding model: {}", e))
-            })?;
+            .map_err(|e| Error::Configuration(format!("Failed to load embedding model: {}", e)))?;
 
         Ok(Self { model, dim: 768 })
     }

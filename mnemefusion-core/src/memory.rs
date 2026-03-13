@@ -71,24 +71,24 @@ pub fn first_person_to_third(content: &str, speaker: &str) -> String {
     // Each entry is (regex_pattern, replacement_factory).
     let rules: &[(&str, fn(&str) -> String)] = &[
         // Contractions (case-insensitive: "I'm" and "i'm" both match)
-        (r"(?i)\bI'm\b",    |s| format!("{} is", s)),
-        (r"(?i)\bI've\b",   |s| format!("{} has", s)),
-        (r"(?i)\bI'll\b",   |s| format!("{} will", s)),
-        (r"(?i)\bI'd\b",    |s| format!("{} would", s)),
+        (r"(?i)\bI'm\b", |s| format!("{} is", s)),
+        (r"(?i)\bI've\b", |s| format!("{} has", s)),
+        (r"(?i)\bI'll\b", |s| format!("{} will", s)),
+        (r"(?i)\bI'd\b", |s| format!("{} would", s)),
         // 2-word phrases (always capitalized in English)
-        (r"\bI am\b",       |s| format!("{} is", s)),
-        (r"\bI have\b",     |s| format!("{} has", s)),
-        (r"\bI will\b",     |s| format!("{} will", s)),
-        (r"\bI would\b",    |s| format!("{} would", s)),
+        (r"\bI am\b", |s| format!("{} is", s)),
+        (r"\bI have\b", |s| format!("{} has", s)),
+        (r"\bI will\b", |s| format!("{} will", s)),
+        (r"\bI would\b", |s| format!("{} would", s)),
         // Standalone "I" (always capitalized in English; case-sensitive is fine)
-        (r"\bI\b",              |s| s.to_string()),
+        (r"\bI\b", |s| s.to_string()),
         // "myself" / "Myself" before "my" to prevent double-substitution
-        (r"(?i)\bmyself\b",     |s| s.to_string()),
+        (r"(?i)\bmyself\b", |s| s.to_string()),
         // Possessive (case-insensitive: "My" at sentence start, "my" mid-sentence)
-        (r"(?i)\bmy\b",         |s| format!("{}'s", s)),
-        (r"(?i)\bmine\b",       |s| format!("{}'s", s)),
+        (r"(?i)\bmy\b", |s| format!("{}'s", s)),
+        (r"(?i)\bmine\b", |s| format!("{}'s", s)),
         // Object pronoun (case-insensitive: "Me and Alice went..." edge case)
-        (r"(?i)\bme\b",         |s| s.to_string()),
+        (r"(?i)\bme\b", |s| s.to_string()),
     ];
 
     let mut result = content.to_string();
@@ -508,10 +508,7 @@ impl MemoryEngine {
     ///
     /// Requires the `embedding-onnx` feature at compile time.
     #[cfg(feature = "embedding-onnx")]
-    pub fn with_embedding_engine(
-        mut self,
-        engine: crate::embedding::EmbeddingEngine,
-    ) -> Self {
+    pub fn with_embedding_engine(mut self, engine: crate::embedding::EmbeddingEngine) -> Self {
         self.embedding_engine = Some(std::sync::Arc::new(engine));
         self
     }
@@ -558,14 +555,9 @@ impl MemoryEngine {
     ///
     /// Returns the number of fact embeddings computed.
     pub fn precompute_fact_embeddings(&self) -> Result<usize> {
-        let embed_fn = self
-            .pipeline
-            .embedding_fn()
-            .ok_or_else(|| {
-                Error::Configuration(
-                    "No embedding function set. Call set_embedding_fn() first.".into(),
-                )
-            })?;
+        let embed_fn = self.pipeline.embedding_fn().ok_or_else(|| {
+            Error::Configuration("No embedding function set. Call set_embedding_fn() first.".into())
+        })?;
 
         let profiles = self.storage.list_entity_profiles()?;
         let mut computed = 0;
@@ -575,8 +567,7 @@ impl MemoryEngine {
                 for fact in facts {
                     let key = fact_embedding_key(&profile.name, fact_type, &fact.value);
                     if self.storage.get_fact_embedding(&key)?.is_none() {
-                        let fact_text =
-                            format!("{} {}", fact_type.replace('_', " "), fact.value);
+                        let fact_text = format!("{} {}", fact_type.replace('_', " "), fact.value);
                         let embedding = embed_fn(&fact_text);
                         self.storage.store_fact_embedding(&key, &embedding)?;
                         computed += 1;
@@ -613,7 +604,11 @@ impl MemoryEngine {
                 Some(m) => m,
                 None => continue,
             };
-            let speaker = memory.metadata.get("speaker").map(String::as_str).unwrap_or("");
+            let speaker = memory
+                .metadata
+                .get("speaker")
+                .map(String::as_str)
+                .unwrap_or("");
             if speaker.is_empty() {
                 continue;
             }
@@ -632,7 +627,10 @@ impl MemoryEngine {
             updated += 1;
         }
 
-        tracing::info!("rebuild_speaker_embeddings: updated {} memory embeddings", updated);
+        tracing::info!(
+            "rebuild_speaker_embeddings: updated {} memory embeddings",
+            updated
+        );
         Ok(updated)
     }
 
@@ -738,7 +736,8 @@ impl MemoryEngine {
             // Sort by length (shortest first) so short aliases resolve to longer canonicals
             all_names.sort_by_key(|n| n.len());
 
-            let mut merged_away: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut merged_away: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
 
             for i in 0..all_names.len() {
                 let short_name = &all_names[i];
@@ -760,7 +759,7 @@ impl MemoryEngine {
                     };
 
                     // Move all facts from short → canonical (add_fact handles dedup)
-                    for (_fact_type, facts) in &short_profile.facts {
+                    for facts in short_profile.facts.values() {
                         for fact in facts {
                             canon_profile.add_fact(fact.clone());
                         }
@@ -789,8 +788,15 @@ impl MemoryEngine {
         let profiles = self.storage.list_entity_profiles()?;
 
         const NULL_INDICATORS: &[&str] = &[
-            "none", "n/a", "na", "not specified", "not mentioned",
-            "unknown", "unspecified", "not provided", "no information",
+            "none",
+            "n/a",
+            "na",
+            "not specified",
+            "not mentioned",
+            "unknown",
+            "unspecified",
+            "not provided",
+            "no information",
         ];
 
         for mut profile in profiles {
@@ -833,7 +839,8 @@ impl MemoryEngine {
                                 .ok()
                                 .flatten()
                                 .unwrap_or_else(|| {
-                                    let text = format!("{} {}", fact_type.replace('_', " "), f.value);
+                                    let text =
+                                        format!("{} {}", fact_type.replace('_', " "), f.value);
                                     embed_fn(&text)
                                 })
                         })
@@ -856,10 +863,8 @@ impl MemoryEngine {
                     }
 
                     let before = facts.len();
-                    let kept_facts: Vec<_> = keep_indices
-                        .into_iter()
-                        .map(|i| facts[i].clone())
-                        .collect();
+                    let kept_facts: Vec<_> =
+                        keep_indices.into_iter().map(|i| facts[i].clone()).collect();
                     *facts = kept_facts;
                     facts_removed_in_profile += before - facts.len();
                 }
@@ -905,13 +910,33 @@ impl MemoryEngine {
     ///
     /// Returns (profiles_created, source_memories_added).
     pub fn repair_profiles_from_metadata(&self) -> Result<(usize, usize)> {
-        use crate::types::{EntityFact, EntityId};
         use crate::query::profile_search::resolve_entity_alias;
+        use crate::types::{EntityFact, EntityId};
 
         let junk_names: &[&str] = &[
-            "i", "me", "my", "we", "our", "you", "your", "he", "she", "it",
-            "they", "them", "his", "her", "their", "him", "this", "that",
-            "unknown", "unspecified", "someone", "somebody", "anyone",
+            "i",
+            "me",
+            "my",
+            "we",
+            "our",
+            "you",
+            "your",
+            "he",
+            "she",
+            "it",
+            "they",
+            "them",
+            "his",
+            "her",
+            "their",
+            "him",
+            "this",
+            "that",
+            "unknown",
+            "unspecified",
+            "someone",
+            "somebody",
+            "anyone",
         ];
 
         let allowed_types: &[&str] = &["person", "organization", "location"];
@@ -946,8 +971,7 @@ impl MemoryEngine {
                             if let (Some(name), Some(etype)) =
                                 (e["name"].as_str(), e["type"].as_str())
                             {
-                                entity_types
-                                    .insert(name.to_lowercase(), etype.to_lowercase());
+                                entity_types.insert(name.to_lowercase(), etype.to_lowercase());
                             }
                         }
                     }
@@ -961,8 +985,7 @@ impl MemoryEngine {
                             let entity_lower = entity_raw.to_lowercase();
 
                             // Skip junk names and single-char names
-                            if entity_lower.len() < 2
-                                || junk_names.contains(&entity_lower.as_str())
+                            if entity_lower.len() < 2 || junk_names.contains(&entity_lower.as_str())
                             {
                                 continue;
                             }
@@ -985,20 +1008,14 @@ impl MemoryEngine {
                                 .as_str()
                                 .unwrap_or("unknown")
                                 .to_string();
-                            let value = fact_val["value"]
-                                .as_str()
-                                .unwrap_or("")
-                                .to_string();
-                            let confidence = fact_val["confidence"]
-                                .as_f64()
-                                .unwrap_or(0.8) as f32;
+                            let value = fact_val["value"].as_str().unwrap_or("").to_string();
+                            let confidence = fact_val["confidence"].as_f64().unwrap_or(0.8) as f32;
 
                             if value.is_empty() || value.len() > 100 {
                                 continue;
                             }
 
-                            let is_new =
-                                self.storage.get_entity_profile(&canonical)?.is_none();
+                            let is_new = self.storage.get_entity_profile(&canonical)?.is_none();
 
                             let mut profile = self
                                 .storage
@@ -1135,7 +1152,11 @@ impl MemoryEngine {
                     .filter(|s| !s.is_empty())
                     .map(|speaker| {
                         let subst = first_person_to_third(&content, speaker);
-                        if subst != content { subst } else { content.clone() }
+                        if subst != content {
+                            subst
+                        } else {
+                            content.clone()
+                        }
                     })
                     .unwrap_or_else(|| content.clone());
                 self.auto_embed(&text_for_embedding)?
@@ -1810,7 +1831,11 @@ impl MemoryEngine {
         limit: usize,
         namespace: Option<&str>,
         filters: Option<&[MetadataFilter]>,
-    ) -> Result<(IntentClassification, Vec<(Memory, FusedResult)>, Vec<String>)> {
+    ) -> Result<(
+        IntentClassification,
+        Vec<(Memory, FusedResult)>,
+        Vec<String>,
+    )> {
         // Resolve query embedding: use provided value or auto-compute from query text
         let embedding_vec: Vec<f32> = match query_embedding.into() {
             Some(e) => e,
@@ -1824,10 +1849,14 @@ impl MemoryEngine {
         // Pass user_entity for first-person pronoun resolution:
         // when user says "I like hiking", the system maps "I" to their entity profile,
         // ensuring their memories get the Step 2.1 entity boost.
-        let (intent, fused_results, matched_facts) =
-            self.query_planner
-                .query(query_text, &embedding_vec, limit, effective_ns, filters,
-                       self.user_entity.as_deref())?;
+        let (intent, fused_results, matched_facts) = self.query_planner.query(
+            query_text,
+            &embedding_vec,
+            limit,
+            effective_ns,
+            filters,
+            self.user_entity.as_deref(),
+        )?;
 
         // Build profile context as SEPARATE strings (not mixed into results).
         // Profile facts contain entity knowledge ("Caroline's hobby: painting") but
@@ -1836,7 +1865,8 @@ impl MemoryEngine {
         let mut profile_context = Vec::new();
 
         // Group matched facts by entity name
-        let mut facts_by_entity: HashMap<String, Vec<&crate::query::MatchedProfileFact>> = HashMap::new();
+        let mut facts_by_entity: HashMap<String, Vec<&crate::query::MatchedProfileFact>> =
+            HashMap::new();
         for fact in &matched_facts {
             facts_by_entity
                 .entry(fact.entity_name.clone())
@@ -2413,7 +2443,7 @@ impl MemoryEngine {
     /// let count = user_memory.count().unwrap();
     /// user_memory.delete_all().unwrap();
     /// ```
-    pub fn scope<S: Into<String>>(&self, namespace: S) -> ScopedMemory {
+    pub fn scope<S: Into<String>>(&self, namespace: S) -> ScopedMemory<'_> {
         ScopedMemory {
             engine: self,
             namespace: namespace.into(),
@@ -2691,7 +2721,11 @@ impl<'a> ScopedMemory<'a> {
         query_embedding: &[f32],
         limit: usize,
         filters: Option<&[MetadataFilter]>,
-    ) -> Result<(IntentClassification, Vec<(Memory, FusedResult)>, Vec<String>)> {
+    ) -> Result<(
+        IntentClassification,
+        Vec<(Memory, FusedResult)>,
+        Vec<String>,
+    )> {
         self.engine.query(
             query_text,
             query_embedding.to_vec(),
@@ -3503,49 +3537,38 @@ mod tests {
         let mem2 = MemoryId::new();
 
         // Create orphan "mel" profile with 1 fact
-        let mut mel_profile = EntityProfile::new(
-            EntityId::new(),
-            "mel".to_string(),
-            "person".to_string(),
-        );
-        mel_profile.add_fact(EntityFact::new(
-            "hobby",
-            "hiking",
-            0.9,
-            mem1.clone(),
-        ));
+        let mut mel_profile =
+            EntityProfile::new(EntityId::new(), "mel".to_string(), "person".to_string());
+        mel_profile.add_fact(EntityFact::new("hobby", "hiking", 0.9, mem1.clone()));
         mel_profile.add_source_memory(mem1.clone());
         engine.storage.store_entity_profile(&mel_profile).unwrap();
 
         // Create canonical "melanie" profile with 2 facts
-        let mut melanie_profile = EntityProfile::new(
-            EntityId::new(),
-            "melanie".to_string(),
-            "person".to_string(),
-        );
-        melanie_profile.add_fact(EntityFact::new(
-            "instrument",
-            "guitar",
-            0.9,
-            mem2.clone(),
-        ));
-        melanie_profile.add_fact(EntityFact::new(
-            "occupation",
-            "teacher",
-            0.8,
-            mem2.clone(),
-        ));
+        let mut melanie_profile =
+            EntityProfile::new(EntityId::new(), "melanie".to_string(), "person".to_string());
+        melanie_profile.add_fact(EntityFact::new("instrument", "guitar", 0.9, mem2.clone()));
+        melanie_profile.add_fact(EntityFact::new("occupation", "teacher", 0.8, mem2.clone()));
         melanie_profile.add_source_memory(mem2.clone());
-        engine.storage.store_entity_profile(&melanie_profile).unwrap();
+        engine
+            .storage
+            .store_entity_profile(&melanie_profile)
+            .unwrap();
 
         // Verify both exist before consolidation
         assert!(engine.storage.get_entity_profile("mel").unwrap().is_some());
-        assert!(engine.storage.get_entity_profile("melanie").unwrap().is_some());
+        assert!(engine
+            .storage
+            .get_entity_profile("melanie")
+            .unwrap()
+            .is_some());
 
         let (_facts_removed, profiles_deleted) = engine.consolidate_profiles().unwrap();
 
         // "mel" should be merged into "melanie" and deleted
-        assert!(profiles_deleted >= 1, "At least 1 profile should be deleted (mel)");
+        assert!(
+            profiles_deleted >= 1,
+            "At least 1 profile should be deleted (mel)"
+        );
         assert!(
             engine.storage.get_entity_profile("mel").unwrap().is_none(),
             "mel profile should be deleted after merge"
@@ -3583,7 +3606,14 @@ mod tests {
         let embedding = vec![0.1f32; 384];
         // Vec<f32> implements Into<Option<Vec<f32>>> — this must compile
         let id = engine
-            .add("Alice loves hiking".to_string(), embedding, None, None, None, None)
+            .add(
+                "Alice loves hiking".to_string(),
+                embedding,
+                None,
+                None,
+                None,
+                None,
+            )
             .unwrap();
         assert!(engine.get(&id).unwrap().is_some());
     }
@@ -3598,7 +3628,10 @@ mod tests {
             .add(
                 "Test content".to_string(),
                 Some(vec![0.2f32; 384]),
-                None, None, None, None,
+                None,
+                None,
+                None,
+                None,
             )
             .unwrap();
         assert!(engine.get(&id).unwrap().is_some());
@@ -3610,11 +3643,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.mfdb");
         let engine = MemoryEngine::open(&path, Config::default()).unwrap();
-        let result = engine.add(
-            "Test".to_string(),
-            None::<Vec<f32>>,
-            None, None, None, None,
-        );
+        let result = engine.add("Test".to_string(), None::<Vec<f32>>, None, None, None, None);
         assert!(
             result.is_err(),
             "Expected error when no embedding engine configured"
@@ -3633,7 +3662,14 @@ mod tests {
 
         // add() with no explicit namespace should use "alice"
         let id = engine
-            .add("Alice's memory".to_string(), vec![0.1f32; 384], None, None, None, None)
+            .add(
+                "Alice's memory".to_string(),
+                vec![0.1f32; 384],
+                None,
+                None,
+                None,
+                None,
+            )
             .unwrap();
         let mem = engine.get(&id).unwrap().unwrap();
         assert_eq!(mem.get_namespace(), "alice");
@@ -3735,21 +3771,36 @@ mod tests {
         // Add a vector so the index has data to persist
         let embedding = vec![0.1; 768];
         engine
-            .add("test content".to_string(), embedding, None, None, None, None)
+            .add(
+                "test content".to_string(),
+                embedding,
+                None,
+                None,
+                None,
+                None,
+            )
             .unwrap();
         drop(engine);
 
         // Re-open with default config (384) — should auto-detect 768
         let engine2 = MemoryEngine::open(&path, Config::default()).unwrap();
         assert_eq!(
-            engine2.config().embedding_dim, 768,
+            engine2.config().embedding_dim,
+            768,
             "Should auto-detect embedding dim from existing DB"
         );
 
         // Verify we can add more vectors with the detected dimension
         let embedding2 = vec![0.2; 768];
         engine2
-            .add("another memory".to_string(), embedding2, None, None, None, None)
+            .add(
+                "another memory".to_string(),
+                embedding2,
+                None,
+                None,
+                None,
+                None,
+            )
             .unwrap();
     }
 

@@ -164,7 +164,13 @@ fn test_fusion_improvement_003_entity_filtering() {
     let query_emb = generate_test_embedding("code review completed", 384);
     let (_intent, results, _profile_ctx) = ctx
         .engine
-        .query("Show me Alice's code reviews", query_emb.clone(), 10, None, None)
+        .query(
+            "Show me Alice's code reviews",
+            query_emb.clone(),
+            10,
+            None,
+            None,
+        )
         .unwrap();
 
     // Should return results (entity dimension helps filter/rank)
@@ -250,7 +256,13 @@ fn test_fusion_improvement_005_intent_adaptation() {
     let query_emb = generate_test_embedding("generic content", 384);
     let (_intent, results, _profile_ctx) = ctx
         .engine
-        .query("Show me recent generic content", query_emb.clone(), 10, None, None)
+        .query(
+            "Show me recent generic content",
+            query_emb.clone(),
+            10,
+            None,
+            None,
+        )
         .unwrap();
 
     let recent_pos = results.iter().position(|(m, _)| m.id == recent);
@@ -286,7 +298,13 @@ fn test_fusion_weights_001_temporal_query() {
     let query_emb = generate_test_embedding("test memory", 384);
     let (intent, _results, _profile_ctx) = ctx
         .engine
-        .query("What happened yesterday?", query_emb.clone(), 10, None, None)
+        .query(
+            "What happened yesterday?",
+            query_emb.clone(),
+            10,
+            None,
+            None,
+        )
         .unwrap();
 
     // Should detect temporal intent
@@ -343,7 +361,13 @@ fn test_fusion_weights_003_entity_query() {
     let query_emb = generate_test_embedding("Alice work", 384);
     let (intent, _results, _profile_ctx) = ctx
         .engine
-        .query("Tell me about Alice's work", query_emb.clone(), 10, None, None)
+        .query(
+            "Tell me about Alice's work",
+            query_emb.clone(),
+            10,
+            None,
+            None,
+        )
         .unwrap();
 
     // Should detect entity intent

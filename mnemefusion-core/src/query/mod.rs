@@ -17,9 +17,7 @@ pub mod profile_search;
 pub mod reranker;
 
 pub use aggregator::{MultiTurnAggregator, QueryType};
-pub use fusion::{
-    AdaptiveWeightConfig, FusedResult, FusionEngine, FusionStrategy, IntentWeights,
-};
+pub use fusion::{AdaptiveWeightConfig, FusedResult, FusionEngine, FusionStrategy, IntentWeights};
 pub use graph_traversal::{GraphTraversal, TraversalConfig};
 pub use intent::{IntentClassification, IntentClassifier, QueryIntent};
 pub use planner::QueryPlanner;

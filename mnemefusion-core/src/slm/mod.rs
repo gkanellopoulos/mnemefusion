@@ -67,13 +67,13 @@
 //! - Context: 32K tokens
 //! - Hosted: HuggingFace Hub (auto-downloaded and cached)
 
-mod config;
 mod classifier;
+mod config;
 #[cfg(test)]
 mod tests;
 
-pub use config::SlmConfig;
 pub use classifier::SlmClassifier;
+pub use config::SlmConfig;
 
 // Re-export key types for convenience
-pub use crate::query::intent::{QueryIntent, IntentClassification};
+pub use crate::query::intent::{IntentClassification, QueryIntent};

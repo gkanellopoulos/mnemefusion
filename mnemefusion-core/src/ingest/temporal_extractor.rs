@@ -302,10 +302,7 @@ mod tests {
         let expressions = extractor.extract(text);
 
         assert_eq!(expressions.len(), 1);
-        assert!(matches!(
-            expressions[0],
-            TemporalExpression::TimeOfDay(_)
-        ));
+        assert!(matches!(expressions[0], TemporalExpression::TimeOfDay(_)));
     }
 
     #[test]
@@ -446,12 +443,7 @@ mod tests {
 
         for (text, should_find) in variations {
             let expressions = extractor.extract(text);
-            assert_eq!(
-                !expressions.is_empty(),
-                should_find,
-                "Testing: {}",
-                text
-            );
+            assert_eq!(!expressions.is_empty(), should_find, "Testing: {}", text);
         }
     }
 

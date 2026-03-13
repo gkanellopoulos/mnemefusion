@@ -147,9 +147,9 @@ impl VectorIndex {
         let current_cap = self.index.capacity();
         if current_size >= current_cap {
             let new_cap = current_cap + 64;
-            self.index
-                .reserve(new_cap)
-                .map_err(|e| Error::VectorIndex(format!("Failed to auto-reserve capacity: {}", e)))?;
+            self.index.reserve(new_cap).map_err(|e| {
+                Error::VectorIndex(format!("Failed to auto-reserve capacity: {}", e))
+            })?;
         }
 
         // Add to index
@@ -215,7 +215,7 @@ impl VectorIndex {
             // Convert distance to similarity
             // For cosine distance: similarity = 1 - distance
             // usearch returns distance in range [0, 2] for cosine
-            let similarity = (1.0 - distance).max(0.0).min(1.0);
+            let similarity = (1.0 - distance).clamp(0.0, 1.0);
 
             results.push(VectorResult { id, similarity });
         }

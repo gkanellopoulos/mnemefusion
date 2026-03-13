@@ -5,9 +5,9 @@ All notable changes to MnemeFusion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - Unreleased
+## [0.1.0-alpha] - 2026-03-13
 
-Initial pre-release of MnemeFusion.
+Initial public release.
 
 ### Added
 
@@ -47,3 +47,5 @@ Initial pre-release of MnemeFusion.
 - Optional CUDA acceleration for entity extraction
 - Automatic GPU layer offloading with configurable layer count
 - GPU context auto-reset for long-running ingestion jobs
+
+[0.1.0-alpha]: https://github.com/gkanellopoulos/mnemefusion/releases/tag/v0.1.0-alpha

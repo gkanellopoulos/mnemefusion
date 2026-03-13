@@ -1,3 +1,8 @@
+// Crate-level lint configuration
+#![allow(clippy::result_large_err)] // redb::Error is 160+ bytes; boxing it is a future refactor
+#![allow(clippy::too_many_arguments)] // several internal functions have >7 args by design
+#![allow(clippy::type_complexity)] // complex return types in query pipeline
+
 //! MnemeFusion Core
 //!
 //! A unified memory engine for AI applications—"SQLite for AI memory."
@@ -70,7 +75,9 @@ pub use error::{Error, Result};
 pub use graph::{CausalEdge, CausalPath, CausalTraversalResult, EntityQueryResult, GraphManager};
 pub use index::{TemporalIndex, TemporalResult, VectorIndex, VectorIndexConfig, VectorResult};
 pub use ingest::{EntityExtractor, SimpleEntityExtractor};
-pub use memory::{contextualize_for_embedding, first_person_to_third, EmbeddingFn, MemoryEngine, ScopedMemory};
+pub use memory::{
+    contextualize_for_embedding, first_person_to_third, EmbeddingFn, MemoryEngine, ScopedMemory,
+};
 pub use query::{
     AdaptiveWeightConfig, FusedResult, FusionEngine, IntentClassification, IntentClassifier,
     IntentWeights, QueryIntent, QueryPlanner,
@@ -89,7 +96,10 @@ pub use inference::{InferenceEngine, JsonGrammar};
 
 // Entity extraction exports (only available with entity-extraction feature)
 #[cfg(feature = "entity-extraction")]
-pub use extraction::{ExtractedEntity, ExtractedFact, ExtractionResult, LlmEntityExtractor, ModelTier, TriplexExtractor};
+pub use extraction::{
+    ExtractedEntity, ExtractedFact, ExtractionResult, LlmEntityExtractor, ModelTier,
+    TriplexExtractor,
+};
 
 // Embedding engine export (only available with embedding-onnx feature)
 #[cfg(feature = "embedding-onnx")]

@@ -7,7 +7,6 @@ use crate::error::Result;
 use crate::query::fusion::FusedResult;
 use crate::query::intent::QueryIntent;
 use crate::storage::StorageEngine;
-use crate::types::MemoryId;
 use std::collections::HashSet;
 
 /// Heuristic reranker for post-RRF refinement
@@ -47,7 +46,7 @@ impl HeuristicReranker {
         &self,
         candidates: Vec<FusedResult>,
         query_text: &str,
-        query_embedding: &[f32],
+        _query_embedding: &[f32],
         intent: &QueryIntent,
         storage: &StorageEngine,
         limit: usize,
@@ -209,12 +208,12 @@ impl HeuristicReranker {
             "on", "with", "he", "as", "you", "do", "at", "this", "but", "his", "by", "from",
             "they", "we", "say", "her", "she", "or", "an", "will", "my", "one", "all", "would",
             "there", "their", "what", "so", "up", "out", "if", "about", "who", "get", "which",
-            "go", "me", "when", "make", "can", "like", "time", "no", "just", "him", "know",
-            "take", "people", "into", "year", "your", "good", "some", "could", "them", "see",
-            "other", "than", "then", "now", "look", "only", "come", "its", "over", "think",
-            "also", "back", "after", "use", "two", "how", "our", "work", "first", "well", "way",
-            "even", "new", "want", "because", "any", "these", "give", "day", "most", "us", "is",
-            "was", "are", "been", "has", "had", "were", "did", "does",
+            "go", "me", "when", "make", "can", "like", "time", "no", "just", "him", "know", "take",
+            "people", "into", "year", "your", "good", "some", "could", "them", "see", "other",
+            "than", "then", "now", "look", "only", "come", "its", "over", "think", "also", "back",
+            "after", "use", "two", "how", "our", "work", "first", "well", "way", "even", "new",
+            "want", "because", "any", "these", "give", "day", "most", "us", "is", "was", "are",
+            "been", "has", "had", "were", "did", "does",
         ];
 
         STOPWORDS.contains(&word)
@@ -240,11 +239,10 @@ mod tests {
 
     #[test]
     fn test_keyword_overlap() {
-        let query_terms: HashSet<String> =
-            ["machine", "learning", "algorithms"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
+        let query_terms: HashSet<String> = ["machine", "learning", "algorithms"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
 
         let content1 = "machine learning is a subset of artificial intelligence";
         let score1 = HeuristicReranker::compute_keyword_overlap(&query_terms, content1);
@@ -263,13 +261,20 @@ mod tests {
         let temporal_intent = QueryIntent::Temporal;
         let factual_intent = QueryIntent::Factual;
 
-        let temporal_score =
-            HeuristicReranker::compute_temporal_score(&memory, &temporal_intent);
+        let temporal_score = HeuristicReranker::compute_temporal_score(&memory, &temporal_intent);
         let factual_score = HeuristicReranker::compute_temporal_score(&memory, &factual_intent);
 
         // Both should be high for a fresh memory (close to 1.0)
-        assert!(temporal_score > 0.9, "Fresh memory temporal score should be near 1.0, got {}", temporal_score);
-        assert!(factual_score > 0.9, "Fresh memory factual score should be near 1.0, got {}", factual_score);
+        assert!(
+            temporal_score > 0.9,
+            "Fresh memory temporal score should be near 1.0, got {}",
+            temporal_score
+        );
+        assert!(
+            factual_score > 0.9,
+            "Fresh memory factual score should be near 1.0, got {}",
+            factual_score
+        );
     }
 
     #[test]
@@ -286,19 +291,25 @@ mod tests {
             HeuristicReranker::compute_temporal_score(&memory, &QueryIntent::Factual);
 
         // After 60 days with 30-day half-life: decay = 0.5^2 = 0.25, score ~0.29
-        assert!(temporal_score < 0.5, "60-day old temporal score should be < 0.5, got {}", temporal_score);
+        assert!(
+            temporal_score < 0.5,
+            "60-day old temporal score should be < 0.5, got {}",
+            temporal_score
+        );
         // After 60 days with 365-day half-life: decay = 0.5^(60/365) ~= 0.89, score ~0.90
-        assert!(factual_score > 0.8, "60-day old factual score should be > 0.8, got {}", factual_score);
+        assert!(
+            factual_score > 0.8,
+            "60-day old factual score should be > 0.8, got {}",
+            factual_score
+        );
         // Temporal decay should be steeper than factual
         assert!(factual_score > temporal_score);
     }
 
     #[test]
     fn test_entity_score() {
-        let query_terms: HashSet<String> = ["alice", "project"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let query_terms: HashSet<String> =
+            ["alice", "project"].iter().map(|s| s.to_string()).collect();
 
         let memory = Memory::new(
             "Alice worked on Project Alpha yesterday".to_string(),

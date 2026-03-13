@@ -54,22 +54,27 @@ impl QueryPlanner {
         semantic_prefilter_threshold: f32,
         fusion_strategy: crate::query::FusionStrategy,
         rrf_k: f32,
-        #[cfg(feature = "slm")]
-        slm_config: Option<crate::slm::SlmConfig>,
+        #[cfg(feature = "slm")] slm_config: Option<crate::slm::SlmConfig>,
         slm_query_classification_enabled: bool,
         adaptive_k_threshold: f32,
     ) -> Result<Self> {
         // Initialize SLM classifier if configured
         #[cfg(feature = "slm")]
         let slm_classifier = if let Some(config) = slm_config {
-            tracing::info!("Initializing SLM classifier with model: {}", config.model_id);
+            tracing::info!(
+                "Initializing SLM classifier with model: {}",
+                config.model_id
+            );
             match crate::slm::SlmClassifier::new(config) {
                 Ok(classifier) => {
                     tracing::info!("SLM classifier initialized successfully (lazy loading)");
                     Some(Arc::new(std::sync::Mutex::new(classifier)))
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to initialize SLM classifier: {}, falling back to patterns", e);
+                    tracing::warn!(
+                        "Failed to initialize SLM classifier: {}, falling back to patterns",
+                        e
+                    );
                     None
                 }
             }
@@ -121,24 +126,22 @@ impl QueryPlanner {
             if let Some(slm_classifier) = &self.slm_classifier {
                 // Try SLM classification
                 match slm_classifier.lock() {
-                    Ok(mut classifier) => {
-                        match classifier.classify_intent(query_text) {
-                            Ok(classification) => {
-                                tracing::debug!(
-                                    "SLM classified query as {:?} (confidence: {:.2})",
-                                    classification.intent,
-                                    classification.confidence
-                                );
-                                return Ok(classification);
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    "SLM classification failed: {}, falling back to patterns",
-                                    e
-                                );
-                            }
+                    Ok(mut classifier) => match classifier.classify_intent(query_text) {
+                        Ok(classification) => {
+                            tracing::debug!(
+                                "SLM classified query as {:?} (confidence: {:.2})",
+                                classification.intent,
+                                classification.confidence
+                            );
+                            return Ok(classification);
                         }
-                    }
+                        Err(e) => {
+                            tracing::warn!(
+                                "SLM classification failed: {}, falling back to patterns",
+                                e
+                            );
+                        }
+                    },
                     Err(e) => {
                         tracing::warn!(
                             "Failed to acquire SLM classifier lock: {}, falling back to patterns",
@@ -187,7 +190,11 @@ impl QueryPlanner {
         namespace: Option<&str>,
         filters: Option<&[MetadataFilter]>,
         user_entity: Option<&str>,
-    ) -> Result<(IntentClassification, Vec<FusedResult>, Vec<crate::query::profile_search::MatchedProfileFact>)> {
+    ) -> Result<(
+        IntentClassification,
+        Vec<FusedResult>,
+        Vec<crate::query::profile_search::MatchedProfileFact>,
+    )> {
         // Step 1: Classify intent (try SLM first, fallback to patterns)
         let intent = self.classify_intent(query_text)?;
 
@@ -210,7 +217,6 @@ impl QueryPlanner {
             // Entity not in graph — fall through to standard multi-dimensional retrieval
         }
 
-
         // Step 1.7: Detect entities for profile injection and speaker reranking.
         //
         // Two separate concerns that were previously coupled through a single target_entity:
@@ -220,7 +226,10 @@ impl QueryPlanner {
         //   - speaker_entity (single only): Used in Step 3.7 for speaker-aware reranking.
         //     Speaker penalty requires a single target — can't penalize speakers when the
         //     query is about multiple people.
-        let mut query_entities = self.profile_search.detect_entities(query_text).unwrap_or_default();
+        let mut query_entities = self
+            .profile_search
+            .detect_entities(query_text)
+            .unwrap_or_default();
 
         // Step 1.7b: First-person pronoun → user entity resolution.
         // In conversational memory, users query with "I", "me", "my" but their
@@ -233,10 +242,12 @@ impl QueryPlanner {
             if !query_entities.contains(&user_lower) {
                 let query_lower = query_text.to_lowercase();
                 // Check for first-person pronouns as whole words
-                const FIRST_PERSON: &[&str] = &["i", "me", "my", "mine", "myself", "i'm", "i've", "i'd", "i'll"];
-                let has_first_person = FIRST_PERSON.iter().any(|pronoun| {
-                    Self::contains_whole_word_static(&query_lower, pronoun)
-                });
+                const FIRST_PERSON: &[&str] = &[
+                    "i", "me", "my", "mine", "myself", "i'm", "i've", "i'd", "i'll",
+                ];
+                let has_first_person = FIRST_PERSON
+                    .iter()
+                    .any(|pronoun| Self::contains_whole_word_static(&query_lower, pronoun));
                 if has_first_person {
                     query_entities.push(user_lower);
                 }
@@ -253,13 +264,17 @@ impl QueryPlanner {
             namespace.is_some() || (filters.is_some() && !filters.unwrap().is_empty());
         // When entity-specific retrieval is active, fetch more candidates to maintain
         // effective depth after speaker penalty or entity-based scoring.
-        let fetch_multiplier = if needs_filtering || !query_entities.is_empty() { 5 } else { 3 };
+        let fetch_multiplier = if needs_filtering || !query_entities.is_empty() {
+            5
+        } else {
+            3
+        };
 
         let mut semantic_scores =
             self.semantic_search(query_embedding, limit * fetch_multiplier)?;
-        let mut bm25_scores = self.bm25_search(query_text, limit * fetch_multiplier)?;
-        let mut temporal_scores = self.temporal_search(query_text, limit * fetch_multiplier)?;
-        let mut causal_scores = self.causal_search(query_text, limit * fetch_multiplier)?;
+        let bm25_scores = self.bm25_search(query_text, limit * fetch_multiplier)?;
+        let temporal_scores = self.temporal_search(query_text, limit * fetch_multiplier)?;
+        let causal_scores = self.causal_search(query_text, limit * fetch_multiplier)?;
         // Normalize entity_scores to partial MemoryId format immediately.
         // entity_search() returns full UUIDs (from storage), but semantic_search() returns
         // partial UUIDs (from vector index, first 8 bytes only). Without normalization the
@@ -363,11 +378,13 @@ impl QueryPlanner {
         // "instruments" matches "instrument", "books" matches "book", etc.
         // Uses max() to ensure fact-matched memories rank AT LEAST as high as the
         // 2.0 baseline (never clamped below it).
-        let profile_result = self.profile_search.search(query_text, query_embedding, limit * fetch_multiplier)?;
+        let profile_result =
+            self.profile_search
+                .search(query_text, query_embedding, limit * fetch_multiplier)?;
         let matched_facts = profile_result.matched_facts;
         for (memory_id, profile_score) in profile_result.source_scores {
             let boosted = 2.0 + profile_score; // fact-matched get 2.0-3.0
-            // Normalize to partial ID (source_scores contain full UUIDs from storage).
+                                               // Normalize to partial ID (source_scores contain full UUIDs from storage).
             entity_scores
                 .entry(MemoryId::from_u64(memory_id.to_u64()))
                 .and_modify(|s| {
@@ -424,15 +441,15 @@ impl QueryPlanner {
         // but memories found via BM25/entity should still report their actual semantic score
         // (not 0.0) for diagnostics. After fusion, we patch scores from this full map.
         let semantic_scores_full = semantic_scores.clone();
-        let effective_prefilter = if MultiTurnAggregator::is_aggregation(&query_text.to_lowercase()) {
+        let effective_prefilter = if MultiTurnAggregator::is_aggregation(&query_text.to_lowercase())
+        {
             self.semantic_prefilter_threshold * 0.5
         } else {
             self.semantic_prefilter_threshold
         };
         if effective_prefilter > 0.0 {
             semantic_scores.retain(|id, score| {
-                *score >= effective_prefilter
-                    || entity_scores.get(id).copied().unwrap_or(0.0) > 0.0
+                *score >= effective_prefilter || entity_scores.get(id).copied().unwrap_or(0.0) > 0.0
             });
         }
 
@@ -483,7 +500,8 @@ impl QueryPlanner {
                 crate::query::graph_traversal::TraversalConfig::default(),
             );
 
-            let expanded_results = graph_traversal.expand(&seed_results, intent.intent, limit * 5)?;
+            let expanded_results =
+                graph_traversal.expand(&seed_results, intent.intent, limit * 5)?;
 
             // Merge expanded results into dimension scores
             // Expanded memories get added to entity/causal scores based on their source
@@ -564,12 +582,12 @@ impl QueryPlanner {
             };
 
             result.confidence = match dimension_count {
-                5 => 1.0,   // All 5 dimensions agree - highest confidence
-                4 => 0.9,   // 4 dimensions - very high confidence
-                3 => 0.8,   // 3 dimensions - high confidence
-                2 => 0.6,   // 2 dimensions - medium confidence
+                5 => 1.0,                   // All 5 dimensions agree - highest confidence
+                4 => 0.9,                   // 4 dimensions - very high confidence
+                3 => 0.8,                   // 3 dimensions - high confidence
+                2 => 0.6,                   // 2 dimensions - medium confidence
                 1 => single_dim_confidence, // Intent-dependent (0.7 for factual/entity, 0.4 otherwise)
-                _ => 0.2,   // 0 dimensions - very low confidence
+                _ => 0.2,                   // 0 dimensions - very low confidence
             };
 
             // Adjust fused_score by confidence to penalize single-dimension matches
@@ -578,7 +596,9 @@ impl QueryPlanner {
 
         // Re-sort by adjusted fused_score (confidence-weighted)
         fused_results.sort_by(|a, b| {
-            b.fused_score.partial_cmp(&a.fused_score).unwrap_or(std::cmp::Ordering::Equal)
+            b.fused_score
+                .partial_cmp(&a.fused_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         // Step 3.6: Patch semantic scores for accurate reporting
@@ -647,16 +667,22 @@ impl QueryPlanner {
                         fused_results.iter().map(|r| r.id.clone()).collect();
 
                     // Pre-load top-K embeddings once (avoid O(n*m) storage lookups)
-                    let top_k_embeddings: Vec<Vec<f32>> = fused_results.iter()
+                    let top_k_embeddings: Vec<Vec<f32>> = fused_results
+                        .iter()
                         .take(limit.min(10)) // Only compare against top-10
                         .filter_map(|r| {
-                            self.storage.get_memory_by_u64(r.id.to_u64()).ok().flatten()
+                            self.storage
+                                .get_memory_by_u64(r.id.to_u64())
+                                .ok()
+                                .flatten()
                                 .map(|m| m.embedding.clone())
                         })
                         .filter(|e| !e.is_empty() && e.len() == query_embedding.len())
                         .collect();
 
-                    let candidates: Vec<_> = entity_memories.memories.into_iter()
+                    let candidates: Vec<_> = entity_memories
+                        .memories
+                        .into_iter()
                         .filter(|m| !existing_ids.contains(m))
                         .collect();
 
@@ -667,18 +693,24 @@ impl QueryPlanner {
                         if expanded.len() >= max_expansions {
                             break;
                         }
-                        if let Ok(Some(memory)) = self.storage.get_memory_by_u64(candidate_id.to_u64()) {
-                            if memory.embedding.is_empty() || query_embedding.len() != memory.embedding.len() {
+                        if let Ok(Some(memory)) =
+                            self.storage.get_memory_by_u64(candidate_id.to_u64())
+                        {
+                            if memory.embedding.is_empty()
+                                || query_embedding.len() != memory.embedding.len()
+                            {
                                 continue;
                             }
 
                             // Check diversity against pre-loaded embeddings
-                            let max_sim = top_k_embeddings.iter()
+                            let max_sim = top_k_embeddings
+                                .iter()
                                 .map(|e| cosine_similarity(&memory.embedding, e))
                                 .fold(0.0f32, f32::max);
 
                             if max_sim < 0.8 {
-                                let sem_score = cosine_similarity(query_embedding, &memory.embedding);
+                                let sem_score =
+                                    cosine_similarity(query_embedding, &memory.embedding);
                                 expanded.push(FusedResult {
                                     id: candidate_id,
                                     semantic_score: sem_score,
@@ -696,7 +728,9 @@ impl QueryPlanner {
                     if !expanded.is_empty() {
                         fused_results.extend(expanded);
                         fused_results.sort_by(|a, b| {
-                            b.fused_score.partial_cmp(&a.fused_score).unwrap_or(std::cmp::Ordering::Equal)
+                            b.fused_score
+                                .partial_cmp(&a.fused_score)
+                                .unwrap_or(std::cmp::Ordering::Equal)
                         });
                     }
                 }
@@ -855,16 +889,14 @@ impl QueryPlanner {
         // Step 4: Multi-turn aggregation for list/collection queries
         let aggregator = crate::query::aggregator::MultiTurnAggregator::default();
         let query_type = aggregator.classify_query(query_text);
-        let mut final_results = aggregator.aggregate(
-            query_type,
-            query_text,
-            fused_results,
-            &self.storage,
-            limit,
-        )?;
+        let mut final_results =
+            aggregator.aggregate(query_type, query_text, fused_results, &self.storage, limit)?;
 
         // Step 5: Adaptive-K (Top-p nucleus selection)
-        if self.adaptive_k_threshold > 0.0 && self.adaptive_k_threshold < 1.0 && final_results.len() > 1 {
+        if self.adaptive_k_threshold > 0.0
+            && self.adaptive_k_threshold < 1.0
+            && final_results.len() > 1
+        {
             let new_len = adaptive_k_select(&final_results, self.adaptive_k_threshold, limit);
             final_results.truncate(new_len);
         }
@@ -890,7 +922,11 @@ impl QueryPlanner {
         namespace: Option<&str>,
         filters: Option<&[MetadataFilter]>,
         intent: IntentClassification,
-    ) -> Result<(IntentClassification, Vec<FusedResult>, Vec<crate::query::profile_search::MatchedProfileFact>)> {
+    ) -> Result<(
+        IntentClassification,
+        Vec<FusedResult>,
+        Vec<crate::query::profile_search::MatchedProfileFact>,
+    )> {
         // Step 1: Find entity by name (case-insensitive)
         let entity = self.storage.find_entity_by_name(entity_name)?;
 
@@ -928,11 +964,15 @@ impl QueryPlanner {
         // Step 2.5: Look up entity profile for fact-based boosting (open-vocabulary)
         // Matches query words against ALL fact text (fact_type + value) for the entity.
         // No hardcoded keyword→fact_type mapping needed.
-        let profile_boost_memories: HashMap<MemoryId, f32> =
-            self.profile_search.compute_fact_boosts(entity_name, query_text, query_embedding)?;
+        let profile_boost_memories: HashMap<MemoryId, f32> = self
+            .profile_search
+            .compute_fact_boosts(entity_name, query_text, query_embedding)?;
 
         // Also get matched facts for synthetic injection
-        let matched_facts = self.profile_search.search(query_text, query_embedding, limit)?.matched_facts;
+        let matched_facts = self
+            .profile_search
+            .search(query_text, query_embedding, limit)?
+            .matched_facts;
 
         // Step 3: Calculate scores for each memory
         let mut scored_results = Vec::new();
@@ -953,15 +993,15 @@ impl QueryPlanner {
 
             // Apply metadata filters
             if let Some(filter_list) = filters {
-                if !filter_list.is_empty() {
-                    if !Self::memory_matches_filters(&memory, filter_list) {
-                        continue;
-                    }
+                if !filter_list.is_empty() && !Self::memory_matches_filters(&memory, filter_list) {
+                    continue;
                 }
             }
 
             // Calculate semantic similarity
-            let semantic_score = if !memory.embedding.is_empty() && query_embedding.len() == memory.embedding.len() {
+            let semantic_score = if !memory.embedding.is_empty()
+                && query_embedding.len() == memory.embedding.len()
+            {
                 cosine_similarity(query_embedding, &memory.embedding)
             } else {
                 0.0
@@ -970,7 +1010,8 @@ impl QueryPlanner {
             // Calculate BM25 score for keyword matching
             let bm25_score = {
                 let results = self.bm25_index.search(query_text, 1000)?;
-                results.iter()
+                results
+                    .iter()
                     .find(|r| r.memory_id == memory_id)
                     .map(|r| r.score)
                     .unwrap_or(0.0)
@@ -1018,7 +1059,9 @@ impl QueryPlanner {
 
         // Step 4: Sort by combined score and take top-K
         scored_results.sort_by(|a, b| {
-            b.fused_score.partial_cmp(&a.fused_score).unwrap_or(std::cmp::Ordering::Equal)
+            b.fused_score
+                .partial_cmp(&a.fused_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         let final_results = scored_results.into_iter().take(limit).collect();
@@ -1105,7 +1148,9 @@ impl QueryPlanner {
                 // Fallback to pattern-based temporal matching if SLM didn't match
                 if temporal_score == 0.0 {
                     // Use the temporal index's content-based scoring
-                    if let Some(content_score) = self.get_temporal_content_score(&memory, query_text) {
+                    if let Some(content_score) =
+                        self.get_temporal_content_score(&memory, query_text)
+                    {
                         temporal_score = content_score;
                     }
                 }
@@ -1149,7 +1194,8 @@ impl QueryPlanner {
     fn get_temporal_content_score(&self, memory: &Memory, query_text: &str) -> Option<f32> {
         // Get memory's temporal expressions from metadata
         let temporal_expressions_json = memory.get_metadata("temporal_expressions")?;
-        let memory_expressions: Vec<String> = serde_json::from_str(temporal_expressions_json).ok()?;
+        let memory_expressions: Vec<String> =
+            serde_json::from_str(temporal_expressions_json).ok()?;
 
         if memory_expressions.is_empty() {
             return None;
@@ -1160,14 +1206,48 @@ impl QueryPlanner {
 
         // Common temporal keywords to match
         let temporal_keywords = [
-            "yesterday", "today", "tomorrow", "last week", "next week",
-            "last month", "next month", "last year", "next year",
-            "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
-            "january", "february", "march", "april", "may", "june",
-            "july", "august", "september", "october", "november", "december",
-            "morning", "afternoon", "evening", "night",
-            "recently", "earlier", "later", "before", "after",
-            "first", "last", "initially", "finally", "eventually",
+            "yesterday",
+            "today",
+            "tomorrow",
+            "last week",
+            "next week",
+            "last month",
+            "next month",
+            "last year",
+            "next year",
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+            "january",
+            "february",
+            "march",
+            "april",
+            "may",
+            "june",
+            "july",
+            "august",
+            "september",
+            "october",
+            "november",
+            "december",
+            "morning",
+            "afternoon",
+            "evening",
+            "night",
+            "recently",
+            "earlier",
+            "later",
+            "before",
+            "after",
+            "first",
+            "last",
+            "initially",
+            "finally",
+            "eventually",
         ];
 
         let mut match_score: f32 = 0.0;
@@ -1210,6 +1290,7 @@ impl QueryPlanner {
     /// Scores are scaled to a weak 0.0-0.3 range with a 5% floor so memories
     /// never fully vanish. This keeps temporal as a gentle signal that doesn't
     /// dominate other dimensions (semantic, entity, BM25).
+    #[allow(dead_code)]
     fn temporal_search_recency_fallback(&self, limit: usize) -> Result<HashMap<MemoryId, f32>> {
         let results = self.temporal_index.recent(limit)?;
 
@@ -1323,14 +1404,20 @@ impl QueryPlanner {
 
                     // Try SLM metadata first (richer entity information)
                     if let Some(slm_metadata) = Self::get_slm_metadata(&memory) {
-                        entity_score = Self::calculate_slm_entity_score(&query_entity_set, &slm_metadata);
+                        entity_score =
+                            Self::calculate_slm_entity_score(&query_entity_set, &slm_metadata);
                     }
 
                     // Fallback to entity_names metadata
                     if entity_score == 0.0 {
                         if let Some(entities_json) = memory.get_metadata("entity_names") {
-                            if let Ok(memory_entities) = serde_json::from_str::<Vec<String>>(entities_json) {
-                                entity_score = Self::calculate_entity_overlap(&query_entity_set, &memory_entities);
+                            if let Ok(memory_entities) =
+                                serde_json::from_str::<Vec<String>>(entities_json)
+                            {
+                                entity_score = Self::calculate_entity_overlap(
+                                    &query_entity_set,
+                                    &memory_entities,
+                                );
                             }
                         }
                     }
@@ -1420,7 +1507,7 @@ impl QueryPlanner {
         }
 
         // Average score across query entities
-        if query_entity_set.len() > 0 {
+        if !query_entity_set.is_empty() {
             total_score / query_entity_set.len() as f32
         } else {
             0.0
@@ -1471,13 +1558,19 @@ impl QueryPlanner {
                                 // Check if memory has causal graph links for boost
                                 let has_graph_links = {
                                     let graph = self.graph_manager.read().unwrap();
-                                    graph.get_causes(&temporal_result.id, 1).ok().map_or(false, |r| !r.paths.is_empty())
-                                        || graph.get_effects(&temporal_result.id, 1).ok().map_or(false, |r| !r.paths.is_empty())
+                                    graph
+                                        .get_causes(&temporal_result.id, 1)
+                                        .ok()
+                                        .is_some_and(|r| !r.paths.is_empty())
+                                        || graph
+                                            .get_effects(&temporal_result.id, 1)
+                                            .ok()
+                                            .is_some_and(|r| !r.paths.is_empty())
                                 };
 
                                 // Calculate relevance score with optional graph boost
-                                causal_score =
-                                    causal_extractor.calculate_relevance_score(causal_density, has_graph_links);
+                                causal_score = causal_extractor
+                                    .calculate_relevance_score(causal_density, has_graph_links);
                             }
                         }
                     }
@@ -1580,8 +1673,8 @@ impl QueryPlanner {
         for (idx, _) in text.match_indices(word) {
             let before_ok = idx == 0 || !text.as_bytes()[idx - 1].is_ascii_alphanumeric();
             let after_idx = idx + word.len();
-            let after_ok = after_idx >= text.len()
-                || !text.as_bytes()[after_idx].is_ascii_alphanumeric();
+            let after_ok =
+                after_idx >= text.len() || !text.as_bytes()[after_idx].is_ascii_alphanumeric();
             if before_ok && after_ok {
                 return true;
             }
@@ -1753,10 +1846,7 @@ impl QueryPlanner {
     /// - Sequence position (early, middle, late)
     /// - Relative time (before current, concurrent, after current)
     /// - Absolute dates
-    fn calculate_slm_temporal_score(
-        query_text: &str,
-        slm_metadata: &SlmMetadata,
-    ) -> f32 {
+    fn calculate_slm_temporal_score(query_text: &str, slm_metadata: &SlmMetadata) -> f32 {
         let query_lower = query_text.to_lowercase();
         let temporal = &slm_metadata.temporal;
         let mut score: f32 = 0.0;
@@ -1781,13 +1871,17 @@ impl QueryPlanner {
         if let Some(ref sequence) = temporal.sequence {
             let seq_lower = sequence.to_lowercase();
             // Match queries like "first", "initially", "beginning" to "early"
-            if (query_lower.contains("first") || query_lower.contains("initial") || query_lower.contains("begin"))
+            if (query_lower.contains("first")
+                || query_lower.contains("initial")
+                || query_lower.contains("begin"))
                 && seq_lower == "early"
             {
                 score += 0.7;
             }
             // Match queries like "last", "finally", "end" to "late"
-            if (query_lower.contains("last") || query_lower.contains("final") || query_lower.contains("end"))
+            if (query_lower.contains("last")
+                || query_lower.contains("final")
+                || query_lower.contains("end"))
                 && seq_lower == "late"
             {
                 score += 0.7;
@@ -1819,10 +1913,7 @@ impl QueryPlanner {
     /// - Causal relationships (cause/effect pairs)
     /// - Causal density
     /// - Implicit causation detection
-    fn calculate_slm_causal_score(
-        query_text: &str,
-        slm_metadata: &SlmMetadata,
-    ) -> f32 {
+    fn calculate_slm_causal_score(query_text: &str, slm_metadata: &SlmMetadata) -> f32 {
         let causal = &slm_metadata.causal;
         let query_lower = query_text.to_lowercase();
 
@@ -1873,7 +1964,7 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
         return 0.0;
     }
 
-    (dot_product / (magnitude_a * magnitude_b)).max(0.0).min(1.0)
+    (dot_product / (magnitude_a * magnitude_b)).clamp(0.0, 1.0)
 }
 
 /// Adaptive-K (Top-p nucleus selection) for dynamic result count.
@@ -1894,11 +1985,13 @@ fn adaptive_k_select(results: &[FusedResult], threshold: f32, limit: usize) -> u
     let min_k = (limit / 3).max(5).min(results.len());
 
     // Softmax with score shifting for numerical stability
-    let max_score = results.iter()
+    let max_score = results
+        .iter()
         .map(|r| r.fused_score)
         .fold(f32::NEG_INFINITY, f32::max);
 
-    let exp_scores: Vec<f32> = results.iter()
+    let exp_scores: Vec<f32> = results
+        .iter()
         .map(|r| (r.fused_score - max_score).exp())
         .collect();
 
@@ -1962,15 +2055,16 @@ mod tests {
             bm25_index,
             temporal_index,
             graph_manager,
-            0.0, // fusion_semantic_threshold
-            0.0, // semantic_prefilter_threshold
+            0.0,                                    // fusion_semantic_threshold
+            0.0,                                    // semantic_prefilter_threshold
             crate::query::FusionStrategy::Weighted, // strategy (weighted for backward compat in tests)
-            60.0, // rrf_k (not used with Weighted strategy)
+            60.0,                                   // rrf_k (not used with Weighted strategy)
             #[cfg(feature = "slm")]
             None, // slm_config (disabled for tests)
             false, // slm_query_classification_enabled (disabled for fast tests)
-            0.0,  // adaptive_k_threshold (disabled for tests)
-        ).expect("Failed to create QueryPlanner");
+            0.0,   // adaptive_k_threshold (disabled for tests)
+        )
+        .expect("Failed to create QueryPlanner");
 
         (planner, dir)
     }
@@ -2027,7 +2121,11 @@ mod tests {
         // Recency ordering adds noise for batch-ingested DBs where all memories
         // have similar timestamps; entity + BM25 + semantic cover "when" queries.
         let scores = planner.temporal_search("test query", 10).unwrap();
-        assert_eq!(scores.len(), 0, "No temporal expression match → empty scores");
+        assert_eq!(
+            scores.len(),
+            0,
+            "No temporal expression match → empty scores"
+        );
     }
 
     #[test]
@@ -2504,7 +2602,10 @@ mod tests {
             .unwrap();
 
         // Should find mem1 (has "yesterday")
-        assert!(scores.contains_key(&mem1_id), "Should find memory with 'yesterday'");
+        assert!(
+            scores.contains_key(&mem1_id),
+            "Should find memory with 'yesterday'"
+        );
 
         // mem1 should have higher score than mem3 (no temporal expression)
         let score1 = scores.get(&mem1_id).unwrap_or(&0.0);
@@ -2536,25 +2637,22 @@ mod tests {
         );
 
         // Add memories without temporal expressions
-        let mem1 = Memory::new(
-            "Machine learning techniques".to_string(),
-            vec![0.1; 384],
-        );
+        let mem1 = Memory::new("Machine learning techniques".to_string(), vec![0.1; 384]);
         let mem1_id = mem1.id.clone();
         pipeline.add(mem1).unwrap();
 
         std::thread::sleep(std::time::Duration::from_millis(10));
 
-        let mem2 = Memory::new(
-            "Deep learning models".to_string(),
-            vec![0.2; 384],
-        );
+        let mem2 = Memory::new("Deep learning models".to_string(), vec![0.2; 384]);
         let mem2_id = mem2.id.clone();
         pipeline.add(mem2).unwrap();
 
         // temporal_search() returns empty when no expressions match (new behavior)
         let scores = planner.temporal_search("Tell me about AI", 10).unwrap();
-        assert!(scores.is_empty(), "No temporal expressions → empty from temporal_search()");
+        assert!(
+            scores.is_empty(),
+            "No temporal expressions → empty from temporal_search()"
+        );
 
         // temporal_search_recency_fallback() still works correctly when called directly
         let fallback_scores = planner.temporal_search_recency_fallback(10).unwrap();
@@ -2616,18 +2714,13 @@ mod tests {
         pipeline.add(mem_mid).unwrap();
 
         // Memory from today
-        let mem_new = Memory::new(
-            "Just talked about music".to_string(),
-            vec![0.3; 384],
-        );
+        let mem_new = Memory::new("Just talked about music".to_string(), vec![0.3; 384]);
         let new_id = mem_new.id.clone();
         pipeline.add(mem_new).unwrap();
 
         // Call fallback directly — temporal_search() returns empty for queries
         // without explicit date expressions (removed recency noise for "when" queries).
-        let scores = planner
-            .temporal_search_recency_fallback(10)
-            .unwrap();
+        let scores = planner.temporal_search_recency_fallback(10).unwrap();
 
         let score_old = *scores.get(&old_id).unwrap();
         let score_mid = *scores.get(&mid_id).unwrap();
@@ -2637,12 +2730,14 @@ mod tests {
         assert!(
             score_new > score_mid,
             "Today's memory ({}) should score higher than 30-day old ({})",
-            score_new, score_mid
+            score_new,
+            score_mid
         );
         assert!(
             score_mid > score_old,
             "30-day old memory ({}) should score higher than 2-year old ({})",
-            score_mid, score_old
+            score_mid,
+            score_old
         );
 
         // 2-year old memory should have decayed significantly
@@ -2651,11 +2746,16 @@ mod tests {
         assert!(
             score_new > score_old * 2.0,
             "New memory ({}) should be at least 2x the 2-year old ({})",
-            score_new, score_old
+            score_new,
+            score_old
         );
 
         // All scores in weak range
-        assert!(score_new <= 0.31, "Scores should stay in 0-0.3 range, got {}", score_new);
+        assert!(
+            score_new <= 0.31,
+            "Scores should stay in 0-0.3 range, got {}",
+            score_new
+        );
     }
 
     #[test]
@@ -2692,9 +2792,7 @@ mod tests {
 
         // Call fallback directly — temporal_search() returns empty for queries
         // without explicit date expressions (removed recency noise for "when" queries).
-        let scores = planner
-            .temporal_search_recency_fallback(10)
-            .unwrap();
+        let scores = planner.temporal_search_recency_fallback(10).unwrap();
 
         // All 5 memories should be present
         assert_eq!(scores.len(), 5, "All 5 memories should have scores");
@@ -2708,7 +2806,10 @@ mod tests {
             assert!(
                 score_vals[i] > score_vals[i + 1],
                 "Score {} ({}) should be > score {} ({}): rank tiebreaker should differentiate",
-                i, score_vals[i], i + 1, score_vals[i + 1]
+                i,
+                score_vals[i],
+                i + 1,
+                score_vals[i + 1]
             );
         }
 
@@ -2784,11 +2885,14 @@ mod tests {
         let (planner, _dir) = create_test_planner();
 
         // Create entity profiles so profile-based detection can find them
-        planner.storage.store_entity_profile(
-            &crate::types::EntityProfile::new(
-                crate::types::EntityId::new(), "Alice".into(), "person".into(),
-            ),
-        ).unwrap();
+        planner
+            .storage
+            .store_entity_profile(&crate::types::EntityProfile::new(
+                crate::types::EntityId::new(),
+                "Alice".into(),
+                "person".into(),
+            ))
+            .unwrap();
 
         // Create ingestion pipeline with entity extraction enabled
         let pipeline = IngestionPipeline::new(
@@ -2849,11 +2953,14 @@ mod tests {
         let (planner, _dir) = create_test_planner();
 
         // Create entity profile for Alice
-        planner.storage.store_entity_profile(
-            &crate::types::EntityProfile::new(
-                crate::types::EntityId::new(), "Alice".into(), "person".into(),
-            ),
-        ).unwrap();
+        planner
+            .storage
+            .store_entity_profile(&crate::types::EntityProfile::new(
+                crate::types::EntityId::new(),
+                "Alice".into(),
+                "person".into(),
+            ))
+            .unwrap();
 
         let pipeline = IngestionPipeline::new(
             Arc::clone(&planner.storage),
@@ -2865,10 +2972,7 @@ mod tests {
         );
 
         // Add memory with entities
-        let mem1 = Memory::new(
-            "Alice met Bob at Building C".to_string(),
-            vec![0.1; 384],
-        );
+        let mem1 = Memory::new("Alice met Bob at Building C".to_string(), vec![0.1; 384]);
         let mem1_id = mem1.id.clone();
         pipeline.add(mem1).unwrap();
 
@@ -2939,7 +3043,9 @@ mod tests {
         planner.storage.store_entity_profile(&profile).unwrap();
 
         // Query with full multi-word entity name
-        let scores = planner.entity_search("What is Project Alpha doing?", 10).unwrap();
+        let scores = planner
+            .entity_search("What is Project Alpha doing?", 10)
+            .unwrap();
 
         // Should find mem1 (exact multi-word match: "Project Alpha")
         assert!(
@@ -2958,8 +3064,7 @@ mod tests {
 
         let memory_entities = vec!["Alice".to_string(), "Bob".to_string()];
 
-        let score =
-            QueryPlanner::calculate_entity_overlap(&query_set, &memory_entities);
+        let score = QueryPlanner::calculate_entity_overlap(&query_set, &memory_entities);
 
         // Both entities match exactly (case-insensitive)
         assert!((score - 1.0).abs() < 0.01, "Exact match should score 1.0");
@@ -2970,8 +3075,7 @@ mod tests {
 
         let memory_entities2 = vec!["Bob".to_string()];
 
-        let score2 =
-            QueryPlanner::calculate_entity_overlap(&query_set2, &memory_entities2);
+        let score2 = QueryPlanner::calculate_entity_overlap(&query_set2, &memory_entities2);
 
         // No match
         assert_eq!(score2, 0.0, "No match should score 0.0");
@@ -2982,8 +3086,7 @@ mod tests {
 
         let memory_entities3 = vec!["Project Alpha".to_string()];
 
-        let score3 =
-            QueryPlanner::calculate_entity_overlap(&query_set3, &memory_entities3);
+        let score3 = QueryPlanner::calculate_entity_overlap(&query_set3, &memory_entities3);
 
         // Substring match should score 0.5
         assert!(
@@ -3024,10 +3127,7 @@ mod tests {
         pipeline.add(mem2).unwrap();
 
         // Add memory without causal language
-        let mem3 = Memory::new(
-            "We had a nice lunch today".to_string(),
-            vec![0.3; 384],
-        );
+        let mem3 = Memory::new("We had a nice lunch today".to_string(), vec![0.3; 384]);
         let mem3_id = mem3.id.clone();
         pipeline.add(mem3).unwrap();
 
@@ -3083,7 +3183,8 @@ mod tests {
 
         // Add memory with causal explanation
         let mem1 = Memory::new(
-            "The server crashed because of a memory leak. This was caused by unclosed connections.".to_string(),
+            "The server crashed because of a memory leak. This was caused by unclosed connections."
+                .to_string(),
             vec![0.1; 384],
         );
         let mem1_id = mem1.id.clone();
@@ -3102,10 +3203,7 @@ mod tests {
 
         // Score should be significant
         let score = scores.get(&mem1_id).unwrap();
-        assert!(
-            *score > 0.0,
-            "Causal memory should have positive score"
-        );
+        assert!(*score > 0.0, "Causal memory should have positive score");
     }
 
     #[test]
@@ -3132,9 +3230,7 @@ mod tests {
         pipeline.add(mem1).unwrap();
 
         // Query with causal intent
-        let scores = planner
-            .causal_search("Why did this happen?", 10)
-            .unwrap();
+        let scores = planner.causal_search("Why did this happen?", 10).unwrap();
 
         // Should not find mem1 (causal density too low, < 0.1 threshold)
         assert!(
@@ -3179,10 +3275,7 @@ mod tests {
         let mem2_id = mem2.id.clone();
         pipeline.add(mem2).unwrap();
 
-        let mem3 = Memory::new(
-            "Alice prefers coffee over tea".to_string(),
-            vec![0.3; 384],
-        );
+        let mem3 = Memory::new("Alice prefers coffee over tea".to_string(), vec![0.3; 384]);
         let mem3_id = mem3.id.clone();
         pipeline.add(mem3).unwrap();
 
@@ -3204,7 +3297,14 @@ mod tests {
         // Query with entity-focused pattern (should trigger entity-first retrieval)
         let query_embedding = vec![0.15; 384];
         let (intent, results, _matched_facts) = planner
-            .query("What does Alice like?", &query_embedding, 10, None, None, None)
+            .query(
+                "What does Alice like?",
+                &query_embedding,
+                10,
+                None,
+                None,
+                None,
+            )
             .unwrap();
 
         // Should classify as Entity intent
@@ -3214,13 +3314,25 @@ mod tests {
         assert_eq!(intent.entity_focus, Some("Alice".to_string()));
 
         // Should retrieve ALL memories mentioning Alice (not limited by top-K semantic)
-        assert!(results.len() >= 3, "Should retrieve all memories mentioning Alice");
+        assert!(
+            results.len() >= 3,
+            "Should retrieve all memories mentioning Alice"
+        );
 
         // Verify all Alice memories are in results
         let result_ids: Vec<_> = results.iter().map(|r| &r.id).collect();
-        assert!(result_ids.contains(&&mem1_id), "Should include mem1 (tennis)");
-        assert!(result_ids.contains(&&mem2_id), "Should include mem2 (books)");
-        assert!(result_ids.contains(&&mem3_id), "Should include mem3 (coffee)");
+        assert!(
+            result_ids.contains(&&mem1_id),
+            "Should include mem1 (tennis)"
+        );
+        assert!(
+            result_ids.contains(&&mem2_id),
+            "Should include mem2 (books)"
+        );
+        assert!(
+            result_ids.contains(&&mem3_id),
+            "Should include mem3 (coffee)"
+        );
 
         // All results should have high entity_score (1.0 since they mention the entity)
         for result in &results {
@@ -3240,11 +3352,22 @@ mod tests {
         // Query for non-existent entity
         let query_embedding = vec![0.1; 384];
         let (_intent, results, _matched_facts) = planner
-            .query("What does NonExistentEntity like?", &query_embedding, 10, None, None, None)
+            .query(
+                "What does NonExistentEntity like?",
+                &query_embedding,
+                10,
+                None,
+                None,
+                None,
+            )
             .unwrap();
 
         // Should return empty results
-        assert_eq!(results.len(), 0, "Should return empty for non-existent entity");
+        assert_eq!(
+            results.len(),
+            0,
+            "Should return empty for non-existent entity"
+        );
     }
 
     // --- extract_query_entity tests (profile-aware) ---
@@ -3254,16 +3377,22 @@ mod tests {
         let (planner, _dir) = create_test_planner();
 
         // Store profiles for known entities
-        planner.storage.store_entity_profile(
-            &crate::types::EntityProfile::new(
-                crate::types::EntityId::new(), "Melanie".into(), "person".into(),
-            ),
-        ).unwrap();
-        planner.storage.store_entity_profile(
-            &crate::types::EntityProfile::new(
-                crate::types::EntityId::new(), "Caroline".into(), "person".into(),
-            ),
-        ).unwrap();
+        planner
+            .storage
+            .store_entity_profile(&crate::types::EntityProfile::new(
+                crate::types::EntityId::new(),
+                "Melanie".into(),
+                "person".into(),
+            ))
+            .unwrap();
+        planner
+            .storage
+            .store_entity_profile(&crate::types::EntityProfile::new(
+                crate::types::EntityId::new(),
+                "Caroline".into(),
+                "person".into(),
+            ))
+            .unwrap();
 
         assert_eq!(
             planner.extract_query_entity("What books has Melanie read?"),
@@ -3278,11 +3407,14 @@ mod tests {
     #[test]
     fn test_extract_query_entity_possessive() {
         let (planner, _dir) = create_test_planner();
-        planner.storage.store_entity_profile(
-            &crate::types::EntityProfile::new(
-                crate::types::EntityId::new(), "Caroline".into(), "person".into(),
-            ),
-        ).unwrap();
+        planner
+            .storage
+            .store_entity_profile(&crate::types::EntityProfile::new(
+                crate::types::EntityId::new(),
+                "Caroline".into(),
+                "person".into(),
+            ))
+            .unwrap();
 
         assert_eq!(
             planner.extract_query_entity("What is Caroline's relationship status?"),
@@ -3293,16 +3425,22 @@ mod tests {
     #[test]
     fn test_extract_query_entity_two_names_returns_none() {
         let (planner, _dir) = create_test_planner();
-        planner.storage.store_entity_profile(
-            &crate::types::EntityProfile::new(
-                crate::types::EntityId::new(), "Caroline".into(), "person".into(),
-            ),
-        ).unwrap();
-        planner.storage.store_entity_profile(
-            &crate::types::EntityProfile::new(
-                crate::types::EntityId::new(), "Melanie".into(), "person".into(),
-            ),
-        ).unwrap();
+        planner
+            .storage
+            .store_entity_profile(&crate::types::EntityProfile::new(
+                crate::types::EntityId::new(),
+                "Caroline".into(),
+                "person".into(),
+            ))
+            .unwrap();
+        planner
+            .storage
+            .store_entity_profile(&crate::types::EntityProfile::new(
+                crate::types::EntityId::new(),
+                "Melanie".into(),
+                "person".into(),
+            ))
+            .unwrap();
 
         // Queries about multiple people should not trigger speaker filtering
         assert_eq!(
@@ -3326,11 +3464,14 @@ mod tests {
     #[test]
     fn test_extract_query_entity_lowercase_query() {
         let (planner, _dir) = create_test_planner();
-        planner.storage.store_entity_profile(
-            &crate::types::EntityProfile::new(
-                crate::types::EntityId::new(), "Caroline".into(), "person".into(),
-            ),
-        ).unwrap();
+        planner
+            .storage
+            .store_entity_profile(&crate::types::EntityProfile::new(
+                crate::types::EntityId::new(),
+                "Caroline".into(),
+                "person".into(),
+            ))
+            .unwrap();
 
         // Lowercase name in query should still match
         assert_eq!(
@@ -3428,17 +3569,47 @@ mod tests {
     #[test]
     fn test_contains_whole_word_static_pronouns() {
         // First-person pronouns should match as whole words
-        assert!(QueryPlanner::contains_whole_word_static("what do i need", "i"));
-        assert!(QueryPlanner::contains_whole_word_static("give me the answer", "me"));
-        assert!(QueryPlanner::contains_whole_word_static("my favorite color", "my"));
-        assert!(QueryPlanner::contains_whole_word_static("that is mine", "mine"));
-        assert!(QueryPlanner::contains_whole_word_static("i'm going home", "i'm"));
-        assert!(QueryPlanner::contains_whole_word_static("i've been there", "i've"));
+        assert!(QueryPlanner::contains_whole_word_static(
+            "what do i need",
+            "i"
+        ));
+        assert!(QueryPlanner::contains_whole_word_static(
+            "give me the answer",
+            "me"
+        ));
+        assert!(QueryPlanner::contains_whole_word_static(
+            "my favorite color",
+            "my"
+        ));
+        assert!(QueryPlanner::contains_whole_word_static(
+            "that is mine",
+            "mine"
+        ));
+        assert!(QueryPlanner::contains_whole_word_static(
+            "i'm going home",
+            "i'm"
+        ));
+        assert!(QueryPlanner::contains_whole_word_static(
+            "i've been there",
+            "i've"
+        ));
         // Should NOT match inside other words
-        assert!(!QueryPlanner::contains_whole_word_static("imagine this", "i"));
-        assert!(!QueryPlanner::contains_whole_word_static("time flies", "me"));
-        assert!(!QueryPlanner::contains_whole_word_static("myth or fact", "my"));
-        assert!(!QueryPlanner::contains_whole_word_static("undermine the case", "mine"));
+        assert!(!QueryPlanner::contains_whole_word_static(
+            "imagine this",
+            "i"
+        ));
+        assert!(!QueryPlanner::contains_whole_word_static(
+            "time flies",
+            "me"
+        ));
+        assert!(!QueryPlanner::contains_whole_word_static(
+            "myth or fact",
+            "my"
+        ));
+        assert!(!QueryPlanner::contains_whole_word_static(
+            "undermine the case",
+            "mine"
+        ));
     }
 
     #[test]
@@ -3450,7 +3621,11 @@ mod tests {
         let k = adaptive_k_select(&results, 0.7, 25);
         // Gradual dropoff: top results have more probability but not extremely so
         // Should keep most results since scores are close
-        assert!(k >= 5, "Expected reasonable k for gradual dropoff but got {}", k);
+        assert!(
+            k >= 5,
+            "Expected reasonable k for gradual dropoff but got {}",
+            k
+        );
     }
 
     // --- Step 2.1c: Query-entity graph expansion tests ---
@@ -3498,7 +3673,10 @@ mod tests {
             updated_at: crate::types::Timestamp::now(),
             summary: None,
         };
-        planner.storage.store_entity_profile(&alice_profile).unwrap();
+        planner
+            .storage
+            .store_entity_profile(&alice_profile)
+            .unwrap();
         planner.storage.store_entity_profile(&bob_profile).unwrap();
 
         // Create KG relationship: Alice --[friend]--> Bob
@@ -3509,7 +3687,14 @@ mod tests {
 
         // Query about Alice — Step 2.1c should discover Bob's memories via KG
         let (_intent, results, _facts) = planner
-            .query("What did Alice's friends achieve?", &vec![0.15; 384], 10, None, None, None)
+            .query(
+                "What did Alice's friends achieve?",
+                &vec![0.15; 384],
+                10,
+                None,
+                None,
+                None,
+            )
             .unwrap();
 
         // Bob's memory should appear in results (injected by Step 2.1c)
@@ -3556,7 +3741,10 @@ mod tests {
             updated_at: crate::types::Timestamp::now(),
             summary: None,
         };
-        planner.storage.store_entity_profile(&alice_profile).unwrap();
+        planner
+            .storage
+            .store_entity_profile(&alice_profile)
+            .unwrap();
         planner.storage.store_entity_profile(&bob_profile).unwrap();
 
         // Create KG relationship: Alice --[friend]--> Bob
@@ -3568,11 +3756,20 @@ mod tests {
         // Query mentioning both Alice AND Bob — Bob gets 2.0 from Step 2.1.
         // Step 2.1c should NOT downgrade Bob's memory from 2.0 to 1.0.
         let (_intent, results, _facts) = planner
-            .query("What do Alice and Bob enjoy?", &vec![0.15; 384], 10, None, None, None)
+            .query(
+                "What do Alice and Bob enjoy?",
+                &vec![0.15; 384],
+                10,
+                None,
+                None,
+                None,
+            )
             .unwrap();
 
         // Bob's memory should be present
-        let bob_result = results.iter().find(|r| r.id.to_u64() == mem_bob_id.to_u64());
+        let bob_result = results
+            .iter()
+            .find(|r| r.id.to_u64() == mem_bob_id.to_u64());
         assert!(bob_result.is_some(), "Bob's memory should be in results");
 
         // Entity score should be 2.0 (from Step 2.1), not downgraded to 1.0
@@ -3596,7 +3793,10 @@ mod tests {
         // Create 15 memories for Bob (exceeds MAX_RELATED_MEMORIES_PER_ENTITY=10)
         let mut bob_source_memories = Vec::new();
         for i in 0..15 {
-            let mem = Memory::new(format!("Bob memory {}", i), vec![0.1 + i as f32 * 0.01; 384]);
+            let mem = Memory::new(
+                format!("Bob memory {}", i),
+                vec![0.1 + i as f32 * 0.01; 384],
+            );
             let mid = mem.id.clone();
             planner.storage.store_memory(&mem).unwrap();
             {
@@ -3624,7 +3824,10 @@ mod tests {
             updated_at: crate::types::Timestamp::now(),
             summary: None,
         };
-        planner.storage.store_entity_profile(&alice_profile).unwrap();
+        planner
+            .storage
+            .store_entity_profile(&alice_profile)
+            .unwrap();
         planner.storage.store_entity_profile(&bob_profile).unwrap();
 
         // Create KG relationship: Alice --[friend]--> Bob
@@ -3635,7 +3838,14 @@ mod tests {
 
         // Query about Alice — should inject at most 10 of Bob's memories
         let (_intent, results, _facts) = planner
-            .query("Tell me about Alice's friends", &vec![0.15; 384], 10, None, None, None)
+            .query(
+                "Tell me about Alice's friends",
+                &vec![0.15; 384],
+                10,
+                None,
+                None,
+                None,
+            )
             .unwrap();
 
         // Count how many of Bob's memories appear with entity_score > 0

@@ -259,10 +259,7 @@ impl SlmMetadataExtractor {
 
         // Find the Python server script
         let script_path = Self::find_script_path()?;
-        tracing::info!(
-            "Using SLM extraction script: {}",
-            script_path.display()
-        );
+        tracing::info!("Using SLM extraction script: {}", script_path.display());
 
         let mut extractor = Self {
             config: config.clone(),
@@ -290,20 +287,21 @@ impl SlmMetadataExtractor {
             })?;
 
         // Get handles
-        let stdin = child.stdin.take().ok_or_else(|| {
-            Error::SlmInitialization("Failed to get stdin handle".to_string())
-        })?;
-        let stdout = child.stdout.take().ok_or_else(|| {
-            Error::SlmInitialization("Failed to get stdout handle".to_string())
-        })?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| Error::SlmInitialization("Failed to get stdin handle".to_string()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| Error::SlmInitialization("Failed to get stdout handle".to_string()))?;
         let mut stdout_reader = BufReader::new(stdout);
 
         // Wait for READY signal
         tracing::info!("Waiting for SLM extraction server to be ready...");
         let mut ready_line = String::new();
-        std::io::BufRead::read_line(&mut stdout_reader, &mut ready_line).map_err(|e| {
-            Error::SlmInitialization(format!("Failed to read READY signal: {}", e))
-        })?;
+        std::io::BufRead::read_line(&mut stdout_reader, &mut ready_line)
+            .map_err(|e| Error::SlmInitialization(format!("Failed to read READY signal: {}", e)))?;
 
         if ready_line.trim() != "READY" {
             return Err(Error::SlmInitialization(format!(
@@ -364,10 +362,7 @@ impl SlmMetadataExtractor {
                 // Look for .gguf file in directory
                 let gguf_files: Vec<_> = std::fs::read_dir(model_path)
                     .map_err(|e| {
-                        Error::SlmInitialization(format!(
-                            "Failed to read model directory: {}",
-                            e
-                        ))
+                        Error::SlmInitialization(format!("Failed to read model directory: {}", e))
                     })?
                     .filter_map(|e| e.ok())
                     .map(|e| e.path())
@@ -464,12 +459,12 @@ impl SlmMetadataExtractor {
         let request = serde_json::json!({ "content": content });
         let request_str = format!("{}\n", request);
 
-        stdin.write_all(request_str.as_bytes()).map_err(|e| {
-            Error::SlmInference(format!("Failed to write to Python server: {}", e))
-        })?;
-        stdin.flush().map_err(|e| {
-            Error::SlmInference(format!("Failed to flush stdin: {}", e))
-        })?;
+        stdin
+            .write_all(request_str.as_bytes())
+            .map_err(|e| Error::SlmInference(format!("Failed to write to Python server: {}", e)))?;
+        stdin
+            .flush()
+            .map_err(|e| Error::SlmInference(format!("Failed to flush stdin: {}", e)))?;
 
         // Read response
         let mut response_line = String::new();
@@ -503,10 +498,7 @@ impl SlmMetadataExtractor {
                 arr.iter()
                     .filter_map(|e| {
                         let name = e.get("name")?.as_str()?;
-                        let role = e
-                            .get("role")
-                            .and_then(|r| r.as_str())
-                            .unwrap_or("subject");
+                        let role = e.get("role").and_then(|r| r.as_str()).unwrap_or("subject");
                         let mentions: Vec<String> = e
                             .get("mentions")
                             .and_then(|m| m.as_array())
@@ -533,99 +525,102 @@ impl SlmMetadataExtractor {
             .unwrap_or_default();
 
         // Parse temporal metadata
-        let temporal = parsed.get("temporal").map(|t| {
-            let markers: Vec<String> = t
-                .get("markers")
-                .and_then(|m| m.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default();
+        let temporal = parsed
+            .get("temporal")
+            .map(|t| {
+                let markers: Vec<String> = t
+                    .get("markers")
+                    .and_then(|m| m.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
 
-            let sequence = t
-                .get("sequence")
-                .and_then(|s| s.as_str())
-                .filter(|s| *s != "null" && !s.is_empty())
-                .map(String::from);
+                let sequence = t
+                    .get("sequence")
+                    .and_then(|s| s.as_str())
+                    .filter(|s| *s != "null" && !s.is_empty())
+                    .map(String::from);
 
-            let relative_time = t
-                .get("relative_time")
-                .and_then(|r| r.as_str())
-                .filter(|s| *s != "null" && !s.is_empty())
-                .map(String::from);
+                let relative_time = t
+                    .get("relative_time")
+                    .and_then(|r| r.as_str())
+                    .filter(|s| *s != "null" && !s.is_empty())
+                    .map(String::from);
 
-            let absolute_dates: Vec<String> = t
-                .get("absolute_dates")
-                .and_then(|d| d.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default();
+                let absolute_dates: Vec<String> = t
+                    .get("absolute_dates")
+                    .and_then(|d| d.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
 
-            TemporalMetadata {
-                markers,
-                sequence,
-                relative_time,
-                absolute_dates,
-            }
-        }).unwrap_or_default();
+                TemporalMetadata {
+                    markers,
+                    sequence,
+                    relative_time,
+                    absolute_dates,
+                }
+            })
+            .unwrap_or_default();
 
         // Parse causal metadata
-        let causal = parsed.get("causal").map(|c| {
-            let relationships: Vec<CausalRelationship> = c
-                .get("relationships")
-                .and_then(|r| r.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|rel| {
-                            let cause = rel.get("cause")?.as_str()?;
-                            let effect = rel.get("effect")?.as_str()?;
-                            let confidence = rel
-                                .get("confidence")
-                                .and_then(|c| c.as_f64())
-                                .unwrap_or(0.5) as f32;
+        let causal = parsed
+            .get("causal")
+            .map(|c| {
+                let relationships: Vec<CausalRelationship> = c
+                    .get("relationships")
+                    .and_then(|r| r.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|rel| {
+                                let cause = rel.get("cause")?.as_str()?;
+                                let effect = rel.get("effect")?.as_str()?;
+                                let confidence =
+                                    rel.get("confidence")
+                                        .and_then(|c| c.as_f64())
+                                        .unwrap_or(0.5) as f32;
 
-                            Some(CausalRelationship {
-                                cause: cause.to_string(),
-                                effect: effect.to_string(),
-                                confidence,
+                                Some(CausalRelationship {
+                                    cause: cause.to_string(),
+                                    effect: effect.to_string(),
+                                    confidence,
+                                })
                             })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
+                            .collect()
+                    })
+                    .unwrap_or_default();
 
-            let density = c
-                .get("density")
-                .and_then(|d| d.as_f64())
-                .unwrap_or(0.0) as f32;
+                let density = c.get("density").and_then(|d| d.as_f64()).unwrap_or(0.0) as f32;
 
-            let explicit_markers: Vec<String> = c
-                .get("explicit_markers")
-                .and_then(|m| m.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default();
+                let explicit_markers: Vec<String> = c
+                    .get("explicit_markers")
+                    .and_then(|m| m.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
 
-            let has_implicit_causation = c
-                .get("has_implicit_causation")
-                .and_then(|h| h.as_bool())
-                .unwrap_or(false);
+                let has_implicit_causation = c
+                    .get("has_implicit_causation")
+                    .and_then(|h| h.as_bool())
+                    .unwrap_or(false);
 
-            CausalMetadata {
-                relationships,
-                density,
-                explicit_markers,
-                has_implicit_causation,
-            }
-        }).unwrap_or_default();
+                CausalMetadata {
+                    relationships,
+                    density,
+                    explicit_markers,
+                    has_implicit_causation,
+                }
+            })
+            .unwrap_or_default();
 
         // Parse topics
         let topics: Vec<String> = parsed
@@ -750,20 +745,19 @@ mod tests {
                 absolute_dates: vec![],
             },
             causal: CausalMetadata {
-                relationships: vec![CausalRelationship::new(
-                    "rain",
-                    "cancelled meeting",
-                    0.85,
-                )],
+                relationships: vec![CausalRelationship::new("rain", "cancelled meeting", 0.85)],
                 density: 0.5,
                 explicit_markers: vec!["because".to_string()],
                 has_implicit_causation: false,
             },
             topics: vec!["meetings".to_string(), "weather".to_string()],
             importance: 0.8,
-            entity_facts: vec![
-                ExtractedEntityFact::new("Alice", "occupation", "engineer", 0.9),
-            ],
+            entity_facts: vec![ExtractedEntityFact::new(
+                "Alice",
+                "occupation",
+                "engineer",
+                0.9,
+            )],
             schema_version: 1,
         };
 
@@ -811,7 +805,11 @@ mod tests {
     fn test_extracted_entity_builder() {
         let entity = ExtractedEntity::new("John", "person")
             .with_role("object")
-            .with_mentions(vec!["John".to_string(), "he".to_string(), "him".to_string()]);
+            .with_mentions(vec![
+                "John".to_string(),
+                "he".to_string(),
+                "him".to_string(),
+            ]);
 
         assert_eq!(entity.name, "John");
         assert_eq!(entity.role, "object");
@@ -868,7 +866,10 @@ mod tests {
         // Verify entities parsing
         let entities = parsed.get("entities").unwrap().as_array().unwrap();
         assert_eq!(entities.len(), 1);
-        assert_eq!(entities[0].get("name").unwrap().as_str().unwrap(), "Caroline");
+        assert_eq!(
+            entities[0].get("name").unwrap().as_str().unwrap(),
+            "Caroline"
+        );
 
         // Verify temporal parsing
         let temporal = parsed.get("temporal").unwrap();
@@ -883,9 +884,18 @@ mod tests {
         // Verify entity_facts parsing
         let entity_facts = parsed.get("entity_facts").unwrap().as_array().unwrap();
         assert_eq!(entity_facts.len(), 2);
-        assert_eq!(entity_facts[0].get("entity").unwrap().as_str().unwrap(), "Caroline");
-        assert_eq!(entity_facts[0].get("fact_type").unwrap().as_str().unwrap(), "research_topic");
-        assert_eq!(entity_facts[0].get("value").unwrap().as_str().unwrap(), "adoption agencies");
+        assert_eq!(
+            entity_facts[0].get("entity").unwrap().as_str().unwrap(),
+            "Caroline"
+        );
+        assert_eq!(
+            entity_facts[0].get("fact_type").unwrap().as_str().unwrap(),
+            "research_topic"
+        );
+        assert_eq!(
+            entity_facts[0].get("value").unwrap().as_str().unwrap(),
+            "adoption agencies"
+        );
     }
 
     #[test]

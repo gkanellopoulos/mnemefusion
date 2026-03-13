@@ -192,9 +192,7 @@ impl EntityGraph {
         let exists = self
             .graph
             .edges_directed(from_idx, petgraph::Direction::Outgoing)
-            .any(|e| {
-                e.target() == to_idx && e.weight().relationship == relation_type
-            });
+            .any(|e| e.target() == to_idx && e.weight().relationship == relation_type);
 
         if !exists {
             self.graph

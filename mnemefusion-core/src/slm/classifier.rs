@@ -1,3 +1,4 @@
+use super::config::SlmConfig;
 /// SLM-based intent classifier using llama.cpp via Python subprocess
 ///
 /// This module implements semantic intent classification using a Small Language Model
@@ -10,17 +11,15 @@
 ///
 /// The classifier integrates with QueryPlanner and falls back to pattern-based
 /// classification on any error, ensuring zero regression.
-
 use crate::error::{Error, Result};
-use crate::query::intent::{QueryIntent, IntentClassification};
-use super::config::SlmConfig;
+use crate::query::intent::IntentClassification;
 
+#[cfg(feature = "slm")]
+use std::io::{BufRead, BufReader, Write};
 #[cfg(feature = "slm")]
 use std::path::PathBuf;
 #[cfg(feature = "slm")]
 use std::process::{Child, Command, Stdio};
-#[cfg(feature = "slm")]
-use std::io::{BufRead, BufReader, Write};
 
 /// SLM-based intent classifier
 ///
@@ -77,14 +76,20 @@ impl SlmClassifier {
             .arg(model_path.to_string_lossy().as_ref())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())  // Show server logs in stderr
+            .stderr(Stdio::inherit()) // Show server logs in stderr
             .spawn()
-            .map_err(|e| Error::SlmInitialization(format!("Failed to spawn Python server: {}", e)))?;
+            .map_err(|e| {
+                Error::SlmInitialization(format!("Failed to spawn Python server: {}", e))
+            })?;
 
         // Get handles
-        let stdin = child.stdin.take()
+        let stdin = child
+            .stdin
+            .take()
             .ok_or_else(|| Error::SlmInitialization("Failed to get stdin handle".to_string()))?;
-        let stdout = child.stdout.take()
+        let stdout = child
+            .stdout
+            .take()
             .ok_or_else(|| Error::SlmInitialization("Failed to get stdout handle".to_string()))?;
         let mut stdout_reader = BufReader::new(stdout);
 
@@ -152,7 +157,9 @@ impl SlmClassifier {
             if model_path.is_dir() {
                 // Look for .gguf file in directory
                 let gguf_files: Vec<_> = std::fs::read_dir(model_path)
-                    .map_err(|e| Error::SlmInitialization(format!("Failed to read model directory: {}", e)))?
+                    .map_err(|e| {
+                        Error::SlmInitialization(format!("Failed to read model directory: {}", e))
+                    })?
                     .filter_map(|e| e.ok())
                     .map(|e| e.path())
                     .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("gguf"))
@@ -167,7 +174,10 @@ impl SlmClassifier {
                 }
 
                 if gguf_files.len() > 1 {
-                    tracing::warn!("Multiple .gguf files found, using first: {:?}", gguf_files[0]);
+                    tracing::warn!(
+                        "Multiple .gguf files found, using first: {:?}",
+                        gguf_files[0]
+                    );
                 }
 
                 Ok(gguf_files[0].clone())
@@ -184,7 +194,9 @@ impl SlmClassifier {
         } else {
             // Try to derive path from model_id
             // e.g., "Qwen/Qwen2.5-0.5B-Instruct" -> "opt/models/qwen2.5-0.5b-instruct.gguf"
-            let model_filename = self.config.model_id
+            let model_filename = self
+                .config
+                .model_id
                 .split('/')
                 .last()
                 .unwrap_or(&self.config.model_id)
@@ -195,7 +207,9 @@ impl SlmClassifier {
             // Try both opt/models and cache_dir
             let possible_paths = vec![
                 PathBuf::from(format!("opt/models/{}.gguf", model_filename)),
-                self.config.cache_dir.join(format!("{}.gguf", model_filename)),
+                self.config
+                    .cache_dir
+                    .join(format!("{}.gguf", model_filename)),
             ];
 
             for path in possible_paths {
@@ -210,9 +224,7 @@ impl SlmClassifier {
                  Please either:\n\
                  1. Use config.with_model_path(\"/path/to/model.gguf\"), or\n\
                  2. Place the GGUF file at opt/models/{}.gguf",
-                self.config.model_id,
-                model_filename,
-                model_filename
+                self.config.model_id, model_filename, model_filename
             )))
         }
     }
@@ -238,30 +250,32 @@ impl SlmClassifier {
         tracing::debug!("Starting SLM inference for query: '{}'", query);
 
         // Get handles (should always be Some after successful initialization)
-        let stdin = self.stdin.as_mut()
-            .ok_or_else(|| Error::SlmInference("Python server not initialized (no stdin)".to_string()))?;
-        let stdout = self.stdout.as_mut()
-            .ok_or_else(|| Error::SlmInference("Python server not initialized (no stdout)".to_string()))?;
+        let stdin = self.stdin.as_mut().ok_or_else(|| {
+            Error::SlmInference("Python server not initialized (no stdin)".to_string())
+        })?;
+        let stdout = self.stdout.as_mut().ok_or_else(|| {
+            Error::SlmInference("Python server not initialized (no stdout)".to_string())
+        })?;
 
         // Send request as JSON
         let request = serde_json::json!({ "query": query });
         let request_str = format!("{}\n", request.to_string());
 
-        stdin.write_all(request_str.as_bytes())
+        stdin
+            .write_all(request_str.as_bytes())
             .map_err(|e| Error::SlmInference(format!("Failed to write to Python server: {}", e)))?;
-        stdin.flush()
+        stdin
+            .flush()
             .map_err(|e| Error::SlmInference(format!("Failed to flush stdin: {}", e)))?;
 
         // Read response
         let mut response_line = String::new();
-        stdout.read_line(&mut response_line)
-            .map_err(|e| Error::SlmInference(format!("Failed to read from Python server: {}", e)))?;
+        stdout.read_line(&mut response_line).map_err(|e| {
+            Error::SlmInference(format!("Failed to read from Python server: {}", e))
+        })?;
 
         let duration = start.elapsed();
-        tracing::info!(
-            "SLM inference completed in {:?}",
-            duration
-        );
+        tracing::info!("SLM inference completed in {:?}", duration);
 
         // Parse JSON output from Python
         self.parse_intent_output(&response_line)
@@ -311,9 +325,7 @@ Respond with JSON:
         };
 
         // Extract confidence
-        let confidence = parsed["confidence"]
-            .as_f64()
-            .unwrap_or(0.5) as f32;
+        let confidence = parsed["confidence"].as_f64().unwrap_or(0.5) as f32;
 
         // Extract entity focus if present
         let entity_focus = parsed["entity_focus"]
