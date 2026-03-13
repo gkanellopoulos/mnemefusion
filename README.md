@@ -4,6 +4,7 @@
 
 MnemeFusion provides multi-dimensional memory indexing (semantic, temporal, causal, entity) in a single embedded database file with zero external dependencies. One library, one `.mfdb` file replaces Qdrant + Neo4j + SQLite.
 
+[![CI](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/ci.yml/badge.svg)](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/ci.yml)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
 
