@@ -1,226 +1,132 @@
-<svg width="100%" viewBox="0 0 680 820">
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="820" viewBox="0 0 680 820">
 <defs>
   <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-    <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#888780" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
   </marker>
 </defs>
 
-<style>
-  .layer-box { stroke-width: 0.5; }
-  .inner-box { stroke-width: 0.5; }
-  .pill { stroke-width: 0.5; }
-
-  @media (prefers-color-scheme: light) {
-    .api-layer { fill: #534AB7; stroke: #3C3489; }
-    .api-layer-t { fill: #EEEDFE; }
-    .api-layer-ts { fill: #CECBF6; }
-
-    .query-layer { fill: #0F6E56; stroke: #085041; }
-    .query-inner { fill: #1D9E75; stroke: #0F6E56; }
-    .query-t { fill: #E1F5EE; }
-    .query-ts { fill: #9FE1CB; }
-
-    .profile-box { fill: #993556; stroke: #72243E; }
-    .profile-t { fill: #FBEAF0; }
-
-    .dim-pill { fill: #085041; stroke: #04342C; }
-    .dim-pill-t { fill: #9FE1CB; }
-
-    .index-layer { fill: #185FA5; stroke: #0C447C; }
-    .index-inner { fill: #378ADD; stroke: #185FA5; }
-    .index-t { fill: #E6F1FB; }
-    .index-ts { fill: #B5D4F4; }
-
-    .graph-layer { fill: #993C1D; stroke: #712B13; }
-    .graph-inner { fill: #D85A30; stroke: #993C1D; }
-    .graph-t { fill: #FAECE7; }
-    .graph-ts { fill: #F5C4B3; }
-
-    .ep-box { fill: #993556; stroke: #72243E; }
-    .ep-t { fill: #FBEAF0; }
-    .ep-ts { fill: #F4C0D1; }
-
-    .ingest-layer { fill: #854F0B; stroke: #633806; }
-    .ingest-inner { fill: #BA7517; stroke: #854F0B; }
-    .ingest-t { fill: #FAEEDA; }
-    .ingest-ts { fill: #FAC775; }
-
-    .store-layer { fill: #444441; stroke: #2C2C2A; }
-    .store-t { fill: #F1EFE8; }
-    .store-ts { fill: #D3D1C7; }
-    .store-pill { fill: #5F5E5A; stroke: #444441; }
-    .store-pill-t { fill: #F1EFE8; }
-
-    .conn { stroke: #888780; }
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .api-layer { fill: #3C3489; stroke: #AFA9EC; }
-    .api-layer-t { fill: #EEEDFE; }
-    .api-layer-ts { fill: #CECBF6; }
-
-    .query-layer { fill: #085041; stroke: #5DCAA5; }
-    .query-inner { fill: #0F6E56; stroke: #5DCAA5; }
-    .query-t { fill: #E1F5EE; }
-    .query-ts { fill: #9FE1CB; }
-
-    .profile-box { fill: #72243E; stroke: #ED93B1; }
-    .profile-t { fill: #FBEAF0; }
-
-    .dim-pill { fill: #04342C; stroke: #5DCAA5; }
-    .dim-pill-t { fill: #9FE1CB; }
-
-    .index-layer { fill: #0C447C; stroke: #85B7EB; }
-    .index-inner { fill: #185FA5; stroke: #85B7EB; }
-    .index-t { fill: #E6F1FB; }
-    .index-ts { fill: #B5D4F4; }
-
-    .graph-layer { fill: #712B13; stroke: #F0997B; }
-    .graph-inner { fill: #993C1D; stroke: #F0997B; }
-    .graph-t { fill: #FAECE7; }
-    .graph-ts { fill: #F5C4B3; }
-
-    .ep-box { fill: #72243E; stroke: #ED93B1; }
-    .ep-t { fill: #FBEAF0; }
-    .ep-ts { fill: #F4C0D1; }
-
-    .ingest-layer { fill: #633806; stroke: #EF9F27; }
-    .ingest-inner { fill: #854F0B; stroke: #EF9F27; }
-    .ingest-t { fill: #FAEEDA; }
-    .ingest-ts { fill: #FAC775; }
-
-    .store-layer { fill: #2C2C2A; stroke: #B4B2A9; }
-    .store-t { fill: #F1EFE8; }
-    .store-ts { fill: #D3D1C7; }
-    .store-pill { fill: #444441; stroke: #B4B2A9; }
-    .store-pill-t { fill: #D3D1C7; }
-
-    .conn { stroke: #B4B2A9; }
-  }
-</style>
-
 <!-- PUBLIC API -->
-<rect class="api-layer layer-box" x="40" y="30" width="600" height="64" rx="14"/>
-<text class="api-layer-t" x="340" y="54" text-anchor="middle" font-family="var(--font-sans)" font-size="14" font-weight="500">MemoryEngine</text>
-<text class="api-layer-ts" x="340" y="72" text-anchor="middle" font-family="var(--font-sans)" font-size="12">Public API — add, query, search, profiles</text>
+<rect fill="#534AB7" stroke="#3C3489" stroke-width="0.5" x="40" y="30" width="600" height="64" rx="14"/>
+<text fill="#EEEDFE" x="340" y="54" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" font-weight="500">MemoryEngine</text>
+<text fill="#CECBF6" x="340" y="72" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12">Public API — add, query, search, profiles</text>
 
 <!-- Arrow -->
-<line x1="340" y1="94" x2="340" y2="120" class="conn" stroke-width="1.5" marker-end="url(#arrow)"/>
+<line x1="340" y1="94" x2="340" y2="120" stroke="#888780" stroke-width="1.5" marker-end="url(#arrow)"/>
 
 <!-- QUERY LAYER -->
-<rect class="query-layer layer-box" x="40" y="120" width="600" height="180" rx="16"/>
-<text class="query-t" x="340" y="148" text-anchor="middle" font-family="var(--font-sans)" font-size="14" font-weight="500">Query layer</text>
+<rect fill="#0F6E56" stroke="#085041" stroke-width="0.5" x="40" y="120" width="600" height="180" rx="16"/>
+<text fill="#E1F5EE" x="340" y="148" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" font-weight="500">Query layer</text>
 
-<rect class="query-inner inner-box" x="64" y="162" width="130" height="44" rx="8"/>
-<text class="query-t" x="129" y="184" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="14" font-weight="500">Intent classifier</text>
+<rect fill="#1D9E75" stroke="#0F6E56" stroke-width="0.5" x="64" y="162" width="130" height="44" rx="8"/>
+<text fill="#E1F5EE" x="129" y="184" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" font-weight="500">Intent classifier</text>
 
-<rect class="query-inner inner-box" x="210" y="162" width="120" height="44" rx="8"/>
-<text class="query-t" x="270" y="184" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="14" font-weight="500">Query planner</text>
+<rect fill="#1D9E75" stroke="#0F6E56" stroke-width="0.5" x="210" y="162" width="120" height="44" rx="8"/>
+<text fill="#E1F5EE" x="270" y="184" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" font-weight="500">Query planner</text>
 
-<rect class="query-inner inner-box" x="346" y="162" width="130" height="44" rx="8"/>
-<text class="query-t" x="411" y="184" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="14" font-weight="500">RRF fusion</text>
+<rect fill="#1D9E75" stroke="#0F6E56" stroke-width="0.5" x="346" y="162" width="130" height="44" rx="8"/>
+<text fill="#E1F5EE" x="411" y="184" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" font-weight="500">RRF fusion</text>
 
-<rect class="query-inner inner-box" x="492" y="162" width="130" height="44" rx="8"/>
-<text class="query-t" x="557" y="184" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="14" font-weight="500">MMR reranker</text>
+<rect fill="#1D9E75" stroke="#0F6E56" stroke-width="0.5" x="492" y="162" width="130" height="44" rx="8"/>
+<text fill="#E1F5EE" x="557" y="184" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" font-weight="500">MMR reranker</text>
 
-<line x1="194" y1="184" x2="208" y2="184" class="conn" stroke-width="1.5" marker-end="url(#arrow)"/>
-<line x1="330" y1="184" x2="344" y2="184" class="conn" stroke-width="1.5" marker-end="url(#arrow)"/>
-<line x1="476" y1="184" x2="490" y2="184" class="conn" stroke-width="1.5" marker-end="url(#arrow)"/>
+<line x1="194" y1="184" x2="208" y2="184" stroke="#888780" stroke-width="1.5" marker-end="url(#arrow)"/>
+<line x1="330" y1="184" x2="344" y2="184" stroke="#888780" stroke-width="1.5" marker-end="url(#arrow)"/>
+<line x1="476" y1="184" x2="490" y2="184" stroke="#888780" stroke-width="1.5" marker-end="url(#arrow)"/>
 
 <!-- Entity profile injection -->
-<rect class="profile-box inner-box" x="64" y="224" width="200" height="44" rx="8"/>
-<text class="profile-t" x="164" y="246" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="14" font-weight="500">Entity profile injection</text>
+<rect fill="#993556" stroke="#72243E" stroke-width="0.5" x="64" y="224" width="200" height="44" rx="8"/>
+<text fill="#FBEAF0" x="164" y="246" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" font-weight="500">Entity profile injection</text>
 
 <!-- 5 dimension pills -->
-<rect class="dim-pill pill" x="288" y="224" width="90" height="28" rx="14"/>
-<text class="dim-pill-t" x="333" y="238" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12">Semantic</text>
+<rect fill="#085041" stroke="#04342C" stroke-width="0.5" x="288" y="224" width="90" height="28" rx="14"/>
+<text fill="#9FE1CB" x="333" y="238" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12">Semantic</text>
 
-<rect class="dim-pill pill" x="386" y="224" width="70" height="28" rx="14"/>
-<text class="dim-pill-t" x="421" y="238" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12">BM25</text>
+<rect fill="#085041" stroke="#04342C" stroke-width="0.5" x="386" y="224" width="70" height="28" rx="14"/>
+<text fill="#9FE1CB" x="421" y="238" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12">BM25</text>
 
-<rect class="dim-pill pill" x="464" y="224" width="80" height="28" rx="14"/>
-<text class="dim-pill-t" x="504" y="238" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12">Temporal</text>
+<rect fill="#085041" stroke="#04342C" stroke-width="0.5" x="464" y="224" width="80" height="28" rx="14"/>
+<text fill="#9FE1CB" x="504" y="238" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12">Temporal</text>
 
-<rect class="dim-pill pill" x="288" y="260" width="76" height="28" rx="14"/>
-<text class="dim-pill-t" x="326" y="274" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12">Causal</text>
+<rect fill="#085041" stroke="#04342C" stroke-width="0.5" x="288" y="260" width="76" height="28" rx="14"/>
+<text fill="#9FE1CB" x="326" y="274" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12">Causal</text>
 
-<rect class="dim-pill pill" x="372" y="260" width="70" height="28" rx="14"/>
-<text class="dim-pill-t" x="407" y="274" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12">Entity</text>
+<rect fill="#085041" stroke="#04342C" stroke-width="0.5" x="372" y="260" width="70" height="28" rx="14"/>
+<text fill="#9FE1CB" x="407" y="274" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12">Entity</text>
 
 <!-- Arrows down -->
-<line x1="200" y1="300" x2="200" y2="326" class="conn" stroke-width="1.5" marker-end="url(#arrow)"/>
-<line x1="440" y1="300" x2="440" y2="326" class="conn" stroke-width="1.5" marker-end="url(#arrow)"/>
+<line x1="200" y1="300" x2="200" y2="326" stroke="#888780" stroke-width="1.5" marker-end="url(#arrow)"/>
+<line x1="440" y1="300" x2="440" y2="326" stroke="#888780" stroke-width="1.5" marker-end="url(#arrow)"/>
 
 <!-- INDEX LAYER -->
-<rect class="index-layer layer-box" x="40" y="326" width="600" height="100" rx="16"/>
-<text class="index-t" x="340" y="352" text-anchor="middle" font-family="var(--font-sans)" font-size="14" font-weight="500">Index layer</text>
+<rect fill="#185FA5" stroke="#0C447C" stroke-width="0.5" x="40" y="326" width="600" height="100" rx="16"/>
+<text fill="#E6F1FB" x="340" y="352" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" font-weight="500">Index layer</text>
 
-<rect class="index-inner inner-box" x="64" y="366" width="170" height="44" rx="8"/>
-<text class="index-t" x="149" y="380" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="14" font-weight="500">Vector index</text>
-<text class="index-ts" x="149" y="398" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12">usearch HNSW</text>
+<rect fill="#378ADD" stroke="#185FA5" stroke-width="0.5" x="64" y="366" width="170" height="44" rx="8"/>
+<text fill="#E6F1FB" x="149" y="380" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" font-weight="500">Vector index</text>
+<text fill="#B5D4F4" x="149" y="398" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12">usearch HNSW</text>
 
-<rect class="index-inner inner-box" x="254" y="366" width="170" height="44" rx="8"/>
-<text class="index-t" x="339" y="380" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="14" font-weight="500">BM25 index</text>
-<text class="index-ts" x="339" y="398" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12">Porter stemming</text>
+<rect fill="#378ADD" stroke="#185FA5" stroke-width="0.5" x="254" y="366" width="170" height="44" rx="8"/>
+<text fill="#E6F1FB" x="339" y="380" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" font-weight="500">BM25 index</text>
+<text fill="#B5D4F4" x="339" y="398" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12">Porter stemming</text>
 
-<rect class="index-inner inner-box" x="444" y="366" width="170" height="44" rx="8"/>
-<text class="index-t" x="529" y="380" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="14" font-weight="500">Temporal index</text>
-<text class="index-ts" x="529" y="398" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12">B-tree</text>
+<rect fill="#378ADD" stroke="#185FA5" stroke-width="0.5" x="444" y="366" width="170" height="44" rx="8"/>
+<text fill="#E6F1FB" x="529" y="380" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" font-weight="500">Temporal index</text>
+<text fill="#B5D4F4" x="529" y="398" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12">B-tree</text>
 
 <!-- Arrows down -->
-<line x1="200" y1="426" x2="200" y2="452" class="conn" stroke-width="1.5" marker-end="url(#arrow)"/>
-<line x1="440" y1="426" x2="440" y2="452" class="conn" stroke-width="1.5" marker-end="url(#arrow)"/>
+<line x1="200" y1="426" x2="200" y2="452" stroke="#888780" stroke-width="1.5" marker-end="url(#arrow)"/>
+<line x1="440" y1="426" x2="440" y2="452" stroke="#888780" stroke-width="1.5" marker-end="url(#arrow)"/>
 
 <!-- GRAPH LAYER -->
-<rect class="graph-layer layer-box" x="40" y="452" width="600" height="100" rx="16"/>
-<text class="graph-t" x="340" y="478" text-anchor="middle" font-family="var(--font-sans)" font-size="14" font-weight="500">Graph layer</text>
+<rect fill="#993C1D" stroke="#712B13" stroke-width="0.5" x="40" y="452" width="600" height="100" rx="16"/>
+<text fill="#FAECE7" x="340" y="478" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" font-weight="500">Graph layer</text>
 
-<rect class="graph-inner inner-box" x="64" y="492" width="170" height="44" rx="8"/>
-<text class="graph-t" x="149" y="506" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="14" font-weight="500">Causal graph</text>
-<text class="graph-ts" x="149" y="524" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12">petgraph</text>
+<rect fill="#D85A30" stroke="#993C1D" stroke-width="0.5" x="64" y="492" width="170" height="44" rx="8"/>
+<text fill="#FAECE7" x="149" y="506" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" font-weight="500">Causal graph</text>
+<text fill="#F5C4B3" x="149" y="524" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12">petgraph</text>
 
-<rect class="graph-inner inner-box" x="254" y="492" width="170" height="44" rx="8"/>
-<text class="graph-t" x="339" y="506" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="14" font-weight="500">Entity graph</text>
-<text class="graph-ts" x="339" y="524" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12">petgraph</text>
+<rect fill="#D85A30" stroke="#993C1D" stroke-width="0.5" x="254" y="492" width="170" height="44" rx="8"/>
+<text fill="#FAECE7" x="339" y="506" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" font-weight="500">Entity graph</text>
+<text fill="#F5C4B3" x="339" y="524" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12">petgraph</text>
 
-<rect class="ep-box inner-box" x="444" y="492" width="170" height="44" rx="8"/>
-<text class="ep-t" x="529" y="506" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="14" font-weight="500">Entity profiles</text>
-<text class="ep-ts" x="529" y="524" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12">Structured facts</text>
+<rect fill="#993556" stroke="#72243E" stroke-width="0.5" x="444" y="492" width="170" height="44" rx="8"/>
+<text fill="#FBEAF0" x="529" y="506" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" font-weight="500">Entity profiles</text>
+<text fill="#F4C0D1" x="529" y="524" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12">Structured facts</text>
 
 <!-- Arrows down -->
-<line x1="200" y1="552" x2="200" y2="578" class="conn" stroke-width="1.5" marker-end="url(#arrow)"/>
-<line x1="440" y1="552" x2="440" y2="578" class="conn" stroke-width="1.5" marker-end="url(#arrow)"/>
+<line x1="200" y1="552" x2="200" y2="578" stroke="#888780" stroke-width="1.5" marker-end="url(#arrow)"/>
+<line x1="440" y1="552" x2="440" y2="578" stroke="#888780" stroke-width="1.5" marker-end="url(#arrow)"/>
 
 <!-- INGESTION PIPELINE -->
-<rect class="ingest-layer layer-box" x="40" y="578" width="600" height="100" rx="16"/>
-<text class="ingest-t" x="340" y="604" text-anchor="middle" font-family="var(--font-sans)" font-size="14" font-weight="500">Ingestion pipeline</text>
+<rect fill="#854F0B" stroke="#633806" stroke-width="0.5" x="40" y="578" width="600" height="100" rx="16"/>
+<text fill="#FAEEDA" x="340" y="604" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" font-weight="500">Ingestion pipeline</text>
 
-<rect class="ingest-inner inner-box" x="64" y="618" width="170" height="44" rx="8"/>
-<text class="ingest-t" x="149" y="632" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="14" font-weight="500">LLM extraction</text>
-<text class="ingest-ts" x="149" y="650" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12">llama-cpp (optional)</text>
+<rect fill="#BA7517" stroke="#854F0B" stroke-width="0.5" x="64" y="618" width="170" height="44" rx="8"/>
+<text fill="#FAEEDA" x="149" y="632" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" font-weight="500">LLM extraction</text>
+<text fill="#FAC775" x="149" y="650" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12">llama-cpp (optional)</text>
 
-<rect class="ingest-inner inner-box" x="254" y="618" width="170" height="44" rx="8"/>
-<text class="ingest-t" x="339" y="632" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="14" font-weight="500">Multi-pass prompts</text>
-<text class="ingest-ts" x="339" y="650" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12">Diverse extraction</text>
+<rect fill="#BA7517" stroke="#854F0B" stroke-width="0.5" x="254" y="618" width="170" height="44" rx="8"/>
+<text fill="#FAEEDA" x="339" y="632" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" font-weight="500">Multi-pass prompts</text>
+<text fill="#FAC775" x="339" y="650" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12">Diverse extraction</text>
 
-<rect class="ingest-inner inner-box" x="444" y="618" width="170" height="44" rx="8"/>
-<text class="ingest-t" x="529" y="632" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="14" font-weight="500">Profile consolidation</text>
-<text class="ingest-ts" x="529" y="650" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12">Dedup + summarize</text>
+<rect fill="#BA7517" stroke="#854F0B" stroke-width="0.5" x="444" y="618" width="170" height="44" rx="8"/>
+<text fill="#FAEEDA" x="529" y="632" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" font-weight="500">Profile consolidation</text>
+<text fill="#FAC775" x="529" y="650" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12">Dedup + summarize</text>
 
 <!-- Arrow down -->
-<line x1="340" y1="678" x2="340" y2="704" class="conn" stroke-width="1.5" marker-end="url(#arrow)"/>
+<line x1="340" y1="678" x2="340" y2="704" stroke="#888780" stroke-width="1.5" marker-end="url(#arrow)"/>
 
 <!-- STORAGE LAYER -->
-<rect class="store-layer layer-box" x="40" y="704" width="600" height="86" rx="16"/>
-<text class="store-t" x="340" y="732" text-anchor="middle" font-family="var(--font-sans)" font-size="14" font-weight="500">Storage layer — redb</text>
+<rect fill="#444441" stroke="#2C2C2A" stroke-width="0.5" x="40" y="704" width="600" height="86" rx="16"/>
+<text fill="#F1EFE8" x="340" y="732" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" font-weight="500">Storage layer — redb</text>
 
-<rect class="store-pill pill" x="100" y="744" width="120" height="28" rx="14"/>
-<text class="store-pill-t" x="160" y="758" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12">Single .mfdb file</text>
+<rect fill="#5F5E5A" stroke="#444441" stroke-width="0.5" x="100" y="744" width="120" height="28" rx="14"/>
+<text fill="#F1EFE8" x="160" y="758" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12">Single .mfdb file</text>
 
-<rect class="store-pill pill" x="240" y="744" width="130" height="28" rx="14"/>
-<text class="store-pill-t" x="305" y="758" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12">ACID transactions</text>
+<rect fill="#5F5E5A" stroke="#444441" stroke-width="0.5" x="240" y="744" width="130" height="28" rx="14"/>
+<text fill="#F1EFE8" x="305" y="758" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12">ACID transactions</text>
 
-<rect class="store-pill pill" x="390" y="744" width="160" height="28" rx="14"/>
-<text class="store-pill-t" x="470" y="758" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12">Checkpoint / resume</text>
+<rect fill="#5F5E5A" stroke="#444441" stroke-width="0.5" x="390" y="744" width="160" height="28" rx="14"/>
+<text fill="#F1EFE8" x="470" y="758" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12">Checkpoint / resume</text>
 
 </svg>
