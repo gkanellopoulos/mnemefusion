@@ -98,6 +98,9 @@ opt/models/
 # Database backups
 *.mfdb.*
 
+# Dataset lives in evals/locomo/ — don't duplicate here
+tests/benchmarks/fixtures/locomo10.json
+
 # Experiment result snapshots (large JSONs, regenerate as needed)
 tests/benchmarks/fixtures/*_results.json
 
