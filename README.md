@@ -158,38 +158,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────┐
-│           MemoryEngine (Public API)          │
-├─────────────────────────────────────────────┤
-│  Query Layer                                │
-│  - Intent Classification (pattern + SLM)    │
-│  - QueryPlanner (5-dimension orchestration) │
-│  - RRF Fusion Engine                        │
-│  - MMR Diversity Reranking                  │
-│  - Entity Profile Injection                 │
-├─────────────────────────────────────────────┤
-│  Index Layer                                │
-│  - Vector Index (usearch HNSW)              │
-│  - BM25 Keyword Index (Porter stemming)     │
-│  - Temporal Index (B-tree)                  │
-├─────────────────────────────────────────────┤
-│  Graph Layer                                │
-│  - Causal Graph (petgraph)                  │
-│  - Entity Graph (petgraph)                  │
-│  - Entity Profiles (structured facts)       │
-├─────────────────────────────────────────────┤
-│  Ingestion Pipeline                         │
-│  - LLM Entity Extraction (optional)         │
-│  - Multi-pass diverse prompts               │
-│  - Profile consolidation + summarization    │
-├─────────────────────────────────────────────┤
-│  Storage Layer (redb)                       │
-│  - Single .mfdb file                        │
-│  - ACID transactions                        │
-│  - Checkpoint/resume for crash safety       │
-└─────────────────────────────────────────────┘
-```
+<p align="center">
+  <img src="mnemefusion_architecture_v2.svg" alt="MnemeFusion Architecture" width="680">
+</p>
 
 ## Python API Reference
 
