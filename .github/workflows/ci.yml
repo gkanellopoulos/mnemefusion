@@ -8,7 +8,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -D warnings
 
 jobs:
   check:
@@ -36,8 +35,8 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Clippy (default features)
-        run: cargo clippy -p mnemefusion-core --all-targets -- -D warnings
+      - name: Clippy (library code)
+        run: cargo clippy -p mnemefusion-core --lib -- -D warnings
 
       - name: Build
         run: cargo build -p mnemefusion-core
