@@ -274,7 +274,8 @@ impl PyMemory {
                 llm_model_path = Some(model_path);
             }
             if let Some(threshold) = cfg.get_item("async_extraction_threshold")? {
-                rust_config = rust_config.with_async_extraction_threshold(threshold.extract::<usize>()?);
+                rust_config =
+                    rust_config.with_async_extraction_threshold(threshold.extract::<usize>()?);
             }
 
             // SLM configuration (only available with 'slm' feature)
@@ -322,7 +323,9 @@ impl PyMemory {
             use mnemefusion_core::extraction::ModelTier;
             engine = engine
                 .with_llm_entity_extraction_from_path(model_path, ModelTier::Balanced)
-                .map_err(|e| PyIOError::new_err(format!("Failed to enable LLM extraction: {}", e)))?;
+                .map_err(|e| {
+                    PyIOError::new_err(format!("Failed to enable LLM extraction: {}", e))
+                })?;
             if configured_extraction_passes > 1 {
                 engine.set_extraction_passes(configured_extraction_passes);
             }
@@ -484,7 +487,12 @@ impl PyMemory {
     ///     ...     print(f"Progress: {current}/{total}")
     ///     >>> result = memory.add_batch(memories, on_progress=on_progress)
     #[pyo3(signature = (memories, namespace=None, on_progress=None))]
-    fn add_batch(&self, memories: Vec<&PyDict>, namespace: Option<&str>, on_progress: Option<&PyAny>) -> PyResult<PyObject> {
+    fn add_batch(
+        &self,
+        memories: Vec<&PyDict>,
+        namespace: Option<&str>,
+        on_progress: Option<&PyAny>,
+    ) -> PyResult<PyObject> {
         let engine = self.get_engine()?;
 
         // Convert Python dicts to MemoryInput
@@ -1091,7 +1099,8 @@ impl PyMemory {
                                 f.set_item("fact_type", &fact.fact_type).ok();
                                 f.set_item("value", &fact.value).ok();
                                 f.set_item("confidence", fact.confidence).ok();
-                                f.set_item("source_memory", fact.source_memory.to_string()).ok();
+                                f.set_item("source_memory", fact.source_memory.to_string())
+                                    .ok();
                                 f.into()
                             })
                             .collect();
@@ -1155,7 +1164,8 @@ impl PyMemory {
                             f.set_item("fact_type", &fact.fact_type).ok();
                             f.set_item("value", &fact.value).ok();
                             f.set_item("confidence", fact.confidence).ok();
-                            f.set_item("source_memory", fact.source_memory.to_string()).ok();
+                            f.set_item("source_memory", fact.source_memory.to_string())
+                                .ok();
                             f.into()
                         })
                         .collect();
@@ -1270,14 +1280,16 @@ impl PyMemory {
         let model_tier = match tier {
             "balanced" | "4b" => ModelTier::Balanced,
             "quality" | "8b" => ModelTier::Quality,
-            _ => return Err(PyValueError::new_err(
-                "tier must be 'balanced' (4B) or 'quality' (8B)"
-            )),
+            _ => {
+                return Err(PyValueError::new_err(
+                    "tier must be 'balanced' (4B) or 'quality' (8B)",
+                ))
+            }
         };
 
         if extraction_passes == 0 || extraction_passes > 10 {
             return Err(PyValueError::new_err(
-                "extraction_passes must be between 1 and 10"
+                "extraction_passes must be between 1 and 10",
             ));
         }
 
@@ -1290,14 +1302,17 @@ impl PyMemory {
         let path = std::path::Path::new(model_path);
         if !path.exists() {
             return Err(PyIOError::new_err(format!(
-                "Model file not found: {}", model_path
+                "Model file not found: {}",
+                model_path
             )));
         }
 
         let engine = engine_opt.take().unwrap();
         let new_engine = engine
             .with_llm_entity_extraction_from_path(model_path, model_tier)
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to enable LLM extraction: {}", e)))?;
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to enable LLM extraction: {}", e))
+            })?;
 
         // Set extraction_passes on the engine's config if > 1
         // The pipeline picks it up from the config wired in open()
@@ -1351,16 +1366,15 @@ impl PyMemory {
         let path = std::path::Path::new(model_path);
         if !path.exists() {
             return Err(PyIOError::new_err(format!(
-                "KG model file not found: {}", model_path
+                "KG model file not found: {}",
+                model_path
             )));
         }
 
         let engine = engine_opt.take().unwrap();
-        let new_engine = engine
-            .with_kg_extraction(model_path)
-            .map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to enable Triplex KG extraction: {}", e))
-            })?;
+        let new_engine = engine.with_kg_extraction(model_path).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to enable Triplex KG extraction: {}", e))
+        })?;
 
         *engine_opt = Some(new_engine);
         Ok(true)
@@ -1394,9 +1408,9 @@ impl PyMemory {
             }) as Box<dyn Fn(usize, usize)>
         });
 
-        engine.backfill_kg_with_progress(progress_cb).map_err(|e| {
-            PyRuntimeError::new_err(format!("KG backfill failed: {}", e))
-        })
+        engine
+            .backfill_kg_with_progress(progress_cb)
+            .map_err(|e| PyRuntimeError::new_err(format!("KG backfill failed: {}", e)))
     }
 
     /// Process all deferred LLM extractions queued by add() in async mode.
@@ -1531,9 +1545,7 @@ impl PyMemory {
         let func = Arc::new(func);
         let embed_fn: EmbeddingFn = Arc::new(move |text: &str| {
             Python::with_gil(|py| {
-                let result = func
-                    .call1(py, (text,))
-                    .expect("embedding_fn call failed");
+                let result = func.call1(py, (text,)).expect("embedding_fn call failed");
                 result
                     .extract::<Vec<f32>>(py)
                     .expect("embedding_fn must return List[float]")
@@ -1640,9 +1652,9 @@ impl PyMemory {
     ///     >>> print(f"Updated {updated} embeddings")
     fn rebuild_speaker_embeddings(&self) -> PyResult<usize> {
         let engine = self.get_engine()?;
-        engine
-            .rebuild_speaker_embeddings()
-            .map_err(|e| PyRuntimeError::new_err(format!("rebuild_speaker_embeddings failed: {}", e)))
+        engine.rebuild_speaker_embeddings().map_err(|e| {
+            PyRuntimeError::new_err(format!("rebuild_speaker_embeddings failed: {}", e))
+        })
     }
 
     /// Apply an externally-produced extraction result to a memory's entity profiles.
@@ -1675,14 +1687,14 @@ impl PyMemory {
 
         // Parse entities
         let entities: Vec<ExtractedEntity> = if let Some(ents) = extraction.get_item("entities")? {
-            let ent_list: &PyList = ents.downcast().map_err(|_| {
-                PyValueError::new_err("'entities' must be a list")
-            })?;
+            let ent_list: &PyList = ents
+                .downcast()
+                .map_err(|_| PyValueError::new_err("'entities' must be a list"))?;
             let mut result = Vec::new();
             for item in ent_list.iter() {
-                let d: &PyDict = item.downcast().map_err(|_| {
-                    PyValueError::new_err("Each entity must be a dict")
-                })?;
+                let d: &PyDict = item
+                    .downcast()
+                    .map_err(|_| PyValueError::new_err("Each entity must be a dict"))?;
                 let name: String = d
                     .get_item("name")?
                     .ok_or_else(|| PyValueError::new_err("Entity missing 'name'"))?
@@ -1701,14 +1713,14 @@ impl PyMemory {
         // Parse entity_facts
         let entity_facts: Vec<ExtractedFact> =
             if let Some(facts) = extraction.get_item("entity_facts")? {
-                let fact_list: &PyList = facts.downcast().map_err(|_| {
-                    PyValueError::new_err("'entity_facts' must be a list")
-                })?;
+                let fact_list: &PyList = facts
+                    .downcast()
+                    .map_err(|_| PyValueError::new_err("'entity_facts' must be a list"))?;
                 let mut result = Vec::new();
                 for item in fact_list.iter() {
-                    let d: &PyDict = item.downcast().map_err(|_| {
-                        PyValueError::new_err("Each entity_fact must be a dict")
-                    })?;
+                    let d: &PyDict = item
+                        .downcast()
+                        .map_err(|_| PyValueError::new_err("Each entity_fact must be a dict"))?;
                     let entity: String = d
                         .get_item("entity")?
                         .ok_or_else(|| PyValueError::new_err("Fact missing 'entity'"))?
@@ -1753,14 +1765,14 @@ impl PyMemory {
 
         // Parse records (typed sub-records)
         let records: Vec<TypedRecord> = if let Some(recs) = extraction.get_item("records")? {
-            let rec_list: &PyList = recs.downcast().map_err(|_| {
-                PyValueError::new_err("'records' must be a list")
-            })?;
+            let rec_list: &PyList = recs
+                .downcast()
+                .map_err(|_| PyValueError::new_err("'records' must be a list"))?;
             let mut result = Vec::new();
             for item in rec_list.iter() {
-                let d: &PyDict = item.downcast().map_err(|_| {
-                    PyValueError::new_err("Each record must be a dict")
-                })?;
+                let d: &PyDict = item
+                    .downcast()
+                    .map_err(|_| PyValueError::new_err("Each record must be a dict"))?;
                 let record_type: String = d
                     .get_item("record_type")?
                     .ok_or_else(|| PyValueError::new_err("Record missing 'record_type'"))?
@@ -1769,9 +1781,8 @@ impl PyMemory {
                     .get_item("summary")?
                     .ok_or_else(|| PyValueError::new_err("Record missing 'summary'"))?
                     .extract()?;
-                let event_date: Option<String> = d
-                    .get_item("event_date")?
-                    .and_then(|v| v.extract().ok());
+                let event_date: Option<String> =
+                    d.get_item("event_date")?.and_then(|v| v.extract().ok());
                 let record_entities: Vec<String> = d
                     .get_item("entities")?
                     .map(|v| v.extract().unwrap_or_default())
@@ -1789,43 +1800,44 @@ impl PyMemory {
         };
 
         // Parse relationships
-        let relationships: Vec<ExtractedRelationship> =
-            if let Some(rels) = extraction.get_item("relationships")? {
-                let rel_list: &PyList = rels.downcast().map_err(|_| {
-                    PyValueError::new_err("'relationships' must be a list")
-                })?;
-                let mut result = Vec::new();
-                for item in rel_list.iter() {
-                    let d: &PyDict = item.downcast().map_err(|_| {
-                        PyValueError::new_err("Each relationship must be a dict")
-                    })?;
-                    let from_entity: String = d
-                        .get_item("from_entity")?
-                        .ok_or_else(|| PyValueError::new_err("Relationship missing 'from_entity'"))?
-                        .extract()?;
-                    let to_entity: String = d
-                        .get_item("to_entity")?
-                        .ok_or_else(|| PyValueError::new_err("Relationship missing 'to_entity'"))?
-                        .extract()?;
-                    let relation_type: String = d
-                        .get_item("relation_type")?
-                        .ok_or_else(|| PyValueError::new_err("Relationship missing 'relation_type'"))?
-                        .extract()?;
-                    let confidence: f32 = d
-                        .get_item("confidence")?
-                        .map(|v| v.extract().unwrap_or(0.9))
-                        .unwrap_or(0.9);
-                    result.push(ExtractedRelationship {
-                        from_entity,
-                        to_entity,
-                        relation_type,
-                        confidence,
-                    });
-                }
-                result
-            } else {
-                Vec::new()
-            };
+        let relationships: Vec<ExtractedRelationship> = if let Some(rels) =
+            extraction.get_item("relationships")?
+        {
+            let rel_list: &PyList = rels
+                .downcast()
+                .map_err(|_| PyValueError::new_err("'relationships' must be a list"))?;
+            let mut result = Vec::new();
+            for item in rel_list.iter() {
+                let d: &PyDict = item
+                    .downcast()
+                    .map_err(|_| PyValueError::new_err("Each relationship must be a dict"))?;
+                let from_entity: String = d
+                    .get_item("from_entity")?
+                    .ok_or_else(|| PyValueError::new_err("Relationship missing 'from_entity'"))?
+                    .extract()?;
+                let to_entity: String = d
+                    .get_item("to_entity")?
+                    .ok_or_else(|| PyValueError::new_err("Relationship missing 'to_entity'"))?
+                    .extract()?;
+                let relation_type: String = d
+                    .get_item("relation_type")?
+                    .ok_or_else(|| PyValueError::new_err("Relationship missing 'relation_type'"))?
+                    .extract()?;
+                let confidence: f32 = d
+                    .get_item("confidence")?
+                    .map(|v| v.extract().unwrap_or(0.9))
+                    .unwrap_or(0.9);
+                result.push(ExtractedRelationship {
+                    from_entity,
+                    to_entity,
+                    relation_type,
+                    confidence,
+                });
+            }
+            result
+        } else {
+            Vec::new()
+        };
 
         let extraction_result = ExtractionResult {
             entities,
@@ -2178,7 +2190,11 @@ fn mnemefusion(py: Python, m: &PyModule) -> PyResult<()> {
             let module_path = std::path::Path::new(module_file);
             if let Some(module_dir) = module_path.parent() {
                 // Check the module's own directory first
-                let ext = if cfg!(target_os = "windows") { "dll" } else { "so" };
+                let ext = if cfg!(target_os = "windows") {
+                    "dll"
+                } else {
+                    "so"
+                };
                 let has_backends = module_dir.join(format!("ggml-cpu.{}", ext)).exists()
                     || module_dir.join(format!("libggml-cpu.{}", ext)).exists();
 

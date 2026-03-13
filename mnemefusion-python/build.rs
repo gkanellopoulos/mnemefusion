@@ -25,9 +25,8 @@ fn main() {
         });
 
         // Multi-arch CUDA: detect or use env var
-        let cuda_arch = env::var("CMAKE_CUDA_ARCHITECTURES").unwrap_or_else(|_| {
-            detect_cuda_architectures()
-        });
+        let cuda_arch =
+            env::var("CMAKE_CUDA_ARCHITECTURES").unwrap_or_else(|_| detect_cuda_architectures());
 
         // Pass architecture to cmake via env var (llama-cpp-sys-2's build.rs reads this)
         println!("cargo:rustc-env=CMAKE_CUDA_ARCHITECTURES={}", cuda_arch);
@@ -49,7 +48,10 @@ fn main() {
             println!("cargo:rustc-link-lib=static=cudart_static");
         }
 
-        println!("cargo:warning=CUDA architectures: sm_{}", cuda_arch.replace(';', ", sm_"));
+        println!(
+            "cargo:warning=CUDA architectures: sm_{}",
+            cuda_arch.replace(';', ", sm_")
+        );
     } else {
         println!("cargo:warning=Building without CUDA support (CPU only)");
     }
