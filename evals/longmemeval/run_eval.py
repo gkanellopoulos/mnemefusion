@@ -787,14 +787,14 @@ if __name__ == "__main__":
     parser.add_argument("--num-workers", type=int, default=1,
                         help="Total number of parallel workers (each loads its own LLM instance)")
     parser.add_argument("--worker", type=int, default=0,
-                        help="This worker's index (0-based, must be < num-workers)")
+                        help="This worker index (0-based, must be < num-workers)")
     parser.add_argument("--merge", action="store_true",
-                        help="Merge per-worker result files into a single results file, then print summary")
+                        help="Merge per-worker result files into a single results file")
     args = parser.parse_args()
 
     EXTRACTION_PASSES = args.extraction_passes
 
-    # Merge mode: combine worker result files and print final summary
+    # Merge mode
     if args.merge:
         scoring_suffix = "detailed" if args.detailed_scoring else "binary"
         import glob as glob_mod
@@ -803,61 +803,38 @@ if __name__ == "__main__":
         if not worker_files:
             print(f"ERROR: No worker files found matching {pattern}")
             sys.exit(1)
-
         all_results = []
         seen_ids = set()
         for wf in worker_files:
+            import json as json2
             with open(wf, encoding="utf-8") as f:
-                data = json.load(f)
+                data = json2.load(f)
             for r in data:
                 if r["question_id"] not in seen_ids:
                     all_results.append(r)
                     seen_ids.add(r["question_id"])
-            print(f"  Loaded {len(data)} results from {Path(wf).name}")
-
-        # Save merged file
+            print(f"  Loaded {len(data)} from {wf.split(chr(47))[-1]}")
         merged_path = FIXTURES_DIR / f"longmemeval_results_{args.mode}_{scoring_suffix}.json"
         with open(merged_path, "w", encoding="utf-8") as f:
             json.dump(all_results, f, indent=2, ensure_ascii=False)
-        print(f"\n  Merged {len(all_results)} results -> {merged_path.name}")
-
-        # Print summary
+        print(f"  Merged {len(all_results)} results -> {merged_path.name}")
         valid = [r for r in all_results if r["score"] >= 0]
         if valid:
-            category_scores = defaultdict(list)
+            from collections import defaultdict as dd
+            cat_scores = dd(list)
             for r in valid:
-                category_scores[r["question_type"]].append(r["score"])
-
-            overall_acc = sum(r["score"] for r in valid) / len(valid) * 100
-            cat_accs = {}
-            for cat, scores in category_scores.items():
-                cat_accs[cat] = sum(scores) / len(scores) * 100
+                cat_scores[r["question_type"]].append(r["score"])
+            overall = sum(r["score"] for r in valid) / len(valid) * 100
+            cat_accs = {c: sum(s)/len(s)*100 for c,s in cat_scores.items()}
             task_avg = sum(cat_accs.values()) / max(1, len(cat_accs))
-
-            avg_r5 = sum(r.get("recall_at_5", 0) for r in valid) / len(valid)
-            avg_r10 = sum(r.get("recall_at_10", 0) for r in valid) / len(valid)
-            avg_r20 = sum(r.get("recall_at_20", 0) for r in valid) / len(valid)
-            total_cost = sum(r.get("api_cost", 0) for r in all_results)
-
-            print(f"\n{'=' * 70}")
-            print(f"MERGED SUMMARY ({len(all_results)} questions, {scoring_suffix} scoring)")
-            print(f"{'=' * 70}")
-            print(f"  Overall accuracy:      {overall_acc:.1f}%")
-            print(f"  Task-averaged acc:     {task_avg:.1f}%")
-            print(f"  Recall:                R@5={avg_r5:.1%}  R@10={avg_r10:.1%}  R@20={avg_r20:.1%}")
-            print(f"  Total API cost:        ${total_cost:.4f}")
-            for cat in sorted(cat_accs.keys()):
-                n = len(category_scores[cat])
-                print(f"  {cat:<30} n={n:>3}  acc={cat_accs[cat]:>5.1f}%")
-
-            abs_results = [r for r in valid if r.get("is_abstention")]
-            non_abs = [r for r in valid if not r.get("is_abstention")]
-            if abs_results:
-                abs_acc = sum(r["score"] for r in abs_results) / len(abs_results) * 100
-                non_abs_acc = sum(r["score"] for r in non_abs) / len(non_abs) * 100 if non_abs else 0
-                print(f"\n  Abstention accuracy:   {abs_acc:.1f}%  (n={len(abs_results)})")
-                print(f"  Non-abstention acc:    {non_abs_acc:.1f}%  (n={len(non_abs)})")
-
+            r5 = sum(r.get("recall_at_5",0) for r in valid) / len(valid)
+            r10 = sum(r.get("recall_at_10",0) for r in valid) / len(valid)
+            r20 = sum(r.get("recall_at_20",0) for r in valid) / len(valid)
+            cost = sum(r.get("api_cost",0) for r in all_results)
+            print(f"  Overall: {overall:.1f}%  Task-avg: {task_avg:.1f}%")
+            print(f"  R@5={r5:.1%}  R@10={r10:.1%}  R@20={r20:.1%}  Cost: ${cost:.2f}")
+            for c in sorted(cat_accs):
+                print(f"  {c:<30} n={len(cat_scores[c]):>3}  acc={cat_accs[c]:>5.1f}%")
         sys.exit(0)
 
     # Validate worker args
@@ -871,6 +848,6 @@ if __name__ == "__main__":
         sys.exit(1)
 
     if args.num_workers > 1:
-        print(f"  Worker {args.worker}/{args.num_workers} — processing questions {args.worker}, {args.worker + args.num_workers}, {args.worker + 2*args.num_workers}, ...")
+        print(f"  Worker {args.worker}/{args.num_workers}")
 
     run_evaluation(args)

@@ -121,6 +121,70 @@ Results are saved incrementally to JSON — the script is crash-safe and resumab
 
 Results are saved to `longmemeval_results_{mode}_{binary|detailed}.json` with per-question scores, retrieval recall, and category breakdowns.
 
+## Results
+
+Evaluated on the full LongMemEval dataset (500 questions, 6 categories) with Phi-4-mini-instruct (Q4_K_M, 2.5GB) for entity extraction on an NVIDIA A40 GPU.
+
+### Oracle Mode (evidence-only context)
+
+Each question receives only the sessions containing gold evidence (~36 turns). Tests extraction + RAG quality without retrieval noise.
+
+| Metric | Score |
+|--------|-------|
+| **Task-averaged accuracy** | **90.9%** |
+| **Overall accuracy** | **90.0%** |
+
+| Category | Count | Accuracy |
+|----------|-------|----------|
+| single-session-assistant | 56 | 100.0% |
+| single-session-user | 70 | 98.6% |
+| knowledge-update | 78 | 91.0% |
+| temporal-reasoning | 133 | 88.0% |
+| multi-session | 133 | 84.2% |
+| single-session-preference | 30 | 83.3% |
+
+Retrieval: R@5=68.6%, R@10=82.5%, R@20=93.7%.
+
+### S-Mode (full haystack — ~490 turns per question)
+
+Each question gets ALL conversation turns (~490), requiring end-to-end retrieval from a large haystack. Per-question fresh ingestion with LLM entity extraction.
+
+| Metric | Score |
+|--------|-------|
+| **Task-averaged accuracy** | **46.3%** |
+| **Overall accuracy** | **37.2%** |
+
+| Category | Count | Accuracy |
+|----------|-------|----------|
+| single-session-preference | 30 | 90.0% |
+| single-session-user | 70 | 80.0% |
+| knowledge-update | 78 | 43.6% |
+| temporal-reasoning | 133 | 28.6% |
+| single-session-assistant | 56 | 21.4% |
+| multi-session | 133 | 14.3% |
+
+### Analysis: Oracle vs S-Mode Gap
+
+The 53-point gap between oracle (90.0%) and s-mode (37.2%) is overwhelmingly a retrieval problem:
+
+- **48.4%** of failed questions had zero gold evidence in top-20 results
+- **49.0%** had partial evidence (some turns found, critical ones missing)
+- **Only 2.5%** were reasoning failures (evidence retrieved but wrong answer)
+
+Categories that depend on finding specific turns in a 490-turn haystack collapse (multi-session: 84.2% → 14.3%, single-session-assistant: 100% → 21.4%), while categories with distinctive user-voice content survive (single-session-user: 98.6% → 80.0%, preference: 83.3% → 90.0%).
+
+**Key insight:** The oracle result (90%) proves the extraction + RAG + judge pipeline works. The s-mode result (37.2%) exposes the retrieval ceiling when a 3.8B model must extract searchable metadata from 490 turns. This is an extraction intelligence bottleneck — better SLMs will directly improve s-mode without any architecture changes.
+
+### Comparison Context
+
+| System | Extraction | Answer Model | Oracle | S-Mode | Infrastructure |
+|--------|-----------|-------------|--------|--------|---------------|
+| Mastra | Cloud LLM | gpt-5-mini | 95.0% | — | Cloud API |
+| **MnemeFusion** | **Phi-4-mini 3.8B (local)** | **gpt-5-mini** | **90.0%** | **37.2%** | **Single .mfdb file** |
+| Emergence AI | Cloud LLM | Cloud LLM | 82-86% | — | Cloud + vector DB |
+
+*Competitor numbers are self-reported. Direct comparison requires running on the same dataset with the same protocol. Most competitors only report oracle-equivalent results.*
+
 ## References
 
 - LongMemEval paper: Di Wu et al., "LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory" (ICLR 2025)
