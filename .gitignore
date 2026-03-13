@@ -129,6 +129,7 @@ tests/benchmarks/deep_compare*.py
 # Claude Code internal dev notes (not for public repo)
 .claude/
 CLAUDE.md
+evals/POSITIONING.md
 
 # LongMemEval fixtures (downloaded dataset, not committed)
 tests/benchmarks/fixtures/longmemeval/
