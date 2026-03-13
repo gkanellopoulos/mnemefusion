@@ -2,19 +2,17 @@
 
 Evaluates MnemeFusion on the [LoCoMo](https://github.com/snap-research/locomo) (Long-term Conversation Memory) benchmark using the standard free-text + LLM-as-judge protocol.
 
-## Evaluation Protocol
+## Protocol
 
 | Aspect | Configuration |
 |--------|---------------|
 | Answer model | GPT-4o-mini, temperature=0 |
-| Answer constraint | "5-6 words" (matching Mem0 protocol) |
+| Answer constraint | 5-6 words |
 | Judge model | GPT-4o-mini, temperature=0 |
 | Judge format | Binary CORRECT/WRONG with generous matching |
 | Categories | 1-4 (single-hop, multi-hop, temporal, open-domain) |
 | Questions | 1,540 |
 | Multi-run | `--runs N` for mean ± stddev |
-
-This protocol matches the evaluation methodology used by Mem0, Zep, MemMachine, and other published systems, making results directly comparable.
 
 ## Dataset
 
@@ -108,26 +106,9 @@ python run_eval.py \
 | `--categories 1 2 3` | Evaluate specific categories only |
 | `--verbose` | Print per-question results |
 
-## Evaluation Modes
-
-- **Standard mode** (default): Free-text generation + LLM-as-judge. Binary CORRECT/WRONG scoring with generous matching and temporal tolerance. Comparable to Mem0 and other published systems.
-- **MCQ mode** (`--mcq`): 10-choice multiple-choice from Percena/locomo-mc10. Deterministic — no LLM judge variance. Non-standard; results not comparable to published numbers.
-
 ## Output
 
 The script prints a methodology header, per-category breakdown, recall@K metrics, and latency percentiles. Results can be saved to JSON with `--output path.json`.
-
-## Comparison Context
-
-| System | Reported Accuracy | Protocol | Notes |
-|--------|-------------------|----------|-------|
-| Mem0 | 66.9% | Free-text + LLM judge | Reported on their GitHub |
-| OpenAI Memory | 52.9% | Free-text + LLM judge | Reported |
-| Hindsight | 89.6% | Free-text + LLM judge | Research system |
-| **MnemeFusion** | **70.7% ± 0.8%** | Free-text + LLM judge | 3 runs, 1540q, Phi-4-mini extraction on A40 |
-| MnemeFusion (MCQ) | 70.2% | MCQ (non-standard) | Internal metric |
-
-*Note: Competitor numbers are unverified reference points. Direct comparison requires running on the same dataset scope with the same protocol.*
 
 ## Results
 
@@ -160,7 +141,7 @@ Evaluated on the full LoCoMo dataset (10 conversations, 1,540 questions, categor
 | Latency P95 | 239ms |
 | Ingestion time | ~1h47m (5,882 docs on A40) |
 
-## Atomized Results (Per-Entity DB Architecture)
+## Atomized Results (Per-Entity DB)
 
 MnemeFusion is designed for one `.mfdb` file per entity — matching how memory works in production (one DB per user/customer/project). The atomized benchmark creates one DB per conversation, eliminating cross-entity retrieval noise.
 
@@ -175,7 +156,7 @@ MnemeFusion is designed for one `.mfdb` file per entity — matching how memory 
 | Open-domain (knowledge) | 76.3% | 78.2% | +1.9 |
 | Recall@20 | 54.0% | 56.2% | +2.2 |
 
-**Key takeaway:** Entity isolation lifts single-hop (+7.5) and temporal (+8.4) significantly — the categories most affected by cross-entity confusion in a shared DB. The standard benchmark is adversarial (10 people in one DB); real-world per-entity accuracy is higher.
+Entity isolation lifts single-hop (+7.5) and temporal (+8.4) significantly — the categories most affected by cross-entity confusion in a shared DB.
 
 ## References
 

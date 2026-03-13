@@ -207,7 +207,7 @@ def run_atomized_evaluation(
     print(f"\n  Architecture:     One DB per conversation (production-realistic)")
     print(f"  Answer model:     GPT-4o-mini, temperature=0")
     print(f"  Judge model:      GPT-4o-mini, temperature=0")
-    print(f"  Scoring:          Binary CORRECT/WRONG (Mem0-compatible judge prompt)")
+    print(f"  Scoring:          Binary CORRECT/WRONG (standard judge prompt)")
     cat_list = categories if categories else [1, 2, 3, 4]
     print(f"  Categories:       {cat_list}")
     print(f"  Embedding model:  {EMBEDDING_MODEL}")

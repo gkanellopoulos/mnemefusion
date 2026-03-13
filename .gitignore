@@ -130,6 +130,7 @@ tests/benchmarks/deep_compare*.py
 .claude/
 CLAUDE.md
 evals/POSITIONING.md
+docs/
 
 # LongMemEval fixtures (downloaded dataset, not committed)
 tests/benchmarks/fixtures/longmemeval/
@@ -137,6 +138,7 @@ tests/benchmarks/fixtures/longmemeval/
 # Eval results and logs (regenerate as needed)
 evals/locomo/results_*.json
 evals/locomo/*.log
+evals/locomo/benchmark_log*.txt
 evals/longmemeval/longmemeval_results_*.json
 evals/longmemeval/*.log
 

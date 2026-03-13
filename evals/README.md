@@ -1,19 +1,17 @@
 # Evaluations
 
-MnemeFusion is evaluated on two established conversational memory benchmarks using standard protocols that produce numbers comparable to published results.
+MnemeFusion is evaluated on two established conversational memory benchmarks using standard protocols.
 
 ## Benchmarks
 
 | Benchmark | Protocol | Questions | MnemeFusion | Status |
 |-----------|----------|-----------|-------------|--------|
-| [LoCoMo](locomo/) (standard) | Free-text + LLM-as-judge (Mem0-compatible) | 1,540 (cat 1-4) | **70.7% ± 0.8%** | Verified |
-| [LoCoMo](locomo/) (atomized) | Same protocol, per-entity DB | 1,540 (cat 1-4) | **72.3% ± 0.1%** | Verified |
-| [LongMemEval](longmemeval/) (oracle) | Binary yes/no judge (official paper protocol) | 500 | **90.0%** | Verified |
-| [LongMemEval](longmemeval/) (s-mode) | Same protocol, full 490-turn haystack | 500 | **37.2%** | Verified |
+| [LoCoMo](locomo/) (standard) | Free-text + LLM-as-judge | 1,540 (cat 1-4) | **70.7% ± 0.8%** | Verified |
+| [LoCoMo](locomo/) (atomized) | Per-entity DB, same protocol | 1,540 (cat 1-4) | **72.3% ± 0.1%** | Verified |
+| [LongMemEval](longmemeval/) (oracle) | Binary judge (official protocol) | 500 | **90.0%** | Verified |
+| [LongMemEval](longmemeval/) (s-mode) | Full haystack, same protocol | 500 | **37.2%** | Verified |
 
 ## Methodology
-
-Both benchmarks follow the protocols used by published systems (Mem0, Zep, MemMachine, Letta) to ensure results are directly comparable.
 
 ### LoCoMo
 
@@ -21,15 +19,14 @@ Both benchmarks follow the protocols used by published systems (Mem0, Zep, MemMa
 - **Judge**: GPT-4o-mini, temperature=0, binary CORRECT/WRONG with generous matching
 - **Categories**: 1-4 (single-hop, multi-hop, temporal, open-domain) — 1,540 questions
 - **Multi-run**: `--runs N` for mean ± stddev (recommended: 3 runs for publication)
-- **MCQ mode**: Also available as `--mcq` for deterministic internal testing (non-standard)
 
 ### LongMemEval
 
-- **Answer generation**: GPT-5-mini (our choice — clearly reported)
+- **Answer generation**: GPT-5-mini
 - **Judge**: gpt-4o-2024-08-06, temperature=0, binary yes/no (official paper requirement)
 - **Prompts**: 5 task-specific prompts + 1 abstention prompt (matching official code)
 - **Metrics**: Task-averaged accuracy (primary) + Overall accuracy (secondary)
-- **Modes**: Oracle (development) and S (publication — full haystack retrieval)
+- **Modes**: Oracle (evidence-only, for development) and S (full haystack, for publication)
 
 ## Reproducing Results
 

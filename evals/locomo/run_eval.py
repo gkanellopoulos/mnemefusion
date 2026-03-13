@@ -5,7 +5,7 @@ LoCoMo Evaluation for MnemeFusion
 Evaluates MnemeFusion on the LoCoMo (Long-term Conversation Memory) benchmark.
 
 Two evaluation modes:
-  Standard (default): Free-text generation + LLM-as-judge (Mem0-compatible protocol).
+  Standard (default): Free-text generation + LLM-as-judge.
     Categories 1-4 (single-hop, multi-hop, temporal, open-domain), 1,540 questions.
     Binary CORRECT/WRONG judging with generous matching.
   MCQ (--mcq): 10-choice multiple-choice (deterministic, no LLM judge variance).
@@ -607,7 +607,6 @@ Answer with ONLY the letter (A-J) of your choice."""
         """
         Use LLM to judge if the prediction is correct.
 
-        Adapted from Mem0's ACCURACY_PROMPT for compatibility with published results.
         Binary CORRECT/WRONG with generous matching, temporal tolerance,
         and JSON output format.
 
@@ -1035,7 +1034,7 @@ class MnemeFusionEvaluator:
         intent_info, results, profile_context = self.memory.query(query, query_embedding, top_k)
         latency_ms = (time.time() - start) * 1000
 
-        # Session-level context expansion (Emergence AI insight):
+        # Session-level context expansion:
         # If multiple retrieved turns come from the same session, expand to include
         # neighboring turns. Replaces lowest-ranked singletons to stay within budget.
         if self.session_expand and self.session_map:
@@ -1077,8 +1076,8 @@ class MnemeFusionEvaluator:
         Expanded turns replace the lowest-ranked singleton results (sessions
         with only 1 hit) to stay within the original result budget.
 
-        Research basis: Emergence AI achieved 82-86% on LongMemEval by matching
-        on individual turns then expanding to full session context.
+        Research basis: expanding from individual turn matches to full session
+        context improves recall on multi-turn evidence.
         """
         MAX_EXPAND_SESSIONS = 2   # Max sessions to expand
         MIN_SESSION_HITS = 2      # Only expand sessions with >= N retrieved turns
@@ -1533,7 +1532,7 @@ def run_evaluation(
     if mcq:
         print(f"  Scoring:          MCQ — correct if selected choice matches ground truth")
     else:
-        print(f"  Scoring:          Binary CORRECT/WRONG (Mem0-compatible judge prompt)")
+        print(f"  Scoring:          Binary CORRECT/WRONG (standard judge prompt)")
     cat_list = categories if categories else [1, 2, 3, 4]
     print(f"  Categories:       {cat_list}")
     print(f"  Embedding model:  {embedding_model}")

@@ -2,11 +2,11 @@
 
 Evaluates MnemeFusion on [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned) (ICLR 2025) — a benchmark for long-term conversational memory systems.
 
-## Evaluation Protocol
+## Protocol
 
 | Aspect | Configuration |
 |--------|---------------|
-| Answer model | GPT-5-mini (our choice, clearly reported) |
+| Answer model | GPT-5-mini |
 | Judge model | gpt-4o-2024-08-06 (official paper requirement) |
 | Scoring | Binary yes/no (official protocol) |
 | Judge prompts | 5 task-specific + 1 abstention (matching official code) |
@@ -15,7 +15,7 @@ Evaluates MnemeFusion on [LongMemEval](https://huggingface.co/datasets/xiaowu016
 | Knowledge update | Accepts old+updated or just updated answer |
 | Preference | Lenient matching for preference questions |
 
-This protocol matches the official LongMemEval evaluation code, which asserts `model == 'gpt-4o-2024-08-06'` for the judge. Using any other model makes results non-comparable.
+The judge model is mandated by the official evaluation code (`assert model == 'gpt-4o-2024-08-06'`). Using any other model makes results non-comparable.
 
 ## Evaluation Modes
 
@@ -74,9 +74,9 @@ python run_eval.py \
     --llm-model <path-to-model.gguf>
 ```
 
-### Detailed Scoring (internal development)
+### Detailed Scoring (development only)
 
-For granular 0-100 scoring with GPT-5-mini (non-standard, for diagnosis):
+Granular 0-100 scoring with GPT-5-mini — non-standard, for diagnosis:
 
 ```bash
 python run_eval.py \
@@ -91,7 +91,7 @@ python run_eval.py \
 |----------|-------------|
 | `--mode {oracle,s}` | Dataset mode: oracle (evidence-only) or s (full haystack) |
 | `--llm-model PATH` | Path to GGUF model for entity extraction |
-| `--detailed-scoring` | Use 0-100 scoring with GPT-5-mini (non-standard, internal) |
+| `--detailed-scoring` | Use 0-100 scoring with GPT-5-mini (non-standard) |
 | `--start-at N` | Resume from question N (0-indexed) |
 | `--max-questions N` | Stop after N new questions |
 | `--category NAME` | Only evaluate a specific category |
@@ -112,7 +112,7 @@ Results are saved incrementally to JSON — the script is crash-safe and resumab
 
 ## Metrics
 
-- **Task-averaged accuracy**: Mean of the 6 per-category accuracies (each category weighted equally). This is the headline metric.
+- **Task-averaged accuracy**: Mean of the 6 per-category accuracies (each category weighted equally). Primary metric.
 - **Overall accuracy**: Mean across all individual binary labels (instance-weighted).
 - **Abstention accuracy**: Accuracy on questions where the correct answer is "no information available".
 - **Recall@K**: Fraction of gold evidence turns found in top-K retrieved memories.
@@ -163,27 +163,15 @@ Each question gets ALL conversation turns (~490), requiring end-to-end retrieval
 | single-session-assistant | 56 | 21.4% |
 | multi-session | 133 | 14.3% |
 
-### Analysis: Oracle vs S-Mode Gap
+### Oracle vs S-Mode Gap
 
-The 53-point gap between oracle (90.0%) and s-mode (37.2%) is overwhelmingly a retrieval problem:
+The 53-point gap is overwhelmingly a retrieval problem:
 
 - **48.4%** of failed questions had zero gold evidence in top-20 results
 - **49.0%** had partial evidence (some turns found, critical ones missing)
 - **Only 2.5%** were reasoning failures (evidence retrieved but wrong answer)
 
-Categories that depend on finding specific turns in a 490-turn haystack collapse (multi-session: 84.2% → 14.3%, single-session-assistant: 100% → 21.4%), while categories with distinctive user-voice content survive (single-session-user: 98.6% → 80.0%, preference: 83.3% → 90.0%).
-
-**Key insight:** The oracle result (90%) proves the extraction + RAG + judge pipeline works. The s-mode result (37.2%) exposes the retrieval ceiling when a 3.8B model must extract searchable metadata from 490 turns. This is an extraction intelligence bottleneck — better SLMs will directly improve s-mode without any architecture changes.
-
-### Comparison Context
-
-| System | Extraction | Answer Model | Oracle | S-Mode | Infrastructure |
-|--------|-----------|-------------|--------|--------|---------------|
-| Mastra | Cloud LLM | gpt-5-mini | 95.0% | — | Cloud API |
-| **MnemeFusion** | **Phi-4-mini 3.8B (local)** | **gpt-5-mini** | **90.0%** | **37.2%** | **Single .mfdb file** |
-| Emergence AI | Cloud LLM | Cloud LLM | 82-86% | — | Cloud + vector DB |
-
-*Competitor numbers are self-reported. Direct comparison requires running on the same dataset with the same protocol. Most competitors only report oracle-equivalent results.*
+The oracle result (90%) confirms the extraction + RAG + judge pipeline works. The s-mode result (37.2%) reflects the retrieval ceiling when a 3.8B model must extract searchable metadata from 490 turns — better extraction models will directly improve s-mode without architecture changes.
 
 ## References
 

@@ -28,7 +28,7 @@ MnemeFusion is evaluated on two established conversational memory benchmarks usi
 | [LoCoMo](evals/locomo/) | Free-text + LLM-as-judge | Accuracy | 1,540 (cat 1-4) |
 | [LongMemEval](evals/longmemeval/) | Binary yes/no (official paper) | Task-avg accuracy | 500 |
 
-LoCoMo uses the Mem0-compatible evaluation protocol (GPT-4o-mini judge, binary CORRECT/WRONG). LongMemEval uses the official paper protocol (gpt-4o-2024-08-06 judge, category-specific prompts). See [evals/](evals/) for methodology details, datasets, and instructions to reproduce.
+LoCoMo uses a standard free-text + LLM-as-judge protocol (GPT-4o-mini judge, binary CORRECT/WRONG). LongMemEval uses the official paper protocol (gpt-4o-2024-08-06 judge, category-specific prompts). See [evals/](evals/) for methodology details, datasets, and instructions to reproduce.
 
 ## Quick Start
 
