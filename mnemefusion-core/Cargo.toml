@@ -47,7 +47,7 @@ embedding-onnx = ["fastembed"]
 
 [dev-dependencies]
 tempfile = "3.10"
-criterion = "0.5"
+criterion = "0.8"
 proptest = "1.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
