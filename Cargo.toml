@@ -16,8 +16,8 @@ repository = "https://github.com/gkanellopoulos/mnemefusion"
 # Storage
 redb = "2.1"
 
-# Vector search (HNSW)
-usearch = "2"
+# Vector search (HNSW) — disable simsimd (GCC 11 build failure on _mm512_reduce_add_ph)
+usearch = { version = "2", default-features = false, features = ["fp16lib"] }
 
 # Graph algorithms
 petgraph = "0.6"
@@ -41,3 +41,8 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+
+# Patched forks — see scripts/apply_patches.py for patch details
+[patch.crates-io]
+llama-cpp-sys-2 = { git = "https://github.com/gkanellopoulos/llama-cpp-rs", branch = "mnemefusion-patches" }
+llama-cpp-2 = { git = "https://github.com/gkanellopoulos/llama-cpp-rs", branch = "mnemefusion-patches" }
