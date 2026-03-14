@@ -24,6 +24,7 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             manylinux: "2_28"
+            auditwheel: repair
           - os: macos-latest
             target: x86_64-apple-darwin
           - os: macos-latest
@@ -48,13 +49,10 @@ jobs:
         with:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux || 'auto' }}
-          args: --release --out dist --manifest-path mnemefusion-python/Cargo.toml
+          args: --release --out dist --manifest-path mnemefusion-python/Cargo.toml ${{ matrix.auditwheel && format('--auditwheel {0}', matrix.auditwheel) || '' }}
           working-directory: .
           before-script-linux: |
-            yum install -y clang-devel cmake gcc-c++ libstdc++-static
-            mkdir -p .cargo
-            echo '[target.x86_64-unknown-linux-gnu]' > .cargo/config.toml
-            echo 'rustflags = ["-C", "link-arg=-static-libstdc++"]' >> .cargo/config.toml
+            yum install -y clang-devel cmake gcc-c++
         env:
           MACOSX_DEPLOYMENT_TARGET: "10.15"
 
