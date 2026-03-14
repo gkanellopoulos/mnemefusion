@@ -30,6 +30,8 @@ use std::sync::{Arc, RwLock};
 use crate::ingest::{SlmMetadata, SlmMetadataExtractor};
 
 #[cfg(feature = "entity-extraction")]
+use crate::error::Error;
+#[cfg(feature = "entity-extraction")]
 use crate::extraction::{ExtractionResult, LlmEntityExtractor, TriplexExtractor};
 
 #[cfg(any(feature = "entity-extraction", feature = "slm"))]

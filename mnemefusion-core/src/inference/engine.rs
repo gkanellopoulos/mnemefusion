@@ -97,10 +97,14 @@ impl InferenceEngine {
         // Subsequent calls reuse the existing backend, avoiding BackendAlreadyInitialized.
         let backend = LLAMA_BACKEND.get_or_init(|| {
             let b = LlamaBackend::init().expect("Failed to initialize llama backend");
-            // Load ggml backends as dynamic libraries on first init.
-            // When gpu_layers=0, skip CUDA to avoid allocating GPU compute buffers
-            // (which can fail on low-VRAM cards and waste memory even when not needed).
-            Self::load_ggml_backends(gpu_layers > 0);
+            // With dynamic-link, backends are separate .so/.dll files loaded at runtime.
+            // Without it (static build), ggml-cpu is compiled into libllama — no loading needed.
+            #[cfg(feature = "entity-extraction-dynamic")]
+            {
+                // When gpu_layers=0, skip CUDA to avoid allocating GPU compute buffers
+                // (which can fail on low-VRAM cards and waste memory even when not needed).
+                Self::load_ggml_backends(gpu_layers > 0);
+            }
             b
         });
 
@@ -411,6 +415,8 @@ impl InferenceEngine {
 
     /// Preload torch's bundled CUDA runtime to prevent soname conflicts.
     ///
+    /// Only used with dynamic backend loading — static builds don't load .so files.
+    ///
     /// When libggml-cuda.so is loaded, it pulls in the system libcudart.so.12.
     /// If PyTorch is installed and bundles a different version of libcudart.so.12
     /// (e.g., CUDA 12.8 vs system CUDA 12.4), the system version "wins" the soname
@@ -418,7 +424,7 @@ impl InferenceEngine {
     ///
     /// Fix: find torch's bundled cudart and preload it with RTLD_GLOBAL before
     /// loading ggml-cuda.so, so the newer version claims the soname first.
-    #[cfg(target_os = "linux")]
+    #[cfg(all(feature = "entity-extraction-dynamic", target_os = "linux"))]
     fn preload_torch_cudart() {
         // Common locations for torch's bundled CUDA runtime
         let py_lib_dirs: Vec<std::path::PathBuf> = std::env::var("PATH")
@@ -506,7 +512,9 @@ impl InferenceEngine {
         tracing::debug!("No torch cudart found to preload (torch may not be installed)");
     }
 
-    /// Load ggml backend DLLs (CPU + CUDA) from known locations
+    /// Load ggml backend DLLs (CPU + CUDA) from known locations.
+    /// Only available with dynamic backend loading — static builds compile ggml-cpu in.
+    #[cfg(feature = "entity-extraction-dynamic")]
     fn load_ggml_backends(load_cuda: bool) {
         use std::ffi::CString;
 
