@@ -46,25 +46,31 @@ fn check_llama_patches() {
 
     let Some(llama_dir) = llama_dir else { return };
 
-    // Check 1: GGML_BACKEND_DL must be ON
-    let cmake_path = llama_dir
-        .join("llama.cpp")
-        .join("ggml")
-        .join("CMakeLists.txt");
-    if cmake_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&cmake_path) {
-            if content.contains("GGML_BACKEND_DL") && content.contains("OFF)") {
-                println!("cargo:warning=╔══════════════════════════════════════════════════════════════╗");
-                println!(
-                    "cargo:warning=║  GGML_BACKEND_DL is OFF — backends won't load at runtime!  ║"
-                );
-                println!(
-                    "cargo:warning=║  Run: python3 scripts/apply_patches.py                     ║"
-                );
-                println!(
-                    "cargo:warning=║  Or:  bash scripts/setup_linux.sh                          ║"
-                );
-                println!("cargo:warning=╚══════════════════════════════════════════════════════════════╝");
+    // Check 1: GGML_BACKEND_DL must be ON (only relevant for dynamic backend builds).
+    // With [patch.crates-io] pointing to the fork, this check only applies to
+    // registry builds. Static builds (entity-extraction without dynamic-link)
+    // intentionally use GGML_BACKEND_DL=OFF.
+    #[cfg(feature = "entity-extraction-dynamic")]
+    {
+        let cmake_path = llama_dir
+            .join("llama.cpp")
+            .join("ggml")
+            .join("CMakeLists.txt");
+        if cmake_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&cmake_path) {
+                if content.contains("GGML_BACKEND_DL") && content.contains("OFF)") {
+                    println!("cargo:warning=╔══════════════════════════════════════════════════════════════╗");
+                    println!(
+                        "cargo:warning=║  GGML_BACKEND_DL is OFF — backends won't load at runtime!  ║"
+                    );
+                    println!(
+                        "cargo:warning=║  Run: python3 scripts/apply_patches.py                     ║"
+                    );
+                    println!(
+                        "cargo:warning=║  Or:  bash scripts/setup_linux.sh                          ║"
+                    );
+                    println!("cargo:warning=╚══════════════════════════════════════════════════════════════╝");
+                }
             }
         }
     }

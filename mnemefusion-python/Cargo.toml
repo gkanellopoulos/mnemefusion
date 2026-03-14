@@ -18,10 +18,12 @@ pyo3 = { version = "0.20", features = ["extension-module"] }
 [features]
 # Pass through the slm feature to mnemefusion-core
 slm = ["mnemefusion-core/slm"]
-# Pass through the entity-extraction feature for native LLM extraction
+# Pass through the entity-extraction feature for native LLM extraction (static linking)
 entity-extraction = ["mnemefusion-core/entity-extraction"]
-# Entity extraction with CUDA GPU acceleration
-entity-extraction-cuda = ["entity-extraction", "mnemefusion-core/entity-extraction-cuda"]
+# Entity extraction with dynamic backend loading (for local dev with DLLs)
+entity-extraction-dynamic = ["entity-extraction", "mnemefusion-core/entity-extraction-dynamic"]
+# Entity extraction with CUDA GPU acceleration (requires dynamic backends)
+entity-extraction-cuda = ["entity-extraction-dynamic", "mnemefusion-core/entity-extraction-cuda"]
 # ONNX embedding model (fastembed) — automatic text vectorization
 embedding-onnx = ["mnemefusion-core/embedding-onnx"]
 # Everything: CUDA entity extraction + ONNX embedding
