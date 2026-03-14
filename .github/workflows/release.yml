@@ -51,7 +51,7 @@ jobs:
           args: --release --out dist --manifest-path mnemefusion-python/Cargo.toml
           working-directory: .
           before-script-linux: |
-            yum install -y clang-devel cmake gcc-c++
+            yum install -y clang-devel cmake gcc-c++ libstdc++-static
             export RUSTFLAGS="-C link-arg=-static-libstdc++"
         env:
           MACOSX_DEPLOYMENT_TARGET: "10.15"
