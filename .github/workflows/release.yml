@@ -24,7 +24,7 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             manylinux: "2_28"
-            auditwheel: repair
+            auditwheel: skip
           - os: macos-latest
             target: x86_64-apple-darwin
           - os: macos-latest
