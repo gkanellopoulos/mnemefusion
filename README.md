@@ -5,7 +5,9 @@
 MnemeFusion provides multi-dimensional memory indexing (semantic, temporal, causal, entity) in a single embedded database file with zero external dependencies. One library, one `.mfdb` file replaces Qdrant + Neo4j + SQLite.
 
 [![CI](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/ci.yml/badge.svg)](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/ci.yml)
-[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
+[![crates.io](https://img.shields.io/crates/v/mnemefusion-core.svg)](https://crates.io/crates/mnemefusion-core)
+[![PyPI](https://img.shields.io/pypi/v/mnemefusion-cpu.svg)](https://pypi.org/project/mnemefusion-cpu/)
+[![docs.rs](https://docs.rs/mnemefusion-core/badge.svg)](https://docs.rs/mnemefusion-core)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
 
 *MnemeFusion was designed and directed by [George Kanellopoulos](https://github.com/gkanellopoulos), with implementation substantially assisted by [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (Anthropic). The project grew out of an exploration into building a complex, multi-dimensional AI memory engine through human-AI collaboration — the commit history reflects the authentic development process.*
@@ -40,11 +42,7 @@ For a complete runnable example, see [`examples/minimal.py`](examples/minimal.py
 ### Python
 
 ```bash
-# Build from source (requires Rust toolchain — pre-built wheels coming soon)
-git clone https://github.com/gkanellopoulos/mnemefusion.git
-cd mnemefusion/mnemefusion-python
-pip install maturin
-maturin develop --release
+pip install mnemefusion-cpu
 ```
 
 ```python
@@ -120,11 +118,9 @@ Requires a GPU with 4GB+ VRAM for reasonable speed. CPU-only works but is ~10x s
 
 ### Rust
 
-Add to your `Cargo.toml` (not yet on crates.io — use a git dependency for now):
-
 ```toml
 [dependencies]
-mnemefusion-core = { git = "https://github.com/gkanellopoulos/mnemefusion" }
+mnemefusion-core = "0.1"
 ```
 
 ```rust
@@ -282,7 +278,7 @@ except IOError as e:
 ### Prerequisites
 
 - Rust 1.75+
-- Python 3.8+ (for Python bindings)
+- Python 3.9+ (for Python bindings)
 
 ### Build
 
@@ -343,16 +339,16 @@ MnemeFusion is pre-1.0. The following APIs are considered **stable** and will no
 
 | API | Stable Since |
 |-----|-------------|
-| `Memory(path, config, user)` | 0.1.0-alpha |
-| `add(content, embedding, metadata, timestamp)` | 0.1.0-alpha |
-| `query(query_text, query_embedding, limit, namespace, filters)` | 0.1.0-alpha |
-| `search(query_embedding, top_k, namespace, filters)` | 0.1.0-alpha |
-| `get(memory_id)` / `delete(memory_id)` | 0.1.0-alpha |
-| `close()` | 0.1.0-alpha |
-| `add_batch(memories, namespace)` | 0.1.0-alpha |
-| `set_embedding_fn(fn)` | 0.1.0-alpha |
+| `Memory(path, config, user)` | 0.1.0 |
+| `add(content, embedding, metadata, timestamp)` | 0.1.0 |
+| `query(query_text, query_embedding, limit, namespace, filters)` | 0.1.0 |
+| `search(query_embedding, top_k, namespace, filters)` | 0.1.0 |
+| `get(memory_id)` / `delete(memory_id)` | 0.1.0 |
+| `close()` | 0.1.0 |
+| `add_batch(memories, namespace)` | 0.1.0 |
+| `set_embedding_fn(fn)` | 0.1.0 |
 
-Everything else (entity extraction API, profile management, config keys) may change between minor versions. The `.mfdb` file format is not yet versioned — format-breaking changes will be documented in the [CHANGELOG](CHANGELOG.md).
+Everything else (entity extraction API, profile management, config keys) may change between minor versions. The `.mfdb` file format includes embedded version metadata — format-breaking changes will be documented in the [CHANGELOG](CHANGELOG.md).
 
 ## Performance Characteristics
 
