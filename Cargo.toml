@@ -42,7 +42,3 @@ lto = true
 codegen-units = 1
 strip = true
 
-# Patched forks — see scripts/apply_patches.py for patch details
-[patch.crates-io]
-llama-cpp-sys-2 = { git = "https://github.com/gkanellopoulos/llama-cpp-rs", branch = "mnemefusion-patches" }
-llama-cpp-2 = { git = "https://github.com/gkanellopoulos/llama-cpp-rs", branch = "mnemefusion-patches" }
