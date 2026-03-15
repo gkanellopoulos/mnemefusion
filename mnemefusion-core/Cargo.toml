@@ -6,8 +6,13 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Unified memory engine for AI applications - Core library"
+readme = "../README.md"
 keywords = ["ai", "memory", "vector", "database", "embedded"]
 categories = ["database-implementations", "data-structures"]
+
+[package.metadata.docs.rs]
+features = []
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 redb = { workspace = true }
