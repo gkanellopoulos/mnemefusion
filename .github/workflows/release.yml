@@ -102,11 +102,11 @@ jobs:
             export PATH=$CUDA_PATH/bin:$PATH
         env:
           CMAKE_CUDA_ARCHITECTURES: "75-real;80-real;86-real;89-real;90-real"
-          RUSTFLAGS: "-C link-arg=-Wl,-rpath,$ORIGIN/mnemefusion.libs"
+          RUSTFLAGS: "-C link-arg=-Wl,-rpath,$ORIGIN/../mnemefusion.libs"
 
       - name: Bundle CUDA backends into wheel
         run: |
-          pip install wheel
+          pip install wheel patchelf
           # Find the ggml backend .so files built by cmake (use absolute path)
           BACKEND_DIR=$(find "$(pwd)/target" -path "*/mnemefusion-llama-cpp-sys-2-*/out/build/bin" -type d 2>/dev/null | head -1)
           if [ -z "$BACKEND_DIR" ]; then
@@ -143,6 +143,11 @@ jobs:
             ln -sf "$f" "${base}.so" 2>/dev/null || true
           done
           cd -
+
+          # Set RPATH on backend libs so they find each other
+          for f in "$WHEEL_DIR"/mnemefusion.libs/*.so*; do
+            [ -f "$f" ] && [ ! -L "$f" ] && patchelf --set-rpath '$ORIGIN' "$f" 2>/dev/null || true
+          done
 
           echo "Bundled backends:"
           ls -la "$WHEEL_DIR/mnemefusion.libs/"
