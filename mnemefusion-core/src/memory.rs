@@ -513,21 +513,28 @@ impl MemoryEngine {
         self
     }
 
-    /// Auto-compute an embedding using the configured engine.
+    /// Auto-compute an embedding using the configured engine or embedding_fn.
     ///
-    /// Returns `Err(Error::NoEmbeddingEngine)` if no engine is configured.
+    /// Returns `Err(Error::NoEmbeddingEngine)` if neither is configured.
     #[cfg(feature = "embedding-onnx")]
     fn auto_embed(&self, text: &str) -> Result<Vec<f32>> {
-        self.embedding_engine
-            .as_ref()
-            .ok_or(Error::NoEmbeddingEngine)?
-            .embed(text)
+        if let Some(engine) = self.embedding_engine.as_ref() {
+            return engine.embed(text);
+        }
+        if let Some(f) = self.pipeline.embedding_fn() {
+            return Ok(f(text));
+        }
+        Err(Error::NoEmbeddingEngine)
     }
 
-    /// Auto-compute an embedding (always errors when feature is disabled).
+    /// Auto-compute an embedding (no ONNX engine — fall back to embedding_fn).
     #[cfg(not(feature = "embedding-onnx"))]
-    fn auto_embed(&self, _text: &str) -> Result<Vec<f32>> {
-        Err(Error::NoEmbeddingEngine)
+    fn auto_embed(&self, text: &str) -> Result<Vec<f32>> {
+        if let Some(f) = self.pipeline.embedding_fn() {
+            Ok(f(text))
+        } else {
+            Err(Error::NoEmbeddingEngine)
+        }
     }
 
     /// Set the embedding function for computing fact embeddings at ingestion time.
