@@ -106,10 +106,10 @@ jobs:
       - name: Bundle CUDA backends into wheel
         run: |
           pip install wheel
-          # Find the ggml backend .so files built by cmake
-          BACKEND_DIR=$(find target -path "*/llama-cpp-sys-2-*/out/build/bin" -type d 2>/dev/null | head -1)
+          # Find the ggml backend .so files built by cmake (use absolute path)
+          BACKEND_DIR=$(find "$(pwd)/target" -path "*/mnemefusion-llama-cpp-sys-2-*/out/build/bin" -type d 2>/dev/null | head -1)
           if [ -z "$BACKEND_DIR" ]; then
-            BACKEND_DIR=$(find target -path "*/mnemefusion-llama-cpp-sys-2-*/out/build/bin" -type d 2>/dev/null | head -1)
+            BACKEND_DIR=$(find "$(pwd)/target" -path "*/llama-cpp-sys-2-*/out/build/bin" -type d 2>/dev/null | head -1)
           fi
           if [ -z "$BACKEND_DIR" ]; then
             echo "ERROR: Could not find backend build directory"
@@ -117,7 +117,7 @@ jobs:
             exit 1
           fi
           echo "Found backends in: $BACKEND_DIR"
-          ls -la "$BACKEND_DIR"/lib* 2>/dev/null || ls -la "$BACKEND_DIR"/ 2>/dev/null
+          ls -la "$BACKEND_DIR"/lib*.so* 2>/dev/null
 
           # Unpack wheel, add backends, repack
           cd dist
@@ -126,8 +126,12 @@ jobs:
           python -m wheel unpack "$WHEEL"
           WHEEL_DIR=$(ls -d */ | head -1)
           mkdir -p "$WHEEL_DIR/mnemefusion.libs"
-          cp "$BACKEND_DIR"/libggml*.so* "$WHEEL_DIR/mnemefusion.libs/" 2>/dev/null || true
-          cp "$BACKEND_DIR"/libllama.so* "$WHEEL_DIR/mnemefusion.libs/" 2>/dev/null || true
+          # Copy actual files (dereference symlinks with -L)
+          cp -L "$BACKEND_DIR"/libggml-base.so.* "$WHEEL_DIR/mnemefusion.libs/" 2>/dev/null || true
+          cp -L "$BACKEND_DIR"/libggml-cpu.so "$WHEEL_DIR/mnemefusion.libs/" 2>/dev/null || true
+          cp -L "$BACKEND_DIR"/libggml-cuda.so "$WHEEL_DIR/mnemefusion.libs/" 2>/dev/null || true
+          cp -L "$BACKEND_DIR"/libggml.so.* "$WHEEL_DIR/mnemefusion.libs/" 2>/dev/null || true
+          cp -L "$BACKEND_DIR"/libllama.so.* "$WHEEL_DIR/mnemefusion.libs/" 2>/dev/null || true
           echo "Bundled backends:"
           ls -la "$WHEEL_DIR/mnemefusion.libs/"
           rm "$WHEEL"
