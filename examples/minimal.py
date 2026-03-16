@@ -6,8 +6,7 @@ Demonstrates multi-dimensional retrieval with RRF fusion using only
 sentence-transformers for embeddings. Runs in ~20 seconds.
 
 Prerequisites:
-    pip install sentence-transformers
-    cd mnemefusion-python && maturin develop --release
+    pip install mnemefusion-cpu sentence-transformers
 """
 
 import mnemefusion
@@ -16,8 +15,8 @@ from sentence_transformers import SentenceTransformer
 # Load embedding model (~130MB on first run)
 model = SentenceTransformer("BAAI/bge-base-en-v1.5")
 
-# Open or create a database
-mem = mnemefusion.Memory("./demo.mfdb")
+# Open or create a database (768 = BGE-base embedding dimension)
+mem = mnemefusion.Memory("./demo.mfdb", {"embedding_dim": 768})
 mem.set_embedding_fn(lambda text: model.encode(text).tolist())
 
 # Add some memories

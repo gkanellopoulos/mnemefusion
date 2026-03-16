@@ -42,7 +42,7 @@ For a complete runnable example, see [`examples/minimal.py`](examples/minimal.py
 ### Python
 
 ```bash
-pip install mnemefusion-cpu
+pip install mnemefusion-cpu sentence-transformers
 ```
 
 ```python
@@ -51,8 +51,8 @@ from sentence_transformers import SentenceTransformer
 
 model = SentenceTransformer("BAAI/bge-base-en-v1.5")
 
-# Open or create a database
-mem = mnemefusion.Memory("./brain.mfdb")
+# Open or create a database (768 = BGE-base embedding dimension)
+mem = mnemefusion.Memory("./brain.mfdb", {"embedding_dim": 768})
 
 # Set embedding function for automatic vectorization
 mem.set_embedding_fn(lambda text: model.encode(text).tolist())
@@ -131,25 +131,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Add a memory with embedding vector
     let embedding = vec![0.1; 384]; // From your embedding model
-    let id = engine.add(
+    engine.add(
         "Project deadline moved to March 15th".to_string(),
         embedding,
         None, // metadata
         None, // timestamp
+        None, // source
+        None, // namespace
     )?;
 
     // Query with multi-dimensional fusion
     let query_embedding = vec![0.1; 384];
-    let (intent, results, profile_facts) = engine.query(
+    let (_intent, results, _profiles) = engine.query(
         "When is the project deadline?",
-        &query_embedding,
+        query_embedding,
         10,    // limit
         None,  // namespace
         None,  // filters
     )?;
 
-    for result in &results {
-        println!("[{:.3}] {}", result.fused_score, result.memory.content);
+    for (memory, scores) in &results {
+        println!("[{:.3}] {}", scores.fused_score, memory.content);
     }
 
     engine.close()?;
