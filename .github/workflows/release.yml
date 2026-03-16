@@ -105,7 +105,7 @@ jobs:
 
       - name: Bundle CUDA backends into wheel
         run: |
-          pip install wheel
+          pip install wheel patchelf
           # Find the ggml backend .so files built by cmake (use absolute path)
           BACKEND_DIR=$(find "$(pwd)/target" -path "*/mnemefusion-llama-cpp-sys-2-*/out/build/bin" -type d 2>/dev/null | head -1)
           if [ -z "$BACKEND_DIR" ]; then
@@ -126,12 +126,31 @@ jobs:
           python -m wheel unpack "$WHEEL"
           WHEEL_DIR=$(ls -d */ | head -1)
           mkdir -p "$WHEEL_DIR/mnemefusion.libs"
-          # Copy actual files (dereference symlinks with -L)
+
+          # Copy backend .so files (dereference symlinks)
           cp -L "$BACKEND_DIR"/libggml-base.so.* "$WHEEL_DIR/mnemefusion.libs/" 2>/dev/null || true
           cp -L "$BACKEND_DIR"/libggml-cpu.so "$WHEEL_DIR/mnemefusion.libs/" 2>/dev/null || true
           cp -L "$BACKEND_DIR"/libggml-cuda.so "$WHEEL_DIR/mnemefusion.libs/" 2>/dev/null || true
           cp -L "$BACKEND_DIR"/libggml.so.* "$WHEEL_DIR/mnemefusion.libs/" 2>/dev/null || true
           cp -L "$BACKEND_DIR"/libllama.so.* "$WHEEL_DIR/mnemefusion.libs/" 2>/dev/null || true
+
+          # Create soname symlinks (dynamic linker needs libggml.so.0, libllama.so.0, etc.)
+          cd "$WHEEL_DIR/mnemefusion.libs"
+          for f in *.so.*.*.*; do
+            base="${f%%.*}"
+            ln -sf "$f" "${base}.so.0" 2>/dev/null || true
+            ln -sf "$f" "${base}.so" 2>/dev/null || true
+          done
+          cd -
+
+          # Patch RPATH on the main .so so it finds mnemefusion.libs/ at runtime
+          MAIN_SO=$(find "$WHEEL_DIR" -name "mnemefusion*.so" -not -path "*/mnemefusion.libs/*" | head -1)
+          if [ -n "$MAIN_SO" ]; then
+            echo "Patching RPATH on: $MAIN_SO"
+            patchelf --set-rpath '$ORIGIN/mnemefusion.libs' "$MAIN_SO"
+            echo "RPATH set to: $(patchelf --print-rpath "$MAIN_SO")"
+          fi
+
           echo "Bundled backends:"
           ls -la "$WHEEL_DIR/mnemefusion.libs/"
           rm "$WHEEL"
