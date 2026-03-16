@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "mnemefusion-cpu"
-version = "0.1.1"
+version = "0.1.2"
 description = "Unified memory engine for AI applications - SQLite for AI memory (CPU build)"
 readme = "README.md"
 requires-python = ">=3.9"
