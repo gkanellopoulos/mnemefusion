@@ -5,6 +5,43 @@ All notable changes to MnemeFusion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-03-17
+
+### Fixed
+- GPU backend discovery: `__init__.py` auto-sets `MNEMEFUSION_DLL_DIR` so `ggml-cuda.so` and
+  `ggml-cpu.so` are found in the pip wheel layout without manual env vars
+
+## [0.1.2] - 2026-03-16
+
+### Added
+- GPU wheel build in release workflow (Linux x86_64, CUDA 12.8, sm_75 through sm_90)
+- GPU wheel published to PyPI as `mnemefusion` (production package)
+
+### Fixed
+- `set_embedding_fn()` now works with `add()` and `query()` — previously the callback was
+  stored but never consulted when auto-computing embeddings (#31)
+- README and `examples/minimal.py` updated with correct `embedding_dim` and prerequisites
+- GPU wheel RPATH and soname symlinks for bundled backend shared libraries
+
+## [0.1.1] - 2026-03-15
+
+### Added
+- README displayed on crates.io package page
+- crates.io, PyPI, and docs.rs badges in README
+- docs.rs metadata for auto-generated API documentation
+
+### Changed
+- Python install: `pip install mnemefusion-cpu` (was build-from-source)
+- Rust install: `mnemefusion-core = "0.1"` (was git dependency)
+- Replaced `[patch.crates-io]` git overrides with published fork crates
+  (`mnemefusion-llama-cpp-2` and `mnemefusion-llama-cpp-sys-2` on crates.io)
+
+## [0.1.0] - 2026-03-14
+
+### Added
+- Initial release to PyPI (`mnemefusion-cpu`) and crates.io (`mnemefusion-core`)
+- Pre-built CPU wheels for Linux x86_64, macOS x86_64, macOS arm64, Windows x86_64
+
 ## [0.1.0-alpha] - 2026-03-13
 
 Initial public release.
@@ -48,4 +85,8 @@ Initial public release.
 - Automatic GPU layer offloading with configurable layer count
 - GPU context auto-reset for long-running ingestion jobs
 
+[0.1.3]: https://github.com/gkanellopoulos/mnemefusion/releases/tag/v0.1.3
+[0.1.2]: https://github.com/gkanellopoulos/mnemefusion/releases/tag/v0.1.2
+[0.1.1]: https://github.com/gkanellopoulos/mnemefusion/releases/tag/v0.1.1
+[0.1.0]: https://github.com/gkanellopoulos/mnemefusion/releases/tag/v0.1.0a1
 [0.1.0-alpha]: https://github.com/gkanellopoulos/mnemefusion/releases/tag/v0.1.0-alpha
