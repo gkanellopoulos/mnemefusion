@@ -6,7 +6,8 @@ MnemeFusion provides multi-dimensional memory indexing (semantic, temporal, caus
 
 [![CI](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/ci.yml/badge.svg)](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/mnemefusion-core.svg)](https://crates.io/crates/mnemefusion-core)
-[![PyPI](https://img.shields.io/pypi/v/mnemefusion-cpu.svg)](https://pypi.org/project/mnemefusion-cpu/)
+[![PyPI CPU](https://img.shields.io/pypi/v/mnemefusion-cpu.svg?label=pypi%20cpu)](https://pypi.org/project/mnemefusion-cpu/)
+[![PyPI GPU](https://img.shields.io/pypi/v/mnemefusion.svg?label=pypi%20gpu)](https://pypi.org/project/mnemefusion/)
 [![docs.rs](https://docs.rs/mnemefusion-core/badge.svg)](https://docs.rs/mnemefusion-core)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
 
@@ -42,7 +43,11 @@ For a complete runnable example, see [`examples/minimal.py`](examples/minimal.py
 ### Python
 
 ```bash
+# CPU-only (development / experimentation)
 pip install mnemefusion-cpu sentence-transformers
+
+# GPU with CUDA (production — Linux x86_64, requires NVIDIA driver 525+)
+pip install mnemefusion sentence-transformers
 ```
 
 ```python
@@ -77,7 +82,8 @@ for fact_str in profiles:
 
 ```python
 # Namespace isolation + first-person pronoun resolution
-mem = mnemefusion.Memory("./brain.mfdb", user="alice")
+mem = mnemefusion.Memory("./brain.mfdb", {"embedding_dim": 768}, user="alice")
+mem.set_embedding_fn(lambda text: model.encode(text).tolist())
 
 # Memories are namespaced to "alice"
 mem.add("I love hiking in the mountains")
@@ -94,16 +100,21 @@ intent, results, profiles = mem.query("What are my hobbies?")
 Entity extraction uses a local GGUF model (no cloud API needed). Download a supported model:
 
 ```bash
-# Recommended: Phi-4-mini (3.8B, ~2.3GB, best accuracy)
 pip install huggingface-hub
+
+# Recommended: Phi-4-mini (3.8B, ~2.3GB, best accuracy)*
+# Requires Hugging Face authentication: huggingface-cli login
 huggingface-cli download microsoft/Phi-4-mini-instruct-gguf Phi-4-mini-instruct-Q4_K_M.gguf --local-dir models/
 
-# Alternative: Qwen3-4B (~2.5GB, good accuracy)
-huggingface-cli download Qwen/Qwen3-4B-GGUF qwen3-4b-q4_k_m.gguf --local-dir models/
+# Alternative (no auth required): Qwen2.5-3B (~2GB)
+huggingface-cli download Qwen/Qwen2.5-3B-Instruct-GGUF qwen2.5-3b-instruct-q4_k_m.gguf --local-dir models/
 ```
 
+*\*MnemeFusion's extraction prompts have been tested and tuned with Phi-4-mini. Other models may work but with reduced extraction quality.*
+
 ```python
-mem = mnemefusion.Memory("./brain.mfdb")
+mem = mnemefusion.Memory("./brain.mfdb", {"embedding_dim": 768})
+mem.set_embedding_fn(lambda text: model.encode(text).tolist())
 mem.enable_llm_entity_extraction("models/Phi-4-mini-instruct-Q4_K_M.gguf", tier="balanced")
 
 # Entity extraction runs automatically on add()
@@ -114,7 +125,7 @@ profile = mem.get_entity_profile("caroline")
 # {'name': 'caroline', 'entity_type': 'person', 'facts': {...}, 'summary': '...'}
 ```
 
-Requires a GPU with 4GB+ VRAM for reasonable speed. CPU-only works but is ~10x slower. Build with `--features entity-extraction-cuda` for GPU acceleration.
+Requires a GPU with 4GB+ VRAM for reasonable speed. CPU-only works but is ~10x slower. For GPU acceleration, install the GPU package: `pip install mnemefusion`.
 
 ### Rust
 
