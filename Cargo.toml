@@ -20,7 +20,7 @@ redb = "2.1"
 usearch = { version = "=2.23.0", default-features = false, features = ["fp16lib"] }
 
 # Graph algorithms
-petgraph = "0.6"
+petgraph = "0.8"
 
 # Serialization
 rkyv = "0.8"
