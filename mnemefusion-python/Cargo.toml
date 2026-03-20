@@ -13,7 +13,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 mnemefusion-core = { path = "../mnemefusion-core" }
-pyo3 = { version = "0.20", features = ["extension-module"] }
+pyo3 = { version = "0.28", features = ["extension-module"] }
 
 [features]
 # Pass through the slm feature to mnemefusion-core
