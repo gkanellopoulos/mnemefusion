@@ -271,7 +271,11 @@ impl QueryPlanner {
         trace_begin!(trace, "entity_detection");
         trace_record!(trace, "query_entities", query_entities.clone());
         trace_record!(trace, "speaker_entity", speaker_entity.clone());
-        trace_record!(trace, "user_entity_resolved", user_entity.map(|s| s.to_string()));
+        trace_record!(
+            trace,
+            "user_entity_resolved",
+            user_entity.map(|s| s.to_string())
+        );
 
         // Step 2: Retrieve from all dimensions (fetch more to account for filtering)
         let needs_filtering =
@@ -361,7 +365,11 @@ impl QueryPlanner {
             }
         }
         trace_record!(trace, "entities_injected", query_entities.len());
-        trace_record!(trace, "entity_scores_added", entity_scores.len() - entity_count_before);
+        trace_record!(
+            trace,
+            "entity_scores_added",
+            entity_scores.len() - entity_count_before
+        );
         trace_record!(trace, "inject_cap", entity_inject_cap);
 
         // Step 2.1c: Query-entity graph expansion (HippoRAG-style)
@@ -436,7 +444,12 @@ impl QueryPlanner {
             let fact_details: Vec<String> = matched_facts
                 .iter()
                 .take(10)
-                .map(|f| format!("{}:{}={} (score={:.2})", f.entity_name, f.fact_type, f.value, f.score))
+                .map(|f| {
+                    format!(
+                        "{}:{}={} (score={:.2})",
+                        f.entity_name, f.fact_type, f.value, f.score
+                    )
+                })
                 .collect();
             t.record("fact_details", fact_details);
         }
@@ -607,8 +620,16 @@ impl QueryPlanner {
         );
         trace_record!(trace, "candidate_count", fused_results.len());
         if let Some(ref mut t) = trace {
-            let top_scores: Vec<f32> = fused_results.iter().take(10).map(|r| r.fused_score).collect();
-            let top_ids: Vec<String> = fused_results.iter().take(10).map(|r| r.id.to_string()).collect();
+            let top_scores: Vec<f32> = fused_results
+                .iter()
+                .take(10)
+                .map(|r| r.fused_score)
+                .collect();
+            let top_ids: Vec<String> = fused_results
+                .iter()
+                .take(10)
+                .map(|r| r.id.to_string())
+                .collect();
             t.record("top_10_fused_scores", top_scores);
             t.record("top_10_ids", top_ids);
         }
@@ -673,11 +694,18 @@ impl QueryPlanner {
         trace_begin!(trace, "confidence_scoring");
         if let Some(ref mut t) = trace {
             let scores: Vec<f32> = fused_results.iter().map(|r| r.fused_score).collect();
-            let mean = if scores.is_empty() { 0.0 } else { scores.iter().sum::<f32>() / scores.len() as f32 };
+            let mean = if scores.is_empty() {
+                0.0
+            } else {
+                scores.iter().sum::<f32>() / scores.len() as f32
+            };
             let std_dev = if scores.len() > 1 {
-                let variance = scores.iter().map(|s| (s - mean).powi(2)).sum::<f32>() / (scores.len() - 1) as f32;
+                let variance = scores.iter().map(|s| (s - mean).powi(2)).sum::<f32>()
+                    / (scores.len() - 1) as f32;
                 variance.sqrt()
-            } else { 0.0 };
+            } else {
+                0.0
+            };
             t.record("mean_score", mean);
             t.record("std_score", std_dev);
             t.record("result_count", fused_results.len());
@@ -797,7 +825,6 @@ impl QueryPlanner {
                                     entity_score: 0.5,
                                     fused_score: sem_score * 0.7,
                                     confidence: 0.7,
-
                                 });
                             }
                         }
@@ -881,7 +908,6 @@ impl QueryPlanner {
                                         entity_score: parent.entity_score * 0.8,
                                         fused_score: parent_score * 0.8,
                                         confidence: 0.6,
-    
                                     });
                                 }
                             }
@@ -1012,9 +1038,21 @@ impl QueryPlanner {
         trace_begin!(trace, "result_summary");
         trace_record!(trace, "total_results", final_results.len());
         if let Some(ref mut t) = trace {
-            let top_ids: Vec<String> = final_results.iter().take(5).map(|r| r.id.to_string()).collect();
-            let top_scores: Vec<f32> = final_results.iter().take(5).map(|r| r.fused_score).collect();
-            let top_sem: Vec<f32> = final_results.iter().take(5).map(|r| r.semantic_score).collect();
+            let top_ids: Vec<String> = final_results
+                .iter()
+                .take(5)
+                .map(|r| r.id.to_string())
+                .collect();
+            let top_scores: Vec<f32> = final_results
+                .iter()
+                .take(5)
+                .map(|r| r.fused_score)
+                .collect();
+            let top_sem: Vec<f32> = final_results
+                .iter()
+                .take(5)
+                .map(|r| r.semantic_score)
+                .collect();
             t.record("top_5_ids", top_ids);
             t.record("top_5_fused_scores", top_scores);
             t.record("top_5_semantic_scores", top_sem);

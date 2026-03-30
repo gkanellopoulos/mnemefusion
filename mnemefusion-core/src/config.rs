@@ -266,7 +266,7 @@ impl Default for Config {
             embedding_model: None,
             llm_model: None,
             async_extraction_threshold: 0, // Always sync by default (backward compatible)
-            enable_trace: false,         // Pipeline tracing off by default
+            enable_trace: false,           // Pipeline tracing off by default
         }
     }
 }

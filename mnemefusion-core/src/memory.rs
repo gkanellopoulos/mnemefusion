@@ -349,7 +349,9 @@ impl MemoryEngine {
         tracing::info!("Initializing LLM entity extractor ({:?})...", tier);
 
         let extractor = LlmEntityExtractor::load(tier)?;
-        self.pipeline = self.pipeline.with_llm_extractor(Arc::new(Mutex::new(extractor)));
+        self.pipeline = self
+            .pipeline
+            .with_llm_extractor(Arc::new(Mutex::new(extractor)));
 
         tracing::info!("LLM entity extractor attached to pipeline");
         Ok(self)
@@ -381,7 +383,9 @@ impl MemoryEngine {
         tracing::info!("Initializing LLM entity extractor from custom path...");
 
         let extractor = LlmEntityExtractor::load_from_path(model_path, tier)?;
-        self.pipeline = self.pipeline.with_llm_extractor(Arc::new(Mutex::new(extractor)));
+        self.pipeline = self
+            .pipeline
+            .with_llm_extractor(Arc::new(Mutex::new(extractor)));
 
         tracing::info!("LLM entity extractor attached to pipeline");
         Ok(self)

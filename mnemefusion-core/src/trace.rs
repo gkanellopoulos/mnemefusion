@@ -328,7 +328,9 @@ mod tests {
         let data = &trace.steps[0].data;
 
         assert!(matches!(data.get("str_val"), Some(TraceValue::String(s)) if s == "hello"));
-        assert!(matches!(data.get("f32_val"), Some(TraceValue::Float(f)) if (*f - 3.14).abs() < 0.01));
+        assert!(
+            matches!(data.get("f32_val"), Some(TraceValue::Float(f)) if (*f - 3.14).abs() < 0.01)
+        );
         assert!(matches!(data.get("i32_val"), Some(TraceValue::Int(-5))));
         assert!(matches!(data.get("bool_val"), Some(TraceValue::Bool(true))));
         assert!(matches!(data.get("none_val"), Some(TraceValue::Null)));
@@ -359,7 +361,9 @@ mod tests {
         let trace = rec.finish();
         if let Some(TraceValue::Map(m)) = trace.steps[0].data.get("scores") {
             assert_eq!(m.len(), 2);
-            assert!(matches!(m.get("semantic"), Some(TraceValue::Float(f)) if (*f - 0.8).abs() < 0.01));
+            assert!(
+                matches!(m.get("semantic"), Some(TraceValue::Float(f)) if (*f - 0.8).abs() < 0.01)
+            );
         } else {
             panic!("scores should be a Map");
         }

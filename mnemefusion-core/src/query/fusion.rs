@@ -384,7 +384,8 @@ impl FusionEngine {
 
         // Entity pathway (dampened — prevents entity flooding)
         for (rank, id) in entity_ranked.iter().enumerate() {
-            *rrf_scores.entry(id.clone()).or_default() += ENTITY_RRF_SCALE / (self.rrf_k + rank as f32 + 1.0);
+            *rrf_scores.entry(id.clone()).or_default() +=
+                ENTITY_RRF_SCALE / (self.rrf_k + rank as f32 + 1.0);
         }
 
         // FILTER: Apply semantic threshold to prevent keyword flooding.
