@@ -11,11 +11,13 @@ use crate::{
     ingest::IngestionPipeline,
     query::{profile_search::fact_embedding_key, FusedResult, IntentClassification, QueryPlanner},
     storage::StorageEngine,
+    trace::{Trace, TraceRecorder},
     types::{
         AddResult, BatchResult, Entity, EntityProfile, Memory, MemoryId, MemoryInput,
         MetadataFilter, Source, Timestamp, UpsertResult,
     },
 };
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
@@ -128,6 +130,10 @@ pub struct MemoryEngine {
     /// be used without enabling namespace filtering.
     /// Set via `set_user_entity(name)`.
     user_entity: Option<String>,
+    /// Last query trace (diagnostic side-channel, RefCell because query() takes &self).
+    last_query_trace: RefCell<Option<Trace>>,
+    /// Whether pipeline tracing is enabled.
+    enable_trace: bool,
 }
 
 impl MemoryEngine {
@@ -292,6 +298,7 @@ impl MemoryEngine {
             None
         };
 
+        let enable_trace = config.enable_trace;
         Ok(Self {
             storage,
             vector_index,
@@ -305,6 +312,8 @@ impl MemoryEngine {
             embedding_engine,
             default_namespace: None,
             user_entity: None,
+            last_query_trace: RefCell::new(None),
+            enable_trace,
         })
     }
 
@@ -340,9 +349,7 @@ impl MemoryEngine {
         tracing::info!("Initializing LLM entity extractor ({:?})...", tier);
 
         let extractor = LlmEntityExtractor::load(tier)?;
-        self.pipeline = self
-            .pipeline
-            .with_llm_extractor(Arc::new(Mutex::new(extractor)));
+        self.pipeline = self.pipeline.with_llm_extractor(Arc::new(Mutex::new(extractor)));
 
         tracing::info!("LLM entity extractor attached to pipeline");
         Ok(self)
@@ -374,9 +381,7 @@ impl MemoryEngine {
         tracing::info!("Initializing LLM entity extractor from custom path...");
 
         let extractor = LlmEntityExtractor::load_from_path(model_path, tier)?;
-        self.pipeline = self
-            .pipeline
-            .with_llm_extractor(Arc::new(Mutex::new(extractor)));
+        self.pipeline = self.pipeline.with_llm_extractor(Arc::new(Mutex::new(extractor)));
 
         tracing::info!("LLM entity extractor attached to pipeline");
         Ok(self)
@@ -1852,6 +1857,13 @@ impl MemoryEngine {
         // Apply default namespace if caller didn't supply one
         let effective_ns = namespace.or(self.default_namespace.as_deref());
 
+        // Create trace recorder if tracing is enabled
+        let mut trace_recorder = if self.enable_trace {
+            Some(TraceRecorder::new("query"))
+        } else {
+            None
+        };
+
         // Execute query using query planner.
         // Pass user_entity for first-person pronoun resolution:
         // when user says "I like hiking", the system maps "I" to their entity profile,
@@ -1863,6 +1875,7 @@ impl MemoryEngine {
             effective_ns,
             filters,
             self.user_entity.as_deref(),
+            trace_recorder.as_mut(),
         )?;
 
         // Build profile context as SEPARATE strings (not mixed into results).
@@ -1918,7 +1931,17 @@ impl MemoryEngine {
             }
         }
 
+        // Store trace if recording
+        if let Some(rec) = trace_recorder {
+            *self.last_query_trace.borrow_mut() = Some(rec.finish());
+        }
+
         Ok((intent, results, profile_context))
+    }
+
+    /// Returns the trace from the most recent `query()` call, if tracing is enabled.
+    pub fn last_query_trace(&self) -> Option<Trace> {
+        self.last_query_trace.borrow().clone()
     }
 
     /// Query memories within a time range

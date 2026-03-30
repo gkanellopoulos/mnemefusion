@@ -308,6 +308,7 @@ impl Memory {
     pub fn clear_namespace(&mut self) {
         self.metadata.remove(NAMESPACE_METADATA_KEY);
     }
+
 }
 
 #[cfg(test)]

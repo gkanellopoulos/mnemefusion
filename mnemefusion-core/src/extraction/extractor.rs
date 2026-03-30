@@ -4,7 +4,8 @@ use crate::error::{Error, Result};
 use crate::extraction::output::ExtractionResult;
 use crate::extraction::prompt::{
     apply_chat_template, build_event_temporal_extraction_prompt, build_fewshot_extraction_prompt,
-    build_relationship_extraction_prompt, build_typed_extraction_prompt, ModelFamily,
+    build_relationship_extraction_prompt, build_typed_extraction_prompt,
+    ModelFamily,
 };
 use crate::inference::{GenerationParams, InferenceEngine};
 use std::path::{Path, PathBuf};

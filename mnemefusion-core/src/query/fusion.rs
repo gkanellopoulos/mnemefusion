@@ -325,13 +325,19 @@ impl FusionEngine {
         results
     }
 
-    /// Fuse using Reciprocal Rank Fusion (RRF)
+    /// Fuse using Entity-Dampened Reciprocal Rank Fusion (RRF)
     ///
-    /// RRF formula: score(doc) = Σ 1/(k + rank_i) across all pathways
-    /// where k=60 (constant), rank_i is the rank in pathway i (0-indexed)
+    /// RRF formula: score(doc) = Σ w_i / (k + rank_i) across all pathways
+    /// where k=60 (constant), rank_i is the rank in pathway i (0-indexed).
     ///
-    /// RRF is robust to score scale differences across dimensions and
-    /// doesn't require tuning weights per query type.
+    /// All pathways contribute at full weight (w=1.0) except entity, which is
+    /// scaled by `ENTITY_RRF_SCALE` (0.3). This prevents entity flooding when
+    /// one entity has many source memories (all ranked equally in the entity
+    /// pathway), which otherwise drowns the semantic signal for factual queries.
+    ///
+    /// The 0.3 scale was chosen to reduce entity contribution by ~70% while
+    /// preserving enough signal for entity-focused and temporal queries that
+    /// rely on entity matching to find the right memories.
     fn fuse_rrf(
         &self,
         semantic_results: &HashMap<MemoryId, f32>,
@@ -340,6 +346,11 @@ impl FusionEngine {
         causal_results: &HashMap<MemoryId, f32>,
         entity_results: &HashMap<MemoryId, f32>,
     ) -> Vec<FusedResult> {
+        // Entity pathway dampening factor. Reduces entity flooding in RRF when
+        // one entity (e.g., "user") has many source memories all at score 2.0.
+        // Other pathways keep full weight (1.0).
+        const ENTITY_RRF_SCALE: f32 = 0.3;
+
         // Convert score maps to ranked lists (sorted by score descending)
         let semantic_ranked = Self::to_ranked_list(semantic_results);
         let bm25_ranked = Self::to_ranked_list(bm25_results);
@@ -347,32 +358,33 @@ impl FusionEngine {
         let causal_ranked = Self::to_ranked_list(causal_results);
         let entity_ranked = Self::to_ranked_list(entity_results);
 
-        // Build RRF scores: for each pathway, add 1/(k + rank) to each doc
+        // Build RRF scores: for each pathway, add w/(k + rank) to each doc.
+        // Entity pathway scaled down to prevent flooding from large entity profiles.
         let mut rrf_scores: HashMap<MemoryId, f32> = HashMap::new();
 
-        // Semantic pathway
+        // Semantic pathway (full weight)
         for (rank, id) in semantic_ranked.iter().enumerate() {
             *rrf_scores.entry(id.clone()).or_default() += 1.0 / (self.rrf_k + rank as f32 + 1.0);
         }
 
-        // BM25 pathway
+        // BM25 pathway (full weight)
         for (rank, id) in bm25_ranked.iter().enumerate() {
             *rrf_scores.entry(id.clone()).or_default() += 1.0 / (self.rrf_k + rank as f32 + 1.0);
         }
 
-        // Temporal pathway
+        // Temporal pathway (full weight)
         for (rank, id) in temporal_ranked.iter().enumerate() {
             *rrf_scores.entry(id.clone()).or_default() += 1.0 / (self.rrf_k + rank as f32 + 1.0);
         }
 
-        // Causal pathway
+        // Causal pathway (full weight)
         for (rank, id) in causal_ranked.iter().enumerate() {
             *rrf_scores.entry(id.clone()).or_default() += 1.0 / (self.rrf_k + rank as f32 + 1.0);
         }
 
-        // Entity pathway
+        // Entity pathway (dampened — prevents entity flooding)
         for (rank, id) in entity_ranked.iter().enumerate() {
-            *rrf_scores.entry(id.clone()).or_default() += 1.0 / (self.rrf_k + rank as f32 + 1.0);
+            *rrf_scores.entry(id.clone()).or_default() += ENTITY_RRF_SCALE / (self.rrf_k + rank as f32 + 1.0);
         }
 
         // FILTER: Apply semantic threshold to prevent keyword flooding.

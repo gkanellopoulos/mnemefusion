@@ -147,10 +147,17 @@ impl MultiTurnAggregator {
             return Ok(candidates.into_iter().take(limit).collect());
         }
 
-        // Take top candidates for aggregation
+        // Take top candidates for aggregation.
+        // Scale candidate pool with limit to avoid starving "How many..." queries
+        // when limit is large (e.g., 100).
+        let effective_depth = if self.candidate_depth > 0 {
+            self.candidate_depth.max(limit * 3)
+        } else {
+            limit * 3
+        };
         let to_aggregate = candidates
             .into_iter()
-            .take(self.candidate_depth)
+            .take(effective_depth)
             .filter(|r| r.fused_score >= self.min_turn_score)
             .collect::<Vec<_>>();
 
