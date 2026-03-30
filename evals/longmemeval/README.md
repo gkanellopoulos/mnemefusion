@@ -21,6 +21,7 @@ The judge model is mandated by the official evaluation code (`assert model == 'g
 
 - **Oracle**: Each question gets only the sessions containing evidence (~36 turns). Tests extraction + RAG quality without retrieval noise. Good for development.
 - **Full haystack (s)**: Each question gets all ~490 turns. Tests end-to-end retrieval. Required for publication.
+- **Atomic**: Per-entity databases with pre-ingested memories (176 questions from `longmemeval_s_atomic.json`). Tests query-time retrieval quality in isolation, matching the recommended production pattern of one `.mfdb` per entity.
 
 ## Dataset
 
@@ -98,6 +99,38 @@ python run_eval.py \
 | `--extraction-passes N` | Number of extraction passes (default: 1) |
 | `--stop-on-fail` | Stop on first low-scoring question for diagnosis |
 
+### Atomic Mode (per-entity DB)
+
+Query-only evaluation against pre-ingested per-entity databases. No ingestion or LLM extraction needed — tests pure retrieval quality.
+
+```bash
+# Run atomic evaluation (requires pre-built per-entity DBs)
+python run_query_bim.py \
+    --db-dir <path-to-entity-dbs> \
+    --cycles 0 \
+    --dataset fixtures/longmemeval/longmemeval_s_atomic.json
+```
+
+With pipeline tracing enabled:
+
+```bash
+python run_query_bim.py \
+    --db-dir <path-to-entity-dbs> \
+    --cycles 0 \
+    --enable-trace \
+    --dataset fixtures/longmemeval/longmemeval_s_atomic.json
+```
+
+### MnemeBench Runner
+
+Automated benchmark runner for standardized evaluation across configurations:
+
+```bash
+python run_mnemebench.py \
+    --db-dir <path-to-entity-dbs> \
+    --dataset fixtures/longmemeval/longmemeval_s_atomic.json
+```
+
 ## How It Works
 
 Each question is evaluated independently:
@@ -172,6 +205,25 @@ The 53-point gap is overwhelmingly a retrieval problem:
 - **Only 2.5%** were reasoning failures (evidence retrieved but wrong answer)
 
 The oracle result (90%) confirms the extraction + RAG + judge pipeline works. The s-mode result (37.2%) reflects the retrieval ceiling when a 3.8B model must extract searchable metadata from 490 turns — better extraction models will directly improve s-mode without architecture changes.
+
+### Atomic Mode (per-entity DB — 176 questions)
+
+Per-entity databases with pre-ingested memories, matching the recommended production pattern of one `.mfdb` per entity. Uses a 176-question subset from `longmemeval_s_atomic.json`.
+
+| Metric | Score |
+|--------|-------|
+| **Overall accuracy** | **64.8%** |
+
+| Category | Count | Accuracy |
+|----------|-------|----------|
+| single-session-user | 70 | 77.1% |
+| single-session-preference | 30 | 73.3% |
+| temporal-reasoning | 20 | 70.0% |
+| single-session-assistant | 56 | 42.9% |
+
+Retrieval: R@5=38.5%, R@10=43.1%, R@20=52.7%.
+
+Atomic mode eliminates cross-entity noise and ingestion variability, isolating query-pipeline quality. The +27.6 pt improvement over s-mode (64.8% vs 37.2%) confirms that per-entity isolation significantly improves retrieval accuracy.
 
 ## References
 

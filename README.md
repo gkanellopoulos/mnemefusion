@@ -208,6 +208,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `consolidate_profiles()` | Remove noise from profiles |
 | `summarize_profiles()` | Generate profile summaries |
 
+### Diagnostics
+
+| Method | Description |
+|--------|-------------|
+| `last_query_trace()` | Step-by-step trace of the most recent `query()` call (requires `enable_trace=True` in config) |
+
 ### Metadata Filtering
 
 ```python
@@ -242,6 +248,7 @@ config = {
     "llm_model": "path/to/model.gguf", # Auto-enables LLM extraction
     "extraction_passes": 3,             # Multi-pass diverse extraction
     "async_extraction_threshold": 500,  # Defer extraction for large docs
+    "enable_trace": True,               # Record step-by-step query traces
 }
 mem = mnemefusion.Memory("brain.mfdb", config=config)
 ```
@@ -302,7 +309,7 @@ cd mnemefusion
 # Build core library
 cargo build --release
 
-# Run tests (500+ tests)
+# Run tests (520+ tests)
 cargo test -p mnemefusion-core --lib
 
 # Build Python bindings
