@@ -22,7 +22,7 @@ The judge model is mandated by the official evaluation code (`assert model == 'g
 ## Evaluation Modes
 
 - **Oracle**: Each question gets only the sessions containing evidence (~36 turns). Tests extraction + RAG quality without retrieval noise. Good for development and pipeline validation.
-- **Per-entity** (`--mode per-entity`): Each question gets its own fresh database with the full conversation haystack (~490 turns). This tests the **recommended production pattern** — one `.mfdb` per entity/conversation. 176 questions that are answerable from a single conversation's context. This is the benchmark that reflects how MnemeFusion is designed to be used.
+- **Per-entity** (`--mode per-entity`): Each question gets its own fresh database with the full conversation haystack (~490 turns). This tests the **recommended production pattern** — one `.mfdb` per entity/conversation. Of the 500 questions, 176 are included — those answerable from a single conversation's context (single-session and single-conversation temporal-reasoning questions). Questions requiring cross-conversation reasoning (multi-session, knowledge-update, abstention) are excluded because they are structurally unanswerable when each database contains only one conversation. This is a property of the atomic architecture, not selective filtering.
 - **Shared DB** (`--mode s`): Each question gets all ~490 turns in a single database. Tests retrieval when all conversations share one DB — the anti-pattern that MnemeFusion's atomic architecture is designed to avoid. Included for completeness and to demonstrate the per-entity advantage.
 
 ## Dataset
@@ -153,6 +153,8 @@ Each question receives only the sessions containing gold evidence (~36 turns). T
 
 Retrieval: R@5=74.4%, R@10=91.3%, R@20=98.2%.
 
+Task-averaged accuracy weights each category equally; overall accuracy weights each question equally. The main README reports overall accuracy (91.4%) for cross-system comparability.
+
 ### Per-Entity Mode (production benchmark)
 
 Each question gets its own fresh `.mfdb` with the full conversation haystack (~500 turns). This tests the recommended atomic pattern — one database per entity/conversation — on 176 questions answerable from a single conversation's context.
@@ -170,6 +172,8 @@ Each question gets its own fresh `.mfdb` with the full conversation haystack (~5
 | single-session-assistant | 56 | 48.2% |
 
 Retrieval: R@5=37.9%, R@10=42.3%, R@20=52.5%.
+
+Task-averaged accuracy weights each category equally; overall accuracy weights each question equally. The main README reports overall accuracy (67.6%) for cross-system comparability.
 
 ### Shared-DB Mode (~490 turns per question)
 

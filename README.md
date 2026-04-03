@@ -37,18 +37,46 @@ This mirrors how production AI systems work: a personal assistant remembers *one
 
 ## Benchmarks
 
-Evaluated on two established conversational memory benchmarks ([LoCoMo](evals/locomo/), [LongMemEval](evals/longmemeval/)) using standard protocols. The LongMemEval results validate the atomic architecture — per-entity databases maintain high accuracy where a shared database collapses:
+Evaluated on two established conversational memory benchmarks using standard protocols.
 
-| Benchmark | Mode | What it tests | Score |
-|-----------|------|---------------|-------|
-| [LoCoMo](evals/locomo/) | Standard | Overall accuracy across 10 conversations (1,540 questions) | **69.9% ± 0.4%** |
-| [LongMemEval](evals/longmemeval/) | Oracle | Pipeline quality — extraction + RAG + scoring (500 questions) | **91.4%** |
-| [LongMemEval](evals/longmemeval/) | Per-entity | Production pattern — one DB per conversation, ~500 turns each (176 questions) | **67.6%** |
-| [LongMemEval](evals/longmemeval/) | Shared DB | All conversations in one DB — the anti-pattern (500 questions) | 37.2% |
+**[LoCoMo](evals/locomo/)** — 1,540 free-text questions across 10 multi-session conversations:
 
-**Reading the numbers:** The oracle result (91.4%) proves the pipeline works when given the right evidence. The per-entity result (67.6%) shows production performance with the recommended atomic architecture. The shared-DB result (37.2%) demonstrates why per-entity scoping matters — accuracy drops by 54 points when unrelated conversations compete for retrieval slots.
+| Accuracy |
+|----------|
+| **69.9% ± 0.4%** |
 
-See [evals/](evals/) for full methodology, per-category breakdowns, datasets, and reproduction instructions.
+**[LongMemEval](evals/longmemeval/)** — 500 binary questions, three evaluation modes:
+
+| Mode | What it tests | Score |
+|------|---------------|-------|
+| Oracle | Pipeline quality — extraction + RAG + scoring | **91.4%** |
+| Per-entity | Production pattern — one DB per conversation | **67.6%** |
+| Shared DB | All conversations in one DB — the anti-pattern | 37.2% |
+
+The oracle result (91.4%) proves the pipeline works when given the right evidence. The gap to per-entity (67.6%) is a retrieval problem: 48% of failures had zero gold evidence in the top-20 results, 49% had partial evidence, and only 2.5% were reasoning failures. The shared-DB collapse (37.2%) shows why per-entity scoping matters — unrelated conversations compete for retrieval slots.
+
+### Competitive context
+
+Every system below requires cloud LLM APIs for its memory engine. MnemeFusion is the only one that runs entirely locally — entity extraction uses a 3.8B GGUF model on-device, and embeddings are computed locally. Only the answer generation step uses a cloud LLM, and that is the application's choice, not a library dependency.
+
+| System | Answer model | LongMemEval-S | LoCoMo | Memory engine runs locally |
+|--------|-------------|---------------|--------|---------------------------|
+| [Mnemis](https://github.com/microsoft/Mnemis) (Microsoft) | GPT-4.1-mini | 91.6% | 93.9% | No — Azure OpenAI + Neo4j |
+| [Hindsight](https://github.com/vectorize-io/hindsight) (Vectorize) | GPT-OSS-120B | 89.0% | 85.7% | No — cloud LLM via Groq |
+| [EverMemOS](https://github.com/EverMind-AI/EverMemOS) | GPT-4.1-mini | 83.0% | 92.3% | No — MongoDB + ES + Milvus + cloud LLM |
+| [MemMachine](https://github.com/MemMachine/MemMachine) | GPT-4.1-mini | — | 91.2% | No — Neo4j + OpenAI + Cohere |
+| [Zep](https://github.com/getzep/graphiti) | GPT-4o | 71.2% | 75.1%\* | No — Zep Cloud + OpenAI |
+| [Mem0](https://github.com/mem0ai/mem0) | GPT-4o-mini | — | 66.9%\*\* | No — platform + OpenAI |
+| **MnemeFusion** | **Phi-4-mini 3.8B (local)** | **67.6% / 91.4% oracle** | **69.9%** | **Yes** |
+
+\*Zep's LoCoMo score is [disputed](https://github.com/getzep/zep-papers/issues/5) — independently measured at 58.4% by Mem0.
+\*\*Mem0's published score uses [platform-only features](https://github.com/mem0ai/mem0/issues/2800); the open-source version scores ~34%.
+
+The accuracy gap is largely driven by the answer model. Systems using GPT-4.1-mini or GPT-OSS-120B gain 15-25 points from model intelligence alone — the same retrieval results produce higher scores with a stronger answer model. MnemeFusion's oracle result (91.4%) demonstrates that retrieval quality is competitive when the evidence is present; the bottleneck is extraction coverage with a local 3.8B model, not the retrieval architecture.
+
+All competitor numbers are from their published papers or repositories. Sources: Mnemis ([arXiv 2602.15313](https://arxiv.org/abs/2602.15313)), Hindsight ([arXiv 2512.12818](https://arxiv.org/abs/2512.12818)), EverMemOS ([arXiv 2601.02163](https://arxiv.org/abs/2601.02163)), Zep ([arXiv 2501.13956](https://arxiv.org/abs/2501.13956)), Mem0 ([arXiv 2504.19413](https://arxiv.org/abs/2504.19413)), MemMachine ([blog](https://memmachine.ai/blog/2025/12/memmachine-v0.2-delivers-top-scores-and-efficiency-on-locomo-benchmark/)).
+
+LongMemEval uses the official binary protocol with gpt-4o-2024-08-06 as judge. LoCoMo uses free-text generation with LLM-as-judge (GPT-4o-mini). See [evals/](evals/) for full methodology, datasets, and reproduction instructions.
 
 ## Quick Start
 
@@ -183,6 +211,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+## Bring Your Own Model
+
+MnemeFusion has three model slots — all pluggable, none locked to a specific provider:
+
+| Slot | What it does | Default | Alternatives |
+|------|-------------|---------|--------------|
+| **Embedding model** | Vectorizes memories and queries | Any [sentence-transformers](https://www.sbert.net/) model via `set_embedding_fn()` | OpenAI, Cohere, Voyage, custom fine-tuned — anything that returns a vector |
+| **Extraction LLM** | Extracts entities and facts at ingestion time | [Phi-4-mini](https://huggingface.co/microsoft/Phi-4-mini-instruct) 3.8B GGUF (local, optional) | Any instruction-tuned GGUF model — Qwen, Llama, Mistral. Or disable entirely; four of five retrieval dimensions still work |
+| **Answer LLM** | Generates the final response from retrieved context | *Not included* — this is your application's choice | Claude, GPT, Gemini, a local model, anything. MnemeFusion returns ranked results; what generates the answer is up to you |
+
+The local-first design is a privacy architecture, not just a cost optimization. Conversational memory often contains sensitive personal data. Running entity extraction on-device means memory content never leaves the machine. Users who want cloud-grade extraction quality can point the embedding slot at a cloud API and still keep extraction local, or swap in a larger local model as hardware allows.
 
 ## Architecture
 

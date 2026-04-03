@@ -16,7 +16,7 @@ MnemeFusion is evaluated on two established conversational memory benchmarks usi
 - **Oracle (91.4%)** gives each question only the sessions containing evidence, stripping away retrieval noise. This proves the extraction + RAG + judge pipeline works.
 - **Per-entity (67.6%)** gives each question its own database with all ~490 conversation turns — the recommended atomic pattern. Each conversation maps to one entity's memory, testing end-to-end retrieval from a realistic haystack.
 - **Shared DB (37.2%)** puts all conversations into a single database. The 91-to-37% collapse demonstrates why the per-entity architecture matters: unrelated memories flood retrieval results when they share a database.
-- **LoCoMo (69.9%)** evaluates conversational memory across 1,540 questions and 10 conversations with free-text answers judged by GPT-4o-mini. Each conversation is pre-ingested into a shared database — a harder setup that measures general retrieval quality.
+- **LoCoMo (69.9%)** evaluates conversational memory across 1,540 questions and 10 conversations with free-text answers judged by GPT-4o-mini. All conversations are pre-ingested into a single shared database, measuring general retrieval quality across a mixed memory store.
 
 ## Methodology
 

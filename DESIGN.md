@@ -36,7 +36,7 @@ This document explains the key architectural choices behind MnemeFusion and the 
 - No model distribution or fine-tuning burden on users
 - Research shows RRF performs competitively with learned approaches for heterogeneous retrieval (Cormack et al., 2009)
 
-**Trade-off:** Cannot learn domain-specific dimension weights. In practice, the per-dimension scoring (especially entity profiles and BM25) provides enough signal that fixed fusion works well. The [LoCoMo benchmark](evals/locomo/) validates this at 70.7% accuracy across diverse question types.
+**Trade-off:** Cannot learn domain-specific dimension weights. In practice, the per-dimension scoring (especially entity profiles and BM25) provides enough signal that fixed fusion works well. The [LoCoMo benchmark](evals/locomo/) validates this at 69.9% accuracy across diverse question types, and [LongMemEval](evals/longmemeval/) per-entity mode achieves 67.6% task-averaged accuracy — see the main [README](README.md#benchmarks) for full results and competitive context.
 
 ## 4. Single file over client-server
 
