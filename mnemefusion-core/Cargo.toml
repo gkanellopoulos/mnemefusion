@@ -41,7 +41,7 @@ llama-cpp-sys-2 = { package = "mnemefusion-llama-cpp-sys-2", version = "=0.1.139
 # ONNX embedding model via fastembed (optional)
 # Windows note: requires pre-built ONNX Runtime. Set ORT_LIB_LOCATION or use load-dynamic.
 # On Linux/Mac builds from source automatically.
-fastembed = { version = "4", optional = true }
+fastembed = { version = "5", optional = true }
 
 [features]
 default = []
