@@ -17,7 +17,7 @@ repository = "https://github.com/gkanellopoulos/mnemefusion"
 redb = "2.1"
 
 # Vector search (HNSW) — disable simsimd (GCC 11 build failure on _mm512_reduce_add_ph)
-usearch = { version = "=2.24.0", default-features = false, features = ["fp16lib"] }
+usearch = { version = "=2.23.0", default-features = false, features = ["fp16lib"] }
 
 # Graph algorithms
 petgraph = "0.8"

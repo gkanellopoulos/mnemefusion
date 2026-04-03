@@ -24,7 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LongMemEval `--mode atomic` renamed to `--mode per-entity`
 
 ### Updated
-- usearch 2.23 → 2.24
 - petgraph 0.6 → 0.8
 - GitHub Actions: upload-artifact v7, download-artifact v8
 
