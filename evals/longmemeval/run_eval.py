@@ -8,19 +8,26 @@ Evaluates MnemeFusion on LongMemEval (ICLR 2025) — 500 questions across
 Modes:
   oracle  — Evidence-only sessions (~36 turns/q). Tests extraction + RAG quality.
   s       — Full haystack (~490 turns/q). Tests end-to-end retrieval pipeline.
+  atomic  — Per-entity evaluation (176 answerable single-haystack questions).
+            Full haystack ingestion per question, filtered to questions answerable
+            from a single conversation. Tests the per-entity DB pattern.
 
 Usage:
     # Oracle mode (recommended first)
-    python longmemeval_eval.py --mode oracle \\
-        --llm-model ../../models/phi-4-mini/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf
+    python run_eval.py --mode oracle \\
+        --llm-model /path/to/model.gguf
 
-    # Full haystack mode
-    python longmemeval_eval.py --mode s \\
-        --llm-model ../../models/phi-4-mini/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf
+    # Atomic per-entity mode (176 questions, ~500 turns each — slow)
+    python run_eval.py --mode atomic \\
+        --llm-model /path/to/model.gguf
+
+    # Full haystack mode (500 questions, ~490 turns each — very slow)
+    python run_eval.py --mode s \\
+        --llm-model /path/to/model.gguf
 
     # Resume from question N
-    python longmemeval_eval.py --mode oracle --start-at 5 \\
-        --llm-model ../../models/phi-4-mini/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf
+    python run_eval.py --mode oracle --start-at 5 \\
+        --llm-model /path/to/model.gguf
 
 Dataset: LongMemEval (ICLR 2025), 500 questions, 6 categories.
     https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned
@@ -53,7 +60,6 @@ except ImportError:
 
 try:
     from sentence_transformers import SentenceTransformer
-    import numpy as np
 except ImportError:
     print("ERROR: sentence-transformers not installed.")
     sys.exit(1)
@@ -168,10 +174,17 @@ Respond with ONLY a JSON object, no other text:
 # =============================================================================
 
 def load_dataset(mode: str) -> List[Dict]:
-    """Load the LongMemEval dataset."""
+    """Load the LongMemEval dataset.
+
+    Modes:
+      oracle  — loads longmemeval_oracle.json (evidence-only haystacks)
+      s       — loads longmemeval_s_cleaned.json (full 500-question haystacks)
+      atomic  — loads longmemeval_s_cleaned.json filtered to 176 answerable
+                single-haystack questions via answerable_atomic_qids.json
+    """
     if mode == "oracle":
         path = FIXTURES_DIR / "longmemeval_oracle.json"
-    elif mode == "s":
+    elif mode in ("s", "atomic"):
         path = FIXTURES_DIR / "longmemeval_s_cleaned.json"
     else:
         raise ValueError(f"Unknown mode: {mode}")
@@ -184,7 +197,19 @@ def load_dataset(mode: str) -> List[Dict]:
     print(f"Loading {path.name}...")
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
-    print(f"  Loaded {len(data)} questions")
+
+    if mode == "atomic":
+        qids_path = FIXTURES_DIR / "answerable_atomic_qids.json"
+        if not qids_path.exists():
+            print(f"ERROR: Atomic QID filter not found at {qids_path}")
+            sys.exit(1)
+        with open(qids_path, encoding="utf-8") as f:
+            atomic_qids = set(json.load(f))
+        data = [e for e in data if e["question_id"] in atomic_qids]
+        print(f"  Filtered to {len(data)} atomic questions (single-haystack answerable)")
+    else:
+        print(f"  Loaded {len(data)} questions")
+
     return data
 
 
@@ -258,19 +283,10 @@ def ingest_question(
                 metadata["session_date"] = session_date
             turns.append((content, metadata, session_date))
 
-    # Batch-embed all turns
-    contents = [t[0] for t in turns]
-    print(f"    Embedding {len(contents)} turns...", end=" ", flush=True)
-    t0 = time.time()
-    all_embeddings = embedder.encode(contents, show_progress_bar=False, batch_size=64)
-    print(f"({time.time() - t0:.1f}s)")
-
-    # Ingest one by one (each triggers LLM extraction if enabled)
+    # Ingest one by one (embedding computed internally via set_embedding_fn callback)
     print(f"    Ingesting {len(turns)} turns", end="", flush=True)
     t0 = time.time()
     for i, (content, metadata, session_date) in enumerate(turns):
-        embedding = all_embeddings[i].tolist()
-
         # Parse session_date to Unix timestamp
         timestamp = None
         if session_date:
@@ -282,7 +298,7 @@ def ingest_question(
                 except ValueError:
                     continue
 
-        mem.add(content, embedding, metadata, timestamp=timestamp)
+        mem.add(content, None, metadata, timestamp=timestamp)
 
         # Progress dots
         if (i + 1) % 50 == 0:
@@ -291,12 +307,7 @@ def ingest_question(
     elapsed = time.time() - t0
     print(f" ({elapsed:.1f}s, {len(turns) / max(elapsed, 0.01):.1f} turns/s)")
 
-    # Post-ingestion: summarize profiles and precompute fact embeddings
-    try:
-        mem.summarize_profiles()
-        n = mem.precompute_fact_embeddings()
-    except Exception:
-        pass
+    # No post-processing — library handles everything via add() + query()
 
     # Enable first-person pronoun → "user" entity resolution.
     # Queries with "I", "me", "my" will resolve to the "user" profile,
@@ -500,7 +511,8 @@ def run_evaluation(args):
     # Print methodology header
     print(f"\n{'=' * 70}")
     print(f"LongMemEval Stepped Evaluation")
-    print(f"  Mode:       {args.mode} ({'evidence-only' if args.mode == 'oracle' else 'full haystack'})")
+    mode_desc = {"oracle": "evidence-only", "s": "full haystack", "atomic": "per-entity, 176 questions"}
+    print(f"  Mode:       {args.mode} ({mode_desc.get(args.mode, args.mode)})")
     if detailed_scoring:
         print(f"  Scoring:    Continuous 0-100 (internal)")
     else:
@@ -813,8 +825,8 @@ def merge_worker_results(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LongMemEval Stepped Evaluation")
-    parser.add_argument("--mode", choices=["oracle", "s"], default="oracle",
-                        help="Dataset mode: oracle (evidence-only) or s (full haystack)")
+    parser.add_argument("--mode", choices=["oracle", "s", "atomic"], default="oracle",
+                        help="Dataset mode: oracle (evidence-only), s (full haystack), or atomic (176 per-entity questions)")
     parser.add_argument("--llm-model", type=str, default=None,
                         help="Path to LLM model for entity extraction (e.g., models/phi-4-mini/...gguf)")
     parser.add_argument("--start-at", type=int, default=0,
