@@ -6,19 +6,18 @@ Evaluates MnemeFusion on LongMemEval (ICLR 2025) — 500 questions across
 6 categories testing long-term conversational memory.
 
 Modes:
-  oracle  — Evidence-only sessions (~36 turns/q). Tests extraction + RAG quality.
-  s       — Full haystack (~490 turns/q). Tests end-to-end retrieval pipeline.
-  atomic  — Per-entity evaluation (176 answerable single-haystack questions).
-            Full haystack ingestion per question, filtered to questions answerable
-            from a single conversation. Tests the per-entity DB pattern.
+  oracle     — Evidence-only sessions (~36 turns/q). Tests extraction + RAG quality.
+  s          — Full haystack (~490 turns/q). All conversations in one DB.
+  per-entity — 176 answerable single-haystack questions, one DB per conversation.
+               Tests the recommended atomic production pattern.
 
 Usage:
     # Oracle mode (recommended first)
     python run_eval.py --mode oracle \\
         --llm-model /path/to/model.gguf
 
-    # Atomic per-entity mode (176 questions, ~500 turns each — slow)
-    python run_eval.py --mode atomic \\
+    # Per-entity mode (176 questions, ~500 turns each — slow)
+    python run_eval.py --mode per-entity \\
         --llm-model /path/to/model.gguf
 
     # Full haystack mode (500 questions, ~490 turns each — very slow)
@@ -177,14 +176,14 @@ def load_dataset(mode: str) -> List[Dict]:
     """Load the LongMemEval dataset.
 
     Modes:
-      oracle  — loads longmemeval_oracle.json (evidence-only haystacks)
-      s       — loads longmemeval_s_cleaned.json (full 500-question haystacks)
-      atomic  — loads longmemeval_s_cleaned.json filtered to 176 answerable
-                single-haystack questions via answerable_atomic_qids.json
+      oracle     — loads longmemeval_oracle.json (evidence-only haystacks)
+      s          — loads longmemeval_s_cleaned.json (full 500-question haystacks)
+      per-entity — loads longmemeval_s_cleaned.json filtered to 176 answerable
+                   single-haystack questions via answerable_atomic_qids.json
     """
     if mode == "oracle":
         path = FIXTURES_DIR / "longmemeval_oracle.json"
-    elif mode in ("s", "atomic"):
+    elif mode in ("s", "per-entity"):
         path = FIXTURES_DIR / "longmemeval_s_cleaned.json"
     else:
         raise ValueError(f"Unknown mode: {mode}")
@@ -198,15 +197,15 @@ def load_dataset(mode: str) -> List[Dict]:
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
 
-    if mode == "atomic":
+    if mode == "per-entity":
         qids_path = FIXTURES_DIR / "answerable_atomic_qids.json"
         if not qids_path.exists():
-            print(f"ERROR: Atomic QID filter not found at {qids_path}")
+            print(f"ERROR: Per-entity QID filter not found at {qids_path}")
             sys.exit(1)
         with open(qids_path, encoding="utf-8") as f:
-            atomic_qids = set(json.load(f))
-        data = [e for e in data if e["question_id"] in atomic_qids]
-        print(f"  Filtered to {len(data)} atomic questions (single-haystack answerable)")
+            per_entity_qids = set(json.load(f))
+        data = [e for e in data if e["question_id"] in per_entity_qids]
+        print(f"  Filtered to {len(data)} per-entity questions (single-haystack answerable)")
     else:
         print(f"  Loaded {len(data)} questions")
 
@@ -511,7 +510,7 @@ def run_evaluation(args):
     # Print methodology header
     print(f"\n{'=' * 70}")
     print(f"LongMemEval Stepped Evaluation")
-    mode_desc = {"oracle": "evidence-only", "s": "full haystack", "atomic": "per-entity, 176 questions"}
+    mode_desc = {"oracle": "evidence-only", "s": "shared DB, full haystack", "per-entity": "one DB per conversation, 176 questions"}
     print(f"  Mode:       {args.mode} ({mode_desc.get(args.mode, args.mode)})")
     if detailed_scoring:
         print(f"  Scoring:    Continuous 0-100 (internal)")
@@ -825,8 +824,8 @@ def merge_worker_results(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LongMemEval Stepped Evaluation")
-    parser.add_argument("--mode", choices=["oracle", "s", "atomic"], default="oracle",
-                        help="Dataset mode: oracle (evidence-only), s (full haystack), or atomic (176 per-entity questions)")
+    parser.add_argument("--mode", choices=["oracle", "s", "per-entity"], default="oracle",
+                        help="Dataset mode: oracle (evidence-only), per-entity (176 questions, one DB each), or s (shared DB, 500 questions)")
     parser.add_argument("--llm-model", type=str, default=None,
                         help="Path to LLM model for entity extraction (e.g., models/phi-4-mini/...gguf)")
     parser.add_argument("--start-at", type=int, default=0,

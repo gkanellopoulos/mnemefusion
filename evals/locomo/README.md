@@ -2,6 +2,8 @@
 
 Evaluates MnemeFusion on the [LoCoMo](https://github.com/snap-research/locomo) (Long-term Conversation Memory) benchmark using the standard free-text + LLM-as-judge protocol.
 
+LoCoMo tests overall conversational memory quality across 10 multi-session conversations. All conversations are pre-ingested into a single database, measuring how well MnemeFusion retrieves and reasons over a realistic memory store.
+
 ## Protocol
 
 | Aspect | Configuration |
