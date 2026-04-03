@@ -130,45 +130,28 @@ Evaluated on the full LoCoMo dataset (10 conversations, 1,540 questions, categor
 
 | Metric | Score |
 |--------|-------|
-| **Overall accuracy** | **70.7% ± 0.8%** |
-| Per-run accuracies | 71.2%, 71.2%, 69.8% |
+| **Overall accuracy** | **69.9% ± 0.4%** |
+| Per-run accuracies | 69.6%, 70.3%, 69.7% |
 
 ### Per-Category Breakdown
 
 | Category | Count | Accuracy | R@5 | R@10 | R@20 |
 |----------|-------|----------|-----|------|------|
-| Single-hop (factual) | 282 | 64.5% | 14% | 21% | 33% |
-| Multi-hop (reasoning) | 321 | 59.2% | 44% | 49% | 57% |
-| Temporal (time-based) | 96 | 63.5% | 21% | 27% | 36% |
-| Open-domain (knowledge) | 841 | 76.3% | 40% | 48% | 62% |
+| Single-hop (factual) | 282 | 64.9% | 18% | 23% | 37% |
+| Multi-hop (reasoning) | 321 | 58.3% | 45% | 51% | 60% |
+| Temporal (time-based) | 96 | 63.5% | 17% | 27% | 36% |
+| Open-domain (knowledge) | 841 | 76.3% | 42% | 50% | 62% |
 
 ### Retrieval & Performance
 
 | Metric | Value |
 |--------|-------|
-| Recall@5 | 35.0% |
-| Recall@10 | 42.2% |
-| Recall@20 | 54.0% |
-| Latency P50 | 194ms |
-| Latency P95 | 239ms |
-| Ingestion time | ~1h47m (5,882 docs on A40) |
-
-## Atomized Results (Per-Entity DB)
-
-MnemeFusion is designed for one `.mfdb` file per entity — matching how memory works in production (one DB per user/customer/project). The atomized benchmark creates one DB per conversation, eliminating cross-entity retrieval noise.
-
-**Setup:** Same as standard, but 10 separate DBs instead of 1 shared DB.
-
-| Metric | Standard (shared DB) | Atomized (per-entity DB) | Delta |
-|--------|---------------------|-------------------------|-------|
-| **Overall accuracy** | **70.7% ± 0.8%** | **72.3% ± 0.1%** | **+1.6** |
-| Single-hop (factual) | 64.5% | 72.0% | +7.5 |
-| Multi-hop (reasoning) | 59.2% | 57.3% | -1.9 |
-| Temporal (time-based) | 63.5% | 71.9% | +8.4 |
-| Open-domain (knowledge) | 76.3% | 78.2% | +1.9 |
-| Recall@20 | 54.0% | 56.2% | +2.2 |
-
-Entity isolation lifts single-hop (+7.5) and temporal (+8.4) significantly — the categories most affected by cross-entity confusion in a shared DB.
+| Recall@5 | 36.8% |
+| Recall@10 | 44.0% |
+| Recall@20 | 55.5% |
+| Latency P50 | 253ms |
+| Latency P95 | 329ms |
+| Ingestion time | ~3h47m (5,882 docs on A40) |
 
 ## References
 

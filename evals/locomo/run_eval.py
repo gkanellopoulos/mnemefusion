@@ -795,29 +795,7 @@ class MnemeFusionEvaluator:
             except Exception as e:
                 print(f"  [Embedding] Warning: set_embedding_fn not available: {e}")
 
-        # Backfill fact embeddings for existing profiles (one-time, ~4s)
-        try:
-            n = self.memory.precompute_fact_embeddings()
-            print(f"  [Embedding] Precomputed {n} fact embeddings")
-        except Exception as e:
-            print(f"  [Embedding] Backfill not available: {e}")
-
-        # Rebuild embeddings for first-person content using speaker-aware pronoun substitution.
-        # "I joined a gym" -> "Alice joined a gym" for embedding (+0.25 cosine similarity gain
-        # with entity-centric queries. One-time backfill, safe to re-run (no-op if already done).
-        if not self._rust_embed:
-            try:
-                n = self.memory.rebuild_speaker_embeddings()
-                print(f"  [Embedding] Rebuilt {n} speaker embeddings (1p->3p pronoun substitution)")
-            except Exception as e:
-                print(f"  [Embedding] Speaker embedding rebuild not available: {e}")
-
-        # Consolidate profiles: remove null values, long values, semantic dedup, garbage entities
-        try:
-            facts_removed, profiles_deleted = self.memory.consolidate_profiles()
-            print(f"  [Consolidation] Removed {facts_removed} facts, deleted {profiles_deleted} profiles")
-        except Exception as e:
-            print(f"  [Consolidation] Not available: {e}")
+        # No post-processing — benchmark uses the library as documented: add() + query().
 
         print(f"  [OK] Created memory store at {db_path}")
 
@@ -846,9 +824,8 @@ class MnemeFusionEvaluator:
         metadatas = [doc[2] for doc in documents]
 
         # Generate embeddings in batches (raw content, no speaker prefix)
-        # Note: Speaker differentiation is handled by the entity scoring dimension
-        # (Step 2.1/2.2), not the embedding space. Contextual embeddings were tested
-        # in S22 and caused a -12.9pt regression due to query/document mismatch.
+        # Note: Speaker differentiation is handled by the entity scoring dimension,
+        # not the embedding space.
         # In Rust mode, skip Python embedding — fastembed handles it in Rust.
         if self._rust_embed:
             all_embeddings = [None] * len(contents)
@@ -919,7 +896,7 @@ class MnemeFusionEvaluator:
                                     continue
                         except Exception:
                             pass
-                    self.memory.add(content, all_embeddings[i], metadata, timestamp=timestamp)
+                    self.memory.add(content, None, metadata, timestamp=timestamp)
                     created_count += 1
                     completed_indices.add(i)
                 except Exception as e:
@@ -1711,36 +1688,10 @@ def run_evaluation(
                 print(f"  [NScale] Extraction complete: {extracted} extracted, {failed} failed in {extract_elapsed:.1f}s")
                 print(f"  [NScale] {nscale.cost_estimate()}")
 
-                # Post-ingestion cleanup (same as local LLM path)
-                try:
-                    facts_removed, profiles_deleted = evaluator.memory.consolidate_profiles()
-                    print(f"  [Post-ingestion] Consolidated: removed {facts_removed} facts, deleted {profiles_deleted} profiles")
-                except Exception as e:
-                    print(f"  [Post-ingestion] Consolidation error: {e}")
-
-                try:
-                    n_summarized = evaluator.memory.summarize_profiles()
-                    print(f"  [Post-ingestion] Summarized {n_summarized} profiles")
-                except Exception as e:
-                    print(f"  [Post-ingestion] Summary error: {e}")
-
             else:
                 # Standard ingestion (local LLM or no extraction)
                 ingestion_time = evaluator.ingest_documents(documents, use_llm=use_llm)
 
-                # Post-ingestion: consolidate profiles and generate summaries
-                if use_llm:
-                    try:
-                        facts_removed, profiles_deleted = evaluator.memory.consolidate_profiles()
-                        print(f"  [Post-ingestion] Consolidated: removed {facts_removed} facts, deleted {profiles_deleted} profiles")
-                    except Exception as e:
-                        print(f"  [Post-ingestion] Consolidation error: {e}")
-
-                    try:
-                        n_summarized = evaluator.memory.summarize_profiles()
-                        print(f"  [Post-ingestion] Summarized {n_summarized} profiles")
-                    except Exception as e:
-                        print(f"  [Post-ingestion] Summary error: {e}")
         else:
             print(f"  [SKIP] Using existing DB at {db_path} — skipping ingestion")
             ingestion_time = 0.0

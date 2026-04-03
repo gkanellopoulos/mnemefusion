@@ -6,11 +6,9 @@ MnemeFusion is evaluated on two established conversational memory benchmarks usi
 
 | Benchmark | Protocol | Questions | MnemeFusion | Status |
 |-----------|----------|-----------|-------------|--------|
-| [LoCoMo](locomo/) (standard) | Free-text + LLM-as-judge | 1,540 (cat 1-4) | **70.7% ± 0.8%** | Verified |
-| [LoCoMo](locomo/) (atomized) | Per-entity DB, same protocol | 1,540 (cat 1-4) | **72.3% ± 0.1%** | Verified |
-| [LongMemEval](longmemeval/) (oracle) | Binary judge (official protocol) | 500 | **90.0%** | Verified |
-| [LongMemEval](longmemeval/) (s-mode) | Full haystack, same protocol | 500 | **37.2%** | Verified |
-| [LongMemEval](longmemeval/) (atomic) | Per-entity DB, binary judge | 176 | **64.8%** | Verified |
+| [LoCoMo](locomo/) (standard) | Free-text + LLM-as-judge | 1,540 (cat 1-4) | **69.9% ± 0.4%** | Verified |
+| [LongMemEval](longmemeval/) (oracle) | Binary judge (official protocol) | 500 | **91.4%** | Verified |
+| [LongMemEval](longmemeval/) (atomic) | Per-entity DB, full haystack | 176 | **67.6%** | Verified |
 
 ## Methodology
 
@@ -27,7 +25,7 @@ MnemeFusion is evaluated on two established conversational memory benchmarks usi
 - **Judge**: gpt-4o-2024-08-06, temperature=0, binary yes/no (official paper requirement)
 - **Prompts**: 5 task-specific prompts + 1 abstention prompt (matching official code)
 - **Metrics**: Task-averaged accuracy (primary) + Overall accuracy (secondary)
-- **Modes**: Oracle (evidence-only, for development) and S (full haystack, for publication)
+- **Modes**: Oracle (evidence-only), S (full haystack), Atomic (per-entity, 176 single-haystack questions)
 
 ## Reproducing Results
 
