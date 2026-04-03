@@ -1,15 +1,22 @@
 # Evaluations
 
-MnemeFusion is evaluated on two established conversational memory benchmarks using standard protocols.
+MnemeFusion is evaluated on two established conversational memory benchmarks using standard protocols. Together, the results validate the **atomic architecture** — per-entity databases maintain accuracy where a shared database degrades.
 
-## Benchmarks
+## Results
 
-| Benchmark | Protocol | Questions | MnemeFusion | Status |
-|-----------|----------|-----------|-------------|--------|
-| [LoCoMo](locomo/) (standard) | Free-text + LLM-as-judge | 1,540 (cat 1-4) | **70.7% ± 0.8%** | Verified |
-| [LoCoMo](locomo/) (atomized) | Per-entity DB, same protocol | 1,540 (cat 1-4) | **72.3% ± 0.1%** | Verified |
-| [LongMemEval](longmemeval/) (oracle) | Binary judge (official protocol) | 500 | **90.0%** | Verified |
-| [LongMemEval](longmemeval/) (s-mode) | Full haystack, same protocol | 500 | **37.2%** | Verified |
+| Benchmark | Mode | What it tests | Score | Status |
+|-----------|------|---------------|-------|--------|
+| [LoCoMo](locomo/) | Standard | Overall accuracy across 10 conversations | **69.9% ± 0.4%** | Verified |
+| [LongMemEval](longmemeval/) | Oracle | Pipeline quality (extraction + RAG + scoring) | **91.4%** | Verified |
+| [LongMemEval](longmemeval/) | Per-entity | Production pattern: one DB per conversation | **67.6%** | Verified |
+| [LongMemEval](longmemeval/) | Shared DB | All conversations in one DB | 37.2% | Verified |
+
+### How to read these results
+
+- **Oracle (91.4%)** gives each question only the sessions containing evidence, stripping away retrieval noise. This proves the extraction + RAG + judge pipeline works.
+- **Per-entity (67.6%)** gives each question its own database with all ~490 conversation turns — the recommended atomic pattern. Each conversation maps to one entity's memory, testing end-to-end retrieval from a realistic haystack.
+- **Shared DB (37.2%)** puts all conversations into a single database. The 91-to-37% collapse demonstrates why the per-entity architecture matters: unrelated memories flood retrieval results when they share a database.
+- **LoCoMo (69.9%)** evaluates conversational memory across 1,540 questions and 10 conversations with free-text answers judged by GPT-4o-mini. Each conversation is pre-ingested into a shared database — a harder setup that measures general retrieval quality.
 
 ## Methodology
 
@@ -26,7 +33,7 @@ MnemeFusion is evaluated on two established conversational memory benchmarks usi
 - **Judge**: gpt-4o-2024-08-06, temperature=0, binary yes/no (official paper requirement)
 - **Prompts**: 5 task-specific prompts + 1 abstention prompt (matching official code)
 - **Metrics**: Task-averaged accuracy (primary) + Overall accuracy (secondary)
-- **Modes**: Oracle (evidence-only, for development) and S (full haystack, for publication)
+- **Modes**: Oracle (evidence-only), Per-entity (one DB per conversation), Shared DB (all conversations in one DB)
 
 ## Reproducing Results
 

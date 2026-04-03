@@ -55,6 +55,7 @@ pub mod memory;
 pub mod query;
 pub mod slm;
 pub mod storage;
+pub mod trace;
 pub mod types;
 pub mod util;
 
@@ -105,6 +106,7 @@ pub use extraction::{
 #[cfg(feature = "embedding-onnx")]
 pub use embedding::EmbeddingEngine;
 
+pub use trace::{Trace, TraceRecorder, TraceStep, TraceValue};
 pub use types::{
     AddResult, BatchError, BatchResult, Entity, EntityId, FilterOp, Memory, MemoryId, MemoryInput,
     MetadataFilter, Source, SourceType, Timestamp, UpsertResult, NAMESPACE_METADATA_KEY,

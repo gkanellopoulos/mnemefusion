@@ -190,6 +190,58 @@ fn parse_filters_from_list(filters: Option<&PyList>) -> PyResult<Option<Vec<Meta
     }
 }
 
+/// Convert a TraceValue to a Python object
+fn trace_value_to_py(py: Python, value: &mnemefusion_core::TraceValue) -> PyObject {
+    use mnemefusion_core::TraceValue;
+    match value {
+        TraceValue::String(s) => s.into_py(py),
+        TraceValue::Float(f) => f.into_py(py),
+        TraceValue::Int(i) => i.into_py(py),
+        TraceValue::Bool(b) => b.into_py(py),
+        TraceValue::Null => py.None(),
+        TraceValue::List(items) => {
+            let list = PyList::new(py, items.iter().map(|v| trace_value_to_py(py, v)));
+            list.into_py(py)
+        }
+        TraceValue::Map(map) => {
+            let dict = PyDict::new(py);
+            for (k, v) in map {
+                let _ = dict.set_item(k, trace_value_to_py(py, v));
+            }
+            dict.into_py(py)
+        }
+    }
+}
+
+/// Convert an Option<Trace> to a Python object (dict or None)
+fn trace_to_py(py: Python, trace: Option<&mnemefusion_core::Trace>) -> PyObject {
+    match trace {
+        None => py.None(),
+        Some(t) => {
+            let dict = PyDict::new(py);
+            let _ = dict.set_item("pipeline", &t.pipeline);
+            let _ = dict.set_item("total_duration_us", t.total_duration_us);
+            let steps: Vec<PyObject> = t
+                .steps
+                .iter()
+                .map(|step| {
+                    let step_dict = PyDict::new(py);
+                    let _ = step_dict.set_item("name", &step.name);
+                    let _ = step_dict.set_item("duration_us", step.duration_us);
+                    let data_dict = PyDict::new(py);
+                    for (k, v) in &step.data {
+                        let _ = data_dict.set_item(k, trace_value_to_py(py, v));
+                    }
+                    let _ = step_dict.set_item("data", data_dict);
+                    step_dict.into_py(py)
+                })
+                .collect();
+            let _ = dict.set_item("steps", PyList::new(py, steps));
+            dict.into_py(py)
+        }
+    }
+}
+
 /// Python wrapper for MemoryEngine
 #[pyclass(name = "Memory")]
 pub struct PyMemory {
@@ -276,6 +328,9 @@ impl PyMemory {
             if let Some(threshold) = cfg.get_item("async_extraction_threshold")? {
                 rust_config =
                     rust_config.with_async_extraction_threshold(threshold.extract::<usize>()?);
+            }
+            if let Some(trace) = cfg.get_item("enable_trace")? {
+                rust_config = rust_config.with_trace(trace.extract::<bool>()?);
             }
 
             // SLM configuration (only available with 'slm' feature)
@@ -915,6 +970,19 @@ impl PyMemory {
             let tuple = (intent_dict, results_list?, profile_ctx_list);
             Ok(tuple.into_py(py))
         })
+    }
+
+    /// Returns the trace from the most recent query() call, or None if tracing is disabled.
+    ///
+    /// Enable tracing via config={"enable_trace": True}.
+    ///
+    /// Returns:
+    ///     dict with keys: pipeline, total_duration_us, steps (list of step dicts)
+    ///     Each step dict has: name, duration_us, data (dict of key-value pairs)
+    fn last_query_trace(&self) -> PyResult<PyObject> {
+        let engine = self.get_engine()?;
+        let trace = engine.last_query_trace();
+        Python::with_gil(|py| Ok(trace_to_py(py, trace.as_ref())))
     }
 
     /// Get the number of memories in the database

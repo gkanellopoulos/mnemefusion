@@ -15,6 +15,7 @@ use crate::{
         profile_search::ProfileSearch,
     },
     storage::StorageEngine,
+    trace_begin, trace_record,
     types::{Memory, MemoryId, MetadataFilter, Timestamp},
 };
 use std::collections::HashMap;
@@ -190,13 +191,18 @@ impl QueryPlanner {
         namespace: Option<&str>,
         filters: Option<&[MetadataFilter]>,
         user_entity: Option<&str>,
+        mut trace: Option<&mut crate::trace::TraceRecorder>,
     ) -> Result<(
         IntentClassification,
         Vec<FusedResult>,
         Vec<crate::query::profile_search::MatchedProfileFact>,
     )> {
         // Step 1: Classify intent (try SLM first, fallback to patterns)
+        trace_begin!(trace, "intent_classification");
         let intent = self.classify_intent(query_text)?;
+        trace_record!(trace, "intent", format!("{:?}", intent.intent));
+        trace_record!(trace, "confidence", intent.confidence);
+        trace_record!(trace, "entity_focus", intent.entity_focus.clone());
 
         // Step 1.5: Entity-first retrieval path
         // Only fires for narrow entity_list_patterns (e.g., "What does Alice like?").
@@ -204,6 +210,9 @@ impl QueryPlanner {
         // multi-dimensional scoring while using profile sources and speaker reranking.
         if let Some(entity_name) = intent.entity_focus.clone() {
             if self.storage.find_entity_by_name(&entity_name)?.is_some() {
+                trace_begin!(trace, "entity_focused_path");
+                trace_record!(trace, "entity_name", entity_name.clone());
+                trace_record!(trace, "took_fast_path", true);
                 return self.retrieve_entity_focused(
                     &entity_name,
                     query_text,
@@ -259,29 +268,61 @@ impl QueryPlanner {
             None
         };
 
+        trace_begin!(trace, "entity_detection");
+        trace_record!(trace, "query_entities", query_entities.clone());
+        trace_record!(trace, "speaker_entity", speaker_entity.clone());
+        trace_record!(
+            trace,
+            "user_entity_resolved",
+            user_entity.map(|s| s.to_string())
+        );
+
         // Step 2: Retrieve from all dimensions (fetch more to account for filtering)
         let needs_filtering =
             namespace.is_some() || (filters.is_some() && !filters.unwrap().is_empty());
         // When entity-specific retrieval is active, fetch more candidates to maintain
         // effective depth after speaker penalty or entity-based scoring.
         let fetch_multiplier = if needs_filtering || !query_entities.is_empty() {
-            5
+            7
         } else {
-            3
+            5
         };
 
+        trace_begin!(trace, "semantic_search");
         let mut semantic_scores =
             self.semantic_search(query_embedding, limit * fetch_multiplier)?;
+        trace_record!(trace, "candidate_count", semantic_scores.len());
+        trace_record!(trace, "fetch_limit", limit * fetch_multiplier);
+        {
+            let mut top_scores: Vec<f32> = semantic_scores.values().copied().collect();
+            top_scores.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+            top_scores.truncate(5);
+            trace_record!(trace, "top_5_scores", top_scores);
+        }
+
+        trace_begin!(trace, "bm25_search");
         let bm25_scores = self.bm25_search(query_text, limit * fetch_multiplier)?;
+        trace_record!(trace, "candidate_count", bm25_scores.len());
+
+        trace_begin!(trace, "temporal_search");
         let temporal_scores = self.temporal_search(query_text, limit * fetch_multiplier)?;
+        trace_record!(trace, "candidate_count", temporal_scores.len());
+
+        trace_begin!(trace, "causal_search");
         let causal_scores = self.causal_search(query_text, limit * fetch_multiplier)?;
+        trace_record!(trace, "candidate_count", causal_scores.len());
         // Normalize entity_scores to partial MemoryId format immediately.
         // entity_search() returns full UUIDs (from storage), but semantic_search() returns
         // partial UUIDs (from vector index, first 8 bytes only). Without normalization the
         // same physical memory gets two entries in the fusion HashSet → duplicate results.
         // See: MemoryId::from_u64 / MemoryId::to_u64 for the partial-UUID convention.
+        // Entity dimension uses a narrower funnel than semantic/BM25/temporal/causal.
+        // Wide funnel for other dimensions increases recall; but entity_score=2.0 candidates
+        // from Step 2.1 already dominate RRF. More entity candidates = more 2.0-scored entries
+        // in the fusion pool, diluting semantic/BM25 signal for actual evidence.
+        let entity_fetch = limit * 3;
         let mut entity_scores: HashMap<MemoryId, f32> = {
-            let raw = self.entity_search(query_text, limit * fetch_multiplier)?;
+            let raw = self.entity_search(query_text, entity_fetch)?;
             let mut norm: HashMap<MemoryId, f32> = HashMap::with_capacity(raw.len());
             for (id, score) in raw {
                 norm.entry(MemoryId::from_u64(id.to_u64()))
@@ -303,11 +344,19 @@ impl QueryPlanner {
         //
         // Injects for ALL detected entities (not just single-entity queries).
         // Multi-entity queries need profile sources from every mentioned entity.
+        //
+        // Flat 2.0 injection. Graduated scoring was tested and regressed accuracy
+        // because it shifts RRF normalization for all entity scores. A fixed boost
+        // ensures entity-matched memories consistently outrank semantic-only results.
+        trace_begin!(trace, "entity_injection");
+        let entity_inject_cap = entity_fetch;
+        let entity_count_before = entity_scores.len();
         for entity_name in &query_entities {
             if let Ok(Some(profile)) = self.storage.get_entity_profile(entity_name) {
-                for source_id in &profile.source_memories {
-                    // Normalize to partial ID so entity injection merges with semantic search.
-                    // source_memories store full UUIDs; vector index uses partial (first 8 bytes).
+                for (injected, source_id) in profile.source_memories.iter().enumerate() {
+                    if injected >= entity_inject_cap {
+                        break;
+                    }
                     entity_scores
                         .entry(MemoryId::from_u64(source_id.to_u64()))
                         .and_modify(|s| *s = (*s).max(2.0))
@@ -315,6 +364,13 @@ impl QueryPlanner {
                 }
             }
         }
+        trace_record!(trace, "entities_injected", query_entities.len());
+        trace_record!(
+            trace,
+            "entity_scores_added",
+            entity_scores.len() - entity_count_before
+        );
+        trace_record!(trace, "inject_cap", entity_inject_cap);
 
         // Step 2.1c: Query-entity graph expansion (HippoRAG-style)
         // Traverse KG relationships from query entities to discover related entities
@@ -378,10 +434,25 @@ impl QueryPlanner {
         // "instruments" matches "instrument", "books" matches "book", etc.
         // Uses max() to ensure fact-matched memories rank AT LEAST as high as the
         // 2.0 baseline (never clamped below it).
+        trace_begin!(trace, "profile_search");
         let profile_result =
             self.profile_search
                 .search(query_text, query_embedding, limit * fetch_multiplier)?;
         let matched_facts = profile_result.matched_facts;
+        trace_record!(trace, "matched_facts_count", matched_facts.len());
+        if let Some(ref mut t) = trace {
+            let fact_details: Vec<String> = matched_facts
+                .iter()
+                .take(10)
+                .map(|f| {
+                    format!(
+                        "{}:{}={} (score={:.2})",
+                        f.entity_name, f.fact_type, f.value, f.score
+                    )
+                })
+                .collect();
+            t.record("fact_details", fact_details);
+        }
         for (memory_id, profile_score) in profile_result.source_scores {
             let boosted = 2.0 + profile_score; // fact-matched get 2.0-3.0
                                                // Normalize to partial ID (source_scores contain full UUIDs from storage).
@@ -425,33 +496,20 @@ impl QueryPlanner {
             norm
         };
 
-        // Step 2.3: Adaptive pre-fusion semantic filtering
+        // Step 2.3: Semantic pre-filter threshold (computed here, applied post-fusion)
         // Aggregation queries ("What activities does X do?") need more recall — answer
         // docs mention specific instances with only moderate similarity to the category
         // query. Use 0.5x threshold for those. Extraction/Hypothetical keep strict
         // threshold for precision (avoids noise that hurts multi-hop reasoning).
         //
-        // EXEMPTION: Memories with entity_score > 0 bypass this filter. These memories
-        // matched a target entity (via profile source injection or entity graph), so they
-        // are relevant even if semantically distant from the query phrasing. Without this,
-        // ~60-80% of entity-matched candidates die before RRF fusion can help them.
-        //
-        // Preserve full semantic scores for accurate reporting in FusedResult.
-        // The .retain() controls which memories contribute to the semantic RRF pathway,
-        // but memories found via BM25/entity should still report their actual semantic score
-        // (not 0.0) for diagnostics. After fusion, we patch scores from this full map.
-        let semantic_scores_full = semantic_scores.clone();
+        // Applied pre-fusion (Step 2.9) to remove low-semantic noise before RRF.
+        // Aggregation queries use a relaxed threshold (0.5x) for broader recall.
         let effective_prefilter = if MultiTurnAggregator::is_aggregation(&query_text.to_lowercase())
         {
             self.semantic_prefilter_threshold * 0.5
         } else {
             self.semantic_prefilter_threshold
         };
-        if effective_prefilter > 0.0 {
-            semantic_scores.retain(|id, score| {
-                *score >= effective_prefilter || entity_scores.get(id).copied().unwrap_or(0.0) > 0.0
-            });
-        }
 
         // Step 2.5: Filter by namespace if provided
         if let Some(ns) = namespace {
@@ -534,7 +592,24 @@ impl QueryPlanner {
             }
         }
 
+        // Step 2.9: Pre-fusion semantic quality gate.
+        // Removes candidates below semantic threshold BEFORE fusion. Candidates with
+        // entity_score > 0 are exempt (profile-linked memories bypass the gate).
+        // Applied pre-fusion so noisy temporal/causal candidates don't survive RRF.
+        trace_begin!(trace, "prefusion_filter");
+        let sem_count_before = semantic_scores.len();
+        if effective_prefilter > 0.0 {
+            let entity_ids: std::collections::HashSet<&MemoryId> = entity_scores.keys().collect();
+            semantic_scores
+                .retain(|id, score| *score >= effective_prefilter || entity_ids.contains(id));
+        }
+        trace_record!(trace, "threshold", effective_prefilter);
+        trace_record!(trace, "before_count", sem_count_before);
+        trace_record!(trace, "after_count", semantic_scores.len());
+        trace_record!(trace, "entity_exempt_count", entity_scores.len());
+
         // Step 3: Fuse results with adaptive weights
+        trace_begin!(trace, "rrf_fusion");
         let mut fused_results = self.fusion_engine.fuse(
             intent.intent,
             &semantic_scores,
@@ -543,6 +618,21 @@ impl QueryPlanner {
             &causal_scores,
             &entity_scores,
         );
+        trace_record!(trace, "candidate_count", fused_results.len());
+        if let Some(ref mut t) = trace {
+            let top_scores: Vec<f32> = fused_results
+                .iter()
+                .take(10)
+                .map(|r| r.fused_score)
+                .collect();
+            let top_ids: Vec<String> = fused_results
+                .iter()
+                .take(10)
+                .map(|r| r.id.to_string())
+                .collect();
+            t.record("top_10_fused_scores", top_scores);
+            t.record("top_10_ids", top_ids);
+        }
 
         // Step 3.5: Cross-dimensional validation
         // Calculate confidence based on how many dimensions contributed to each result
@@ -601,21 +691,29 @@ impl QueryPlanner {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        // Step 3.6: Patch semantic scores for accurate reporting
-        // The pre-fusion .retain() removed low-scoring entries from semantic_scores,
-        // so fusion reports 0.0 for memories found via BM25/entity. Restore the
-        // actual semantic scores from the pre-filter snapshot for diagnostics.
-        // This runs AFTER confidence scoring (Step 3.5) so it doesn't affect ranking —
-        // patched scores are for reporting/diagnostics only.
-        for result in &mut fused_results {
-            if result.semantic_score == 0.0 {
-                if let Some(&full_score) = semantic_scores_full.get(&result.id) {
-                    result.semantic_score = full_score;
-                }
-            }
+        trace_begin!(trace, "confidence_scoring");
+        if let Some(ref mut t) = trace {
+            let scores: Vec<f32> = fused_results.iter().map(|r| r.fused_score).collect();
+            let mean = if scores.is_empty() {
+                0.0
+            } else {
+                scores.iter().sum::<f32>() / scores.len() as f32
+            };
+            let std_dev = if scores.len() > 1 {
+                let variance = scores.iter().map(|s| (s - mean).powi(2)).sum::<f32>()
+                    / (scores.len() - 1) as f32;
+                variance.sqrt()
+            } else {
+                0.0
+            };
+            t.record("mean_score", mean);
+            t.record("std_score", std_dev);
+            t.record("result_count", fused_results.len());
         }
 
         // Step 3.7: Speaker-aware reranking
+        trace_begin!(trace, "speaker_reranking");
+        trace_record!(trace, "speaker_entity", speaker_entity.clone());
         // When query asks about a specific person (e.g., "What did Melanie paint?"),
         // penalize results from other speakers. Semantic search matches on topic, not
         // information source — so "What's your best camping memory?" (asked by Caroline)
@@ -624,6 +722,7 @@ impl QueryPlanner {
         // Speaker reranking only fires for single-entity queries. Multi-entity queries
         // (e.g., "How long have Mel and her husband been married?") have no single target
         // speaker — applying a penalty would arbitrarily suppress one entity's memories.
+        let mut speaker_reranked_count = 0usize;
         if let Some(ref speaker_target) = speaker_entity {
             let target_lower = speaker_target.to_lowercase();
             let mut any_speaker_data = false;
@@ -638,6 +737,7 @@ impl QueryPlanner {
                             // target's name. Tested: 0.2x gives best overall balance
                             // (single-hop +9pts, temporal preserved, R@20 +2.7pts).
                             result.fused_score *= 0.2;
+                            speaker_reranked_count += 1;
                         }
                     }
                 }
@@ -651,11 +751,16 @@ impl QueryPlanner {
             }
         }
 
+        trace_record!(trace, "reranked_count", speaker_reranked_count);
+
         // Step 3.8: Multi-evidence expansion for aggregation queries (Solution 5)
+        trace_begin!(trace, "aggregation_expansion");
         // Aggregation queries ("What instruments does Melanie play?") need evidence
         // from 2-4 separate memories. Expand by fetching entity memories and adding
         // DIVERSE ones not already in results. Cap at 5 expansions for performance.
-        if MultiTurnAggregator::is_aggregation(&query_text.to_lowercase()) {
+        let is_aggregation = MultiTurnAggregator::is_aggregation(&query_text.to_lowercase());
+        trace_record!(trace, "is_aggregation", is_aggregation);
+        if is_aggregation {
             // Use speaker_entity for aggregation expansion (consistent with speaker reranking)
             if let Some(ref entity_name) = speaker_entity {
                 if let Ok(Some(entity)) = self.storage.find_entity_by_name(entity_name) {
@@ -738,6 +843,7 @@ impl QueryPlanner {
         }
 
         // Step 3.85: Dialog-ID adjacent-turn bridging
+        trace_begin!(trace, "dialog_bridging");
         //
         // Many retrieval near-misses are "same conversation, adjacent turn" failures:
         // we retrieve D7:5 but the evidence is D7:9. For single-hop, 91% of R@20 misses
@@ -786,6 +892,13 @@ impl QueryPlanner {
                                     }
                                     let sem_score =
                                         cosine_similarity(query_embedding, &nbr.embedding);
+                                    // Semantic relevance gate: don't inject neighbors
+                                    // that have no topical connection to the query.
+                                    // Without this, bridging inherits parent's high fused_score
+                                    // for completely irrelevant adjacent turns.
+                                    if sem_score < 0.2 {
+                                        continue;
+                                    }
                                     neighbors.push(FusedResult {
                                         id: partial_id,
                                         semantic_score: sem_score,
@@ -803,6 +916,7 @@ impl QueryPlanner {
                 }
             }
 
+            trace_record!(trace, "injected_count", neighbors.len());
             if !neighbors.is_empty() {
                 fused_results.extend(neighbors);
                 fused_results.sort_by(|a, b| {
@@ -813,92 +927,135 @@ impl QueryPlanner {
             }
         }
 
-        // Step 3.9: MMR Diversity Reranking
-        // After all scoring/penalties, apply Maximal Marginal Relevance to break ties
-        // among entity-matched memories (168-205 memories at flat 2.0 compete randomly).
-        // MMR ensures diverse context: pottery + camping + painting, not 5× pottery.
+        // Step 3.95: MMR Diversity Reranking (final selection)
+        trace_begin!(trace, "mmr_selection");
+        trace_record!(trace, "pool_size", fused_results.len());
+        //
+        // MMR selects the final `limit` candidates from the fused pool, ensuring
+        // diversity: pottery + camping + painting, not 5× pottery.
         // Formula: score = λ × rrf_score - (1-λ) × max_cosine(doc, already_selected)
-        // λ=0.7 favors relevance, 0.3 weight on diversity.
-        // Only applied when we have enough candidates to benefit from diversity.
-        const MMR_LAMBDA: f32 = 0.7;
-        const MMR_POOL_SIZE: usize = 50;
-        if fused_results.len() > limit {
-            let pool_size = fused_results.len().min(MMR_POOL_SIZE);
-            let pool = &fused_results[..pool_size];
+        // λ=0.9 strongly favors relevance, minimal diversity penalty.
+        // Lower values (e.g., 0.7) aggressively penalize same-topic evidence,
+        // dropping related memories that differ only in phrasing (e.g., two mentions
+        // of the same object in different conversational contexts).
+        //
+        // Pool size is capped at limit (not a multiple) — wider pools admit
+        // diverse-but-noisy candidates that degrade answer quality.
+        {
+            const MMR_LAMBDA: f32 = 0.9;
+            trace_record!(trace, "lambda", MMR_LAMBDA);
+            if fused_results.len() > limit {
+                // MMR operates on a reasonable pool — cap at 5× limit for performance.
+                let pool_size = fused_results.len().min(limit * 5);
+                let pool = &fused_results[..pool_size];
 
-            // Load embeddings for the candidate pool
-            let pool_embeddings: Vec<Option<Vec<f32>>> = pool
-                .iter()
-                .map(|r| {
-                    self.storage
-                        .get_memory_by_u64(r.id.to_u64())
-                        .ok()
-                        .flatten()
-                        .map(|m| m.embedding)
-                        .filter(|e| !e.is_empty() && e.len() == query_embedding.len())
-                })
-                .collect();
+                // Load embeddings for MMR diversity computation.
+                let mut pool_embeddings: Vec<Option<Vec<f32>>> = Vec::with_capacity(pool_size);
 
-            let mut selected: Vec<usize> = Vec::with_capacity(limit);
-            let mut remaining: Vec<usize> = (0..pool_size).collect();
-
-            // Greedily select limit items by MMR score
-            while selected.len() < limit && !remaining.is_empty() {
-                let mut best_idx_in_remaining = 0;
-                let mut best_mmr_score = f32::NEG_INFINITY;
-
-                for (ri, &cand_idx) in remaining.iter().enumerate() {
-                    let relevance = pool[cand_idx].fused_score;
-
-                    // Max cosine similarity to any already-selected document
-                    let max_sim = if selected.is_empty() {
-                        0.0
-                    } else if let Some(ref cand_emb) = pool_embeddings[cand_idx] {
-                        selected
-                            .iter()
-                            .filter_map(|&sel_idx| {
-                                pool_embeddings[sel_idx]
-                                    .as_ref()
-                                    .map(|sel_emb| cosine_similarity(cand_emb, sel_emb))
-                            })
-                            .fold(0.0f32, f32::max)
+                for r in pool.iter() {
+                    if let Ok(Some(memory)) = self.storage.get_memory_by_u64(r.id.to_u64()) {
+                        let emb = if !memory.embedding.is_empty()
+                            && memory.embedding.len() == query_embedding.len()
+                        {
+                            Some(memory.embedding)
+                        } else {
+                            None
+                        };
+                        pool_embeddings.push(emb);
                     } else {
-                        0.0 // No embedding — treat as fully diverse
-                    };
-
-                    let mmr_score = MMR_LAMBDA * relevance - (1.0 - MMR_LAMBDA) * max_sim;
-                    if mmr_score > best_mmr_score {
-                        best_mmr_score = mmr_score;
-                        best_idx_in_remaining = ri;
+                        pool_embeddings.push(None);
                     }
                 }
 
-                let chosen = remaining.swap_remove(best_idx_in_remaining);
-                selected.push(chosen);
-            }
+                let mut selected: Vec<usize> = Vec::with_capacity(limit);
+                let mut remaining: Vec<usize> = (0..pool_size).collect();
 
-            // Rebuild fused_results in MMR order, then append any remaining beyond pool
-            let mut mmr_results: Vec<FusedResult> =
-                selected.into_iter().map(|i| pool[i].clone()).collect();
-            if pool_size < fused_results.len() {
-                mmr_results.extend(fused_results[pool_size..].iter().cloned());
+                while selected.len() < limit && !remaining.is_empty() {
+                    let mut best_idx_in_remaining = 0;
+                    let mut best_mmr_score = f32::NEG_INFINITY;
+
+                    for (ri, &cand_idx) in remaining.iter().enumerate() {
+                        let relevance = pool[cand_idx].fused_score;
+
+                        let max_sim = if selected.is_empty() {
+                            0.0
+                        } else if let Some(ref cand_emb) = pool_embeddings[cand_idx] {
+                            selected
+                                .iter()
+                                .filter_map(|&sel_idx| {
+                                    pool_embeddings[sel_idx]
+                                        .as_ref()
+                                        .map(|sel_emb| cosine_similarity(cand_emb, sel_emb))
+                                })
+                                .fold(0.0f32, f32::max)
+                        } else {
+                            0.0
+                        };
+
+                        let mmr_score = MMR_LAMBDA * relevance - (1.0 - MMR_LAMBDA) * max_sim;
+                        if mmr_score > best_mmr_score {
+                            best_mmr_score = mmr_score;
+                            best_idx_in_remaining = ri;
+                        }
+                    }
+
+                    let chosen = remaining.swap_remove(best_idx_in_remaining);
+                    selected.push(chosen);
+                }
+
+                fused_results = selected.into_iter().map(|i| pool[i].clone()).collect();
             }
-            fused_results = mmr_results;
         }
 
+        trace_record!(trace, "selected_count", fused_results.len());
+
         // Step 4: Multi-turn aggregation for list/collection queries
+        trace_begin!(trace, "multi_turn_aggregation");
         let aggregator = crate::query::aggregator::MultiTurnAggregator::default();
         let query_type = aggregator.classify_query(query_text);
+        let pre_agg_count = fused_results.len();
         let mut final_results =
             aggregator.aggregate(query_type, query_text, fused_results, &self.storage, limit)?;
+        trace_record!(trace, "query_type", format!("{:?}", query_type));
+        trace_record!(trace, "before_count", pre_agg_count);
+        trace_record!(trace, "after_count", final_results.len());
 
         // Step 5: Adaptive-K (Top-p nucleus selection)
+        trace_begin!(trace, "adaptive_k");
+        let pre_adaptive_count = final_results.len();
         if self.adaptive_k_threshold > 0.0
             && self.adaptive_k_threshold < 1.0
             && final_results.len() > 1
         {
             let new_len = adaptive_k_select(&final_results, self.adaptive_k_threshold, limit);
             final_results.truncate(new_len);
+        }
+        trace_record!(trace, "threshold", self.adaptive_k_threshold);
+        trace_record!(trace, "before_count", pre_adaptive_count);
+        trace_record!(trace, "after_count", final_results.len());
+
+        // Final result summary
+        trace_begin!(trace, "result_summary");
+        trace_record!(trace, "total_results", final_results.len());
+        if let Some(ref mut t) = trace {
+            let top_ids: Vec<String> = final_results
+                .iter()
+                .take(5)
+                .map(|r| r.id.to_string())
+                .collect();
+            let top_scores: Vec<f32> = final_results
+                .iter()
+                .take(5)
+                .map(|r| r.fused_score)
+                .collect();
+            let top_sem: Vec<f32> = final_results
+                .iter()
+                .take(5)
+                .map(|r| r.semantic_score)
+                .collect();
+            t.record("top_5_ids", top_ids);
+            t.record("top_5_fused_scores", top_scores);
+            t.record("top_5_semantic_scores", top_sem);
         }
 
         Ok((intent, final_results, matched_facts))
@@ -2158,7 +2315,7 @@ mod tests {
 
         // Execute query
         let (intent, results, _matched_facts) = planner
-            .query("test query", &vec![0.1; 384], 10, None, None, None)
+            .query("test query", &vec![0.1; 384], 10, None, None, None, None)
             .unwrap();
 
         // Should classify as factual
@@ -2240,7 +2397,7 @@ mod tests {
 
         // Query with ns1 filter
         let (_, results, _) = planner
-            .query("test", &vec![0.1; 384], 10, Some("ns1"), None, None)
+            .query("test", &vec![0.1; 384], 10, Some("ns1"), None, None, None)
             .unwrap();
 
         // Should only contain mem1
@@ -2249,7 +2406,7 @@ mod tests {
 
         // Query with ns2 filter
         let (_, results, _) = planner
-            .query("test", &vec![0.1; 384], 10, Some("ns2"), None, None)
+            .query("test", &vec![0.1; 384], 10, Some("ns2"), None, None, None)
             .unwrap();
 
         // Should only contain mem2
@@ -2258,7 +2415,7 @@ mod tests {
 
         // Query with default namespace filter
         let (_, results, _) = planner
-            .query("test", &vec![0.1; 384], 10, Some(""), None, None)
+            .query("test", &vec![0.1; 384], 10, Some(""), None, None, None)
             .unwrap();
 
         // Should only contain mem3
@@ -3304,6 +3461,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .unwrap();
 
@@ -3356,6 +3514,7 @@ mod tests {
                 "What does NonExistentEntity like?",
                 &query_embedding,
                 10,
+                None,
                 None,
                 None,
                 None,
@@ -3694,6 +3853,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .unwrap();
 
@@ -3760,6 +3920,7 @@ mod tests {
                 "What do Alice and Bob enjoy?",
                 &vec![0.15; 384],
                 10,
+                None,
                 None,
                 None,
                 None,
@@ -3842,6 +4003,7 @@ mod tests {
                 "Tell me about Alice's friends",
                 &vec![0.15; 384],
                 10,
+                None,
                 None,
                 None,
                 None,

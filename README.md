@@ -1,8 +1,10 @@
 # MnemeFusion
 
-**Unified memory engine for AI applications — "SQLite for AI memory."**
+**Atomic memory engine for AI applications — one database per entity.**
 
-MnemeFusion provides multi-dimensional memory indexing (semantic, temporal, causal, entity) in a single embedded database file with zero external dependencies. One library, one `.mfdb` file replaces Qdrant + Neo4j + SQLite.
+MnemeFusion gives each entity its own self-contained memory database. Five retrieval dimensions (semantic, keyword, temporal, causal, entity profile) are fused into a single ranked result, all in one portable `.mfdb` file with zero external dependencies.
+
+Think SQLite for AI memory: one file per user, per contact, or per conversation — embedded in your application.
 
 [![CI](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/ci.yml/badge.svg)](https://github.com/gkanellopoulos/mnemefusion/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/mnemefusion-core.svg)](https://crates.io/crates/mnemefusion-core)
@@ -12,6 +14,14 @@ MnemeFusion provides multi-dimensional memory indexing (semantic, temporal, caus
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
 
 *MnemeFusion was designed and directed by [George Kanellopoulos](https://github.com/gkanellopoulos), with implementation substantially assisted by [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (Anthropic). The project grew out of an exploration into building a complex, multi-dimensional AI memory engine through human-AI collaboration — the commit history reflects the authentic development process.*
+
+## Atomic Architecture
+
+MnemeFusion follows an **atomic design**: each entity (a user, a contact, a conversation) maps to its own `.mfdb` database file. This 1:1 mapping is the core architectural principle.
+
+Memory retrieval degrades when unrelated conversations share a database — relevant memories get buried by noise from other entities. By scoping each database to a single entity, all five retrieval dimensions stay focused and retrieval stays precise, even as conversation history grows to thousands of turns.
+
+This mirrors how production AI systems work: a personal assistant remembers *one user's* conversations, a CRM agent tracks *one contact's* history, a therapy bot maintains *one patient's* sessions. Each gets its own `.mfdb` file.
 
 ## Features
 
@@ -27,14 +37,18 @@ MnemeFusion provides multi-dimensional memory indexing (semantic, temporal, caus
 
 ## Benchmarks
 
-MnemeFusion is evaluated on two established conversational memory benchmarks using standard protocols:
+Evaluated on two established conversational memory benchmarks ([LoCoMo](evals/locomo/), [LongMemEval](evals/longmemeval/)) using standard protocols. The LongMemEval results validate the atomic architecture — per-entity databases maintain high accuracy where a shared database collapses:
 
-| Benchmark | Protocol | Metric | Questions |
-|-----------|----------|--------|-----------|
-| [LoCoMo](evals/locomo/) | Free-text + LLM-as-judge | Accuracy | 1,540 (cat 1-4) |
-| [LongMemEval](evals/longmemeval/) | Binary yes/no (official paper) | Task-avg accuracy | 500 |
+| Benchmark | Mode | What it tests | Score |
+|-----------|------|---------------|-------|
+| [LoCoMo](evals/locomo/) | Standard | Overall accuracy across 10 conversations (1,540 questions) | **69.9% ± 0.4%** |
+| [LongMemEval](evals/longmemeval/) | Oracle | Pipeline quality — extraction + RAG + scoring (500 questions) | **91.4%** |
+| [LongMemEval](evals/longmemeval/) | Per-entity | Production pattern — one DB per conversation, ~500 turns each (176 questions) | **67.6%** |
+| [LongMemEval](evals/longmemeval/) | Shared DB | All conversations in one DB — the anti-pattern (500 questions) | 37.2% |
 
-LoCoMo uses a standard free-text + LLM-as-judge protocol (GPT-4o-mini judge, binary CORRECT/WRONG). LongMemEval uses the official paper protocol (gpt-4o-2024-08-06 judge, category-specific prompts). See [evals/](evals/) for methodology details, datasets, and instructions to reproduce.
+**Reading the numbers:** The oracle result (91.4%) proves the pipeline works when given the right evidence. The per-entity result (67.6%) shows production performance with the recommended atomic architecture. The shared-DB result (37.2%) demonstrates why per-entity scoping matters — accuracy drops by 54 points when unrelated conversations compete for retrieval slots.
+
+See [evals/](evals/) for full methodology, per-category breakdowns, datasets, and reproduction instructions.
 
 ## Quick Start
 
@@ -208,6 +222,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `consolidate_profiles()` | Remove noise from profiles |
 | `summarize_profiles()` | Generate profile summaries |
 
+### Diagnostics
+
+| Method | Description |
+|--------|-------------|
+| `last_query_trace()` | Step-by-step trace of the most recent `query()` call (requires `enable_trace=True` in config) |
+
 ### Metadata Filtering
 
 ```python
@@ -242,6 +262,7 @@ config = {
     "llm_model": "path/to/model.gguf", # Auto-enables LLM extraction
     "extraction_passes": 3,             # Multi-pass diverse extraction
     "async_extraction_threshold": 500,  # Defer extraction for large docs
+    "enable_trace": True,               # Record step-by-step query traces
 }
 mem = mnemefusion.Memory("brain.mfdb", config=config)
 ```
@@ -302,7 +323,7 @@ cd mnemefusion
 # Build core library
 cargo build --release
 
-# Run tests (500+ tests)
+# Run tests (520+ tests)
 cargo test -p mnemefusion-core --lib
 
 # Build Python bindings
@@ -374,7 +395,7 @@ Everything else (entity extraction API, profile management, config keys) may cha
 | `get()` / `delete()` | O(1) key lookup | <1ms |
 | Storage overhead | ~1.5-2x raw content size (384-dim embeddings) | — |
 
-Tested with up to 10K memories in a single `.mfdb` file. For production deployments with per-user databases (the recommended pattern), individual databases typically contain 1K-10K memories.
+Tested with up to 10K memories in a single `.mfdb` file. MnemeFusion is designed for per-entity databases — each user, contact, or conversation gets its own `.mfdb` file, typically containing 1K-10K memories. This atomic pattern keeps retrieval precise and scales horizontally.
 
 ## Contributing
 
@@ -401,4 +422,4 @@ Built on excellent open-source libraries:
 
 ---
 
-**"SQLite for AI memory"** — One file. Five dimensions. Zero complexity.
+**"SQLite for AI memory"** — One entity, one file. Five dimensions. Zero complexity.

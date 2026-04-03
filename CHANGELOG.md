@@ -5,6 +5,21 @@ All notable changes to MnemeFusion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Pipeline trace recorder: config-gated step-by-step query diagnostics with 20+ instrumented
+  pipeline steps (`enable_trace` config, `last_query_trace()` API)
+- Entity-dampened RRF fusion (0.3 scale) to reduce entity flooding in score fusion
+- Pre-fusion semantic quality gate with entity exemption
+- Dialog bridging: adjacent turn injection for conversational context
+- Aggregation candidate pool scaling with query limit
+- LongMemEval atomic evaluation scripts (`run_query_bim.py`, `run_mnemebench.py`)
+
+### Changed
+- MMR diversity parameter (λ) raised from 0.7 to 0.9 to preserve same-topic evidence
+- Wider semantic fetch with entity-proportional narrowing
+
 ## [0.1.3] - 2026-03-17
 
 ### Fixed

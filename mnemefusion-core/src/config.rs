@@ -225,6 +225,16 @@ pub struct Config {
     /// Recommended: `500` (defer documents >= 500 bytes; short messages still sync).
     /// Set to `1` to defer all content when LLM is enabled.
     pub async_extraction_threshold: usize,
+
+    /// Enable pipeline tracing (query).
+    ///
+    /// When enabled, each `query()` call records a detailed step-by-step
+    /// trace accessible via `last_query_trace()`.
+    ///
+    /// Adds minor overhead from HashMap allocations (~5-10%). Disabled by default.
+    ///
+    /// Default: `false`
+    pub enable_trace: bool,
 }
 
 impl Default for Config {
@@ -256,6 +266,7 @@ impl Default for Config {
             embedding_model: None,
             llm_model: None,
             async_extraction_threshold: 0, // Always sync by default (backward compatible)
+            enable_trace: false,           // Pipeline tracing off by default
         }
     }
 }
@@ -615,6 +626,15 @@ impl Config {
     /// Set to `0` to always run LLM extraction synchronously (default).
     pub fn with_async_extraction_threshold(mut self, threshold: usize) -> Self {
         self.async_extraction_threshold = threshold;
+        self
+    }
+
+    /// Enable or disable pipeline tracing.
+    ///
+    /// When enabled, `query()` records step-by-step traces with timing and data
+    /// at every pipeline stage. Access via `last_query_trace()`.
+    pub fn with_trace(mut self, enabled: bool) -> Self {
+        self.enable_trace = enabled;
         self
     }
 
