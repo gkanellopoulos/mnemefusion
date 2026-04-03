@@ -49,7 +49,7 @@ DATA_DIR.mkdir(exist_ok=True)
 # Workspace root (for resolving model paths and DLLs)
 WORKSPACE_ROOT = Path(__file__).parent.parent
 
-EMBEDDING_DIM = 384
+EMBEDDING_DIM = 768
 EMBEDDING_MODEL = "BAAI/bge-base-en-v1.5"
 LLM_MODEL = "gpt-4o-mini"
 
@@ -115,6 +115,8 @@ def get_memory(username: str) -> Memory:
 
     path = str(DATA_DIR / f"{username}.mfdb")
     mem = Memory(path, {"embedding_dim": EMBEDDING_DIM})
+    mem.set_embedding_fn(embed)
+    mem.set_user_entity(username)
 
     # LLM entity extraction — runs on CPU to avoid freezing 4GB GPU
     # Slower (~30-60s per message) but entity profiles actually work.
@@ -244,7 +246,6 @@ def process_chat_turn(username: str, convo_id: str, prompt: str,
     mem.reserve_capacity(mem.count() + 10)
     mem.add(
         content=prompt,
-        embedding=embed(prompt),
         metadata={"role": "user", "conversation": convo_id, "speaker": username},
         timestamp=simulated_ts,
     )
@@ -278,8 +279,7 @@ def _retrieve_context(mem, query: str):
     if mem.count() == 0:
         return "none", "", []
 
-    query_emb = embed(query)
-    intent, results, profile_ctx = mem.query(query, query_emb, limit=10)
+    intent, results, profile_ctx = mem.query(query, limit=10)
 
     context_lines = list(profile_ctx)  # Start with profile context
     raw_results = []
