@@ -5,7 +5,7 @@ All notable changes to MnemeFusion will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.4] - 2026-04-03
 
 ### Added
 - Pipeline trace recorder: config-gated step-by-step query diagnostics with 20+ instrumented
@@ -14,11 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pre-fusion semantic quality gate with entity exemption
 - Dialog bridging: adjacent turn injection for conversational context
 - Aggregation candidate pool scaling with query limit
-- LongMemEval atomic evaluation scripts (`run_query_bim.py`, `run_mnemebench.py`)
+- LongMemEval per-entity evaluation mode (`--mode per-entity`)
+- Clean benchmark scripts for LoCoMo and LongMemEval (fresh ingestion, no post-processing)
 
 ### Changed
 - MMR diversity parameter (λ) raised from 0.7 to 0.9 to preserve same-topic evidence
 - Wider semantic fetch with entity-proportional narrowing
+- README rewritten around atomic architecture (one database per entity)
+- LongMemEval `--mode atomic` renamed to `--mode per-entity`
+
+### Updated
+- usearch 2.23 → 2.24
+- petgraph 0.6 → 0.8
+- GitHub Actions: upload-artifact v7, download-artifact v8
 
 ## [0.1.3] - 2026-03-17
 
